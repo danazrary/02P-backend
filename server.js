@@ -8,6 +8,9 @@ import hpp from "hpp";
 import http from "http";
 import https from "https";
 import fs from "fs";
+import passport from "passport";
+import { Strategy as GoogleStrategy } from "passport-google-oauth20";
+import jwt from "jsonwebtoken";
 
 // Routers, Middleware, Utils
 import allRouters from "./routers/index.js";
@@ -20,10 +23,11 @@ import { adminToken, adminRefreshToken } from "./utils/addingToken.js";
 // Load environment variables (.env.product, .env.developedLH, .env.developingURL)
 dotenv.config();
 
+
 // --- CREATE EXPRESS APP ---
 const app = express();
 app.set("trust proxy", 1);
-
+app.use(passport.initialize());
 // --- MIDDLEWARE ---
 app.use((req, res, next) => {
   const origin = process.env.CORS_ORIGIN || "";
@@ -57,7 +61,22 @@ app.use(csrfMiddleware);
 // --- ROUTERS ---
 app.use("/api", allRouters);
 
+
+app.get("/profile", (req, res) => {
+  const token = req.cookies.token || req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ message: "Unauthorized" });
+
+  try {
+    const user = jwt.verify(token, process.env.JWT_SECRET);
+    res.json({ user });
+  } catch (err) {
+    res.status(401).json({ message: "Invalid token" });
+  }
+});
+
+
 // CSRF Token endpoint
+
 app.get("/csrf-token", (req, res) => {
   if (!res.locals || !res.locals.csrfToken)
     return res.status(500).json({ error: "CSRF token not available" });
