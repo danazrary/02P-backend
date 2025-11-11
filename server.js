@@ -11,7 +11,7 @@ import fs from "fs";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import jwt from "jsonwebtoken";
-
+import "./utils/passportConfig.js";
 // Routers, Middleware, Utils
 import allRouters from "./routers/index.js";
 import csrfMiddleware from "./middlewares/csrf.js";
@@ -23,11 +23,11 @@ import { adminToken, adminRefreshToken } from "./utils/addingToken.js";
 // Load environment variables (.env.product, .env.developedLH, .env.developingURL)
 dotenv.config();
 
-
 // --- CREATE EXPRESS APP ---
 const app = express();
 app.set("trust proxy", 1);
 app.use(passport.initialize());
+
 // --- MIDDLEWARE ---
 app.use((req, res, next) => {
   const origin = process.env.CORS_ORIGIN || "";
@@ -61,8 +61,9 @@ app.use(csrfMiddleware);
 // --- ROUTERS ---
 app.use("/api", allRouters);
 
-
 app.get("/profile", (req, res) => {
+  console.log("pppppp");
+
   const token = req.cookies.token || req.headers.authorization?.split(" ")[1];
   if (!token) return res.status(401).json({ message: "Unauthorized" });
 
@@ -73,7 +74,6 @@ app.get("/profile", (req, res) => {
     res.status(401).json({ message: "Invalid token" });
   }
 });
-
 
 // CSRF Token endpoint
 
@@ -97,6 +97,8 @@ app.post("/protected", (req, res) => {
 
 // Token test routes
 app.post("/test", async (req, res) => {
+  console.log("test");
+
   try {
     const token = adminToken("dana@gmail.com", "0000000", res);
     adminRefreshToken("dana@gmail.com", "0000000", res);
@@ -150,7 +152,7 @@ function startHttpServer() {
 if (mode === "product" || mode === "developingURL") {
   startHttpsServer();
 } else {
-  startHttpsServer(); // Default to HTTPS for all modes
+  startHttpServer(); // Default to HTTP for all modes
 }
 
 // --- CLEAN SHUTDOWN ---

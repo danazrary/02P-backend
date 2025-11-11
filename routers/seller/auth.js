@@ -1,66 +1,104 @@
 import express from "express";
+import passport from "passport";
 import jwt from "jsonwebtoken";
-
-// Simple in-memory users for demo
-const users = [];
+import "../../utils/passportConfig.js";
 
 const router = express.Router();
 
-// ----- REGISTER -----
-router.post("/register", (req, res) => {
-  const { name, email, number } = req.body;
-
-  if (!name || !email || !number) {
-    return res
-      .status(400)
-      .json({ message: "Name, email, and number are required" });
-  }
-
-  // Check if user already exists
-  const existingUser = users.find((u) => u.email === email);
-  if (existingUser) {
-    return res.status(400).json({ message: "User already exists" });
-  }
-
-  // Create new user
-  const newUser = { id: users.length + 1, name, email, number };
-  users.push(newUser);
-
-  // Generate JWT
-  const token = jwt.sign(
-    {
-      id: newUser.id,
-      name: newUser.name,
-      email: newUser.email,
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: "1d" }
-  );
-
-  res.json({ message: "User registered", token });
+// routes/auth.js (example)
+router.get("/google/url", (req, res) => {
+  console.log("google/url");
+  // If using passport, construct the URL using passport or manually:
+  const url = `${process.env.PASSPORT_GOOGLE_AUTH_URL || "api/seller/auth/google"}`;
+  // simpler: redirect endpoint still preferred; but you can return URL
+  res.json({ url: `${req.protocol}://${req.get("host")}/api/seller/auth/google` });
 });
 
-// ----- LOGIN -----
-router.post("/login", (req, res) => {
-  const { email } = req.body;
+// 1️⃣ Start Google login/register
+router.get(
+  "/google",
+  passport.authenticate("google", { scope: ["profile", "email"] })
+);
 
-  if (!email) return res.status(400).json({ message: "Email is required" });
+// 2️⃣ Callback (Google redirect)
+router.get(
+  "/google/callback",
+  passport.authenticate("google", { session: false }),
+  (req, res) => {
+    console.log("google/callback");
 
-  const user = users.find((u) => u.email === email);
-  if (!user) return res.status(400).json({ message: "User not found" });
+    const seller = req.user;
 
-  // Generate JWT
-  const token = jwt.sign(
-    {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: "1d" }
-  );
+    // Create JWT
+    const token = jwt.sign(
+      { id: seller.id, email: seller.email },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
 
-  res.json({ message: "Login successful", token });
+    // Send token + user info to frontend
+    res.json({
+      success: true,
+      message: "Login successful",
+      token,
+      seller: {
+        id: seller.id,
+        name: seller.name,
+        email: seller.email,
+      },
+    });
+  }
+);
+// Facebook routes
+router.get("/facebook/url", (req, res) => {
+  res.json({
+    url: `${req.protocol}://${req.get("host")}/api/seller/auth/facebook`,
+  });
 });
+
+// Start OAuth
+router.get(
+  "/facebook",
+  passport.authenticate("facebook", { scope: ["email"] })
+);
+
+// Callback
+router.get(
+  "/facebook/callback",
+  passport.authenticate("facebook", {
+    session: false,
+    failureRedirect: "/login",
+  }),
+  (req, res) => {
+    const seller = req.user;
+    const token = jwt.sign(
+      { id: seller.id, email: seller.email },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "7d",
+      }
+    );
+
+    // Post message to opener window (for popup login)
+    const payload = JSON.stringify({
+      token,
+      seller: { id: seller.id, name: seller.name, email: seller.email },
+    });
+    res.send(`
+      <html><body>
+      <script>
+        if (window.opener) {
+          window.opener.postMessage(${payload}, "*");
+          window.close();
+        } else {
+          window.location = "/";
+        }
+      </script>
+      </body></html>
+    `);
+  }
+);
+
+
 
 export default router;
