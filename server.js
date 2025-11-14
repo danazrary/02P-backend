@@ -29,7 +29,7 @@ app.set("trust proxy", 1);
 app.use(passport.initialize());
 
 // --- MIDDLEWARE ---
-app.use((req, res, next) => {
+/* app.use((req, res, next) => {
   const origin = process.env.CORS_ORIGIN || "";
   if (origin) res.header("Access-Control-Allow-Origin", origin);
   res.header("Access-Control-Allow-Credentials", "true");
@@ -40,7 +40,7 @@ app.use((req, res, next) => {
   );
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
-});
+}); */
 
 app.use(cors(corsOptions));
 app.use("/", apiLimiter);

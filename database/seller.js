@@ -9,6 +9,11 @@ const seller = sequelize.define(
       unique: true,
       allowNull: true,
     },
+    facebookId: {
+      type: DataTypes.STRING,
+      unique: true,
+      allowNull: true,
+    },
     name: {
       type: DataTypes.STRING,
       allowNull: true,
@@ -17,6 +22,10 @@ const seller = sequelize.define(
       type: DataTypes.STRING,
       unique: true,
       allowNull: false, // must have email
+    },
+    needsManualEmail: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
     },
     phone: {
       type: DataTypes.STRING,

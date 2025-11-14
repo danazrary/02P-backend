@@ -15,29 +15,16 @@ export const apiLimiter = rateLimit({
 
 export const corsOptions = {
   origin: [
-    "https://localhost:5173",
     "http://localhost:5173",
-    process.env.CORS_ORIGIN,
-    "http://localhost:3000",
-    "https://localhost:3000",
-    "https://192.168.1.17:5173",
+    "https://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://192.168.1.17:5173",
   ],
-  credentials: true, // Allow cookies or credentials to be sent
+  credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-
-  //  origin: "*",
-  /* origin:
-   process.env.CORS_ORIGIN || ["http://localhost:5173" , "http://192.168.1.12"], */
-  /* origin: [
-    "http://localhost:5173", // Localhost (your computer)
-
-    "http://192.168.1.15:5173", // Your computer's local IP address
-    "http://192.168.1.13:5173", // Allow all devices on the local network
-
-    "http://*",
-  ],
-  credentials: true, */
+  allowedHeaders: ["Content-Type", "Authorization"],
 };
+
 
 const solt = bcrypt.genSaltSync(10); //if you use genSalt you need to use async and await
 //you can change the 10 to more but it take more time

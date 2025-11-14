@@ -100,9 +100,17 @@ export function sellerToken(id, email, res) {
     httpOnly: true,
     secure: false, // Set secure only in production
     sameSite: "strict",
-    maxAge:  11 * 60 * 1000, // it will expire in 11 minutes
+    maxAge:  24 * 60 * 60 * 1000, // it will expire in 24 hours
     path: "/", // Optional: restrict to admin routes
+  }); 
+
+  return token;
+}
+export function shortSellerToken(id, info, res) {
+  const token = jwt.sign({ id, info, isSeller: true }, process.env.JWT_SECRET, {
+    expiresIn: "3m", // 3 minutes
   });
+
 
   return token;
 }
