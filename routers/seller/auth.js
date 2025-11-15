@@ -177,10 +177,13 @@ router.post("/successLogin", async (req, res) => {
 
     // 7) send data back
     if (seller.email) {
+
+
       res.json({
         id: seller.id,
         name: seller.name,
         email: seller.email,
+        shop_name: newSeller === false ? seller.shop_name : null,
         token,
         newSeller,
       });
