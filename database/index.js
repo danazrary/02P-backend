@@ -1,4 +1,26 @@
-import { Sequelize } from "sequelize";
+import sequelize from "./sequelize.js";
+
+import Seller from "./seller.js";
+import Plan from "./plan.js";
+import SellerPlan from "./sellerPlan.js";
+
+/* ============================
+   ASSOCIATIONS
+============================ */
+
+Seller.hasMany(SellerPlan, { foreignKey: "seller_id" });
+SellerPlan.belongsTo(Seller, { foreignKey: "seller_id" });
+
+Plan.hasMany(SellerPlan, { foreignKey: "plan_id" });
+SellerPlan.belongsTo(Plan, { foreignKey: "plan_id" });
+
+/* ============================
+   EXPORT
+============================ */
+
+export { sequelize, Seller, Plan, SellerPlan };
+
+/* import { Sequelize } from "sequelize";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -21,3 +43,4 @@ try {
 }
 
 export default sequelize;
+ */

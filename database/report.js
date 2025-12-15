@@ -1,5 +1,5 @@
 import { DataTypes } from "sequelize";
-import sequelize from "./index.js";
+import sequelize from "./sequelize.js";
 
 const Report = sequelize.define(
   "report",

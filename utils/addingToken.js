@@ -1,6 +1,43 @@
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
 dotenv.config();
+
+
+//.
+//.
+//.
+//seller token
+export function sellerToken(id, email, res) {
+  const expiresInHours = 24;
+
+  const token = jwt.sign(
+    { id, email, isSeller: true },
+    process.env.JWT_SECRET,
+    { expiresIn: `${expiresInHours}h` }
+  );
+
+  res.cookie("s_t", token, {
+    httpOnly: true,
+    secure: process.env.ENVIRONMENT === "product", //
+    sameSite: "strict",
+    maxAge: expiresInHours * 60 * 60 * 1000, // ✅ SAME AS JWT
+    path: "/",
+  });
+
+  return token;
+}
+
+export function shortSellerToken(id, info, res) {
+  const token = jwt.sign({ id, info, isSeller: true }, process.env.JWT_SECRET, {
+    expiresIn: "3m", // 3 minutes
+  });
+
+
+  return token;
+}
+
+
+
 // admin token
 export function adminToken(id, email, res) {
 
@@ -85,35 +122,7 @@ export function userRefreshToken(id, email, res) {
 
   return refreshToken;
 }
-//.
-//.
-//.
-//seller token
-export function sellerToken(id, email, res) {
 
-
-  const token = jwt.sign({ id, email, isSeller: true }, process.env.JWT_SECRET, {
-    expiresIn: "11m", // 11 minutes
-  });
-
-  res.cookie("s_t", token, {
-    httpOnly: true,
-    secure: false, // Set secure only in production
-    sameSite: "strict",
-    maxAge:  24 * 60 * 60 * 1000, // it will expire in 24 hours
-    path: "/", // Optional: restrict to admin routes
-  }); 
-
-  return token;
-}
-export function shortSellerToken(id, info, res) {
-  const token = jwt.sign({ id, info, isSeller: true }, process.env.JWT_SECRET, {
-    expiresIn: "3m", // 3 minutes
-  });
-
-
-  return token;
-}
 //.
 //.
 //.

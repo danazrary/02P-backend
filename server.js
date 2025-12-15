@@ -7,6 +7,7 @@ import helmet from "helmet";
 import hpp from "hpp";
 import http from "http";
 import https from "https";
+import path from "path";
 import fs from "fs";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
@@ -19,14 +20,23 @@ import { sanitizeHtmlMiddleware } from "./middlewares/sanitizeHtml.js";
 import { verifyCsrfToken } from "./utils/csrfProtection.js";
 import { apiLimiter, corsOptions } from "./utils/helper.js";
 import { adminToken, adminRefreshToken } from "./utils/addingToken.js";
+import { sequelize } from "./database/index.js";
 
 // Load environment variables (.env.product, .env.developedLH, .env.developingURL)
 dotenv.config();
 
 // --- CREATE EXPRESS APP ---
 const app = express();
+app.use((req, res, next) => {
+  console.log("🔥 INCOMING:", req.method, req.url);
+  next();
+});
+
 app.set("trust proxy", 1);
 app.use(passport.initialize());
+//app.use("/uploads", express.static("uploads"));
+
+// place BEFORE server start (near end of app file, but after routers)
 
 // --- MIDDLEWARE ---
 /* app.use((req, res, next) => {
@@ -41,7 +51,7 @@ app.use(passport.initialize());
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 }); */
-
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 app.use(cors(corsOptions));
 app.use("/", apiLimiter);
 app.use(helmet());
@@ -76,7 +86,8 @@ app.get("/profile", (req, res) => {
 });
 
 // CSRF Token endpoint
-
+await sequelize.authenticate();
+console.log("✅ DB connected");
 app.get("/csrf-token", (req, res) => {
   if (!res.locals || !res.locals.csrfToken)
     return res.status(500).json({ error: "CSRF token not available" });
