@@ -4,11 +4,11 @@ import sequelize from "./sequelize.js";
 const SellerPlan = sequelize.define(
   "seller_plan",
   {
-    starts_at: {
+    start_date: {
       type: DataTypes.DATE,
       allowNull: false,
     },
-    expires_at: {
+    end_date: {
       type: DataTypes.DATE,
       allowNull: false,
     },
@@ -16,7 +16,7 @@ const SellerPlan = sequelize.define(
       type: DataTypes.BOOLEAN,
       defaultValue: false,
     },
-    is_active: {
+    status: {
       type: DataTypes.BOOLEAN,
       defaultValue: true,
     },

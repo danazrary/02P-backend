@@ -152,4 +152,78 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
   }
 });
 
+router.post(
+  "/seller-info-update",
+  jwtVerifySellerToken,
+  uploadSellerImage.single("shop_image"), // must match FormData
+  async (req, res) => {
+    try {
+      const { id } = req.user;
+      const { sellerName, shopName, whatsappNumber } = req.body;
+
+      const seller = await Seller.findByPk(id);
+      if (!seller) {
+        return res.status(404).json({
+          success: false,
+          error: true,
+          message: "Seller not found",
+        });
+      }
+
+      /* =======================
+         PREPARE UPDATE OBJECT
+      ======================= */
+
+      const updateData = {};
+
+      if (sellerName && sellerName !== seller.name) {
+        updateData.name = sellerName;
+      }
+
+      if (shopName && shopName !== seller.shop_name) {
+        updateData.shop_name = shopName;
+      }
+
+      if (whatsappNumber && whatsappNumber !== seller.phone) {
+        updateData.phone = whatsappNumber;
+      }
+
+      // 🖼️ Handle image update
+      if (req.file) {
+        if (seller.shop_image) {
+          deleteFile(seller.shop_image); // remove old image
+        }
+        updateData.shop_image = `/uploads/sellers/${req.file.filename}`;
+      }
+
+      // 🟡 No changes detected
+      if (Object.keys(updateData).length === 0) {
+        return res.status(200).json({
+          success: true,
+          error: false,
+          message: "No changes detected",
+          seller,
+        });
+      }
+
+      await seller.update(updateData);
+
+      return res.status(200).json({
+        success: true,
+        error: false,
+        message: "Seller info updated successfully",
+        seller,
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({
+        success: false,
+        error: true,
+        message: "Server error",
+      });
+    }
+  }
+);
+
+
 export default router;

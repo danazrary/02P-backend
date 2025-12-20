@@ -4,7 +4,7 @@ import crypto from "crypto";
 
 export const apiLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
-  max: 500, // Allow 500 requests per IP
+  max: 5000, // Allow 500 requests per IP
   message: {
     error: true,
     errorMsg: "داواکاری زۆر لەم ئایپیەوە، تکایە دواتر هەوڵبدەرەوە",

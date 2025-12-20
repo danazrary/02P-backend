@@ -4,6 +4,11 @@ import sequelize from "./sequelize.js";
 const Product = sequelize.define(
   "Product",
   {
+    seller_id: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+
     language: {
       type: DataTypes.ENUM("arabic", "kurdish", "both"),
       defaultValue: "kurdish", // ✅ default is kurdish now

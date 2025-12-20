@@ -130,7 +130,7 @@ router.get(
   }
 );
 
-router.post("/successLogin", async (req, res) => {
+/* router.post("/successLogin", async (req, res) => {
   console.log("success");
 
   try {
@@ -196,6 +196,58 @@ router.post("/successLogin", async (req, res) => {
         newSeller,
       });
     }
+  } catch (err) {
+    console.log("SuccessLogin error:", err);
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}); */
+router.post("/successLogin", async (req, res) => {
+  console.log("success");
+
+  try {
+    // 1) get temporary token from Authorization header
+    const header = req.headers.authorization;
+
+    if (!header || !header.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "No token provided" });
+    }
+
+    const tempToken = header.split(" ")[1];
+
+    // 2) verify temporary token (short-lived)
+    const decoded = jwt.verify(tempToken, process.env.JWT_SECRET);
+
+    // 3) read seller id from token
+    const sellerId = decoded.id;
+
+    // 4) fetch seller
+    const seller = await Seller.findByPk(sellerId);
+
+    if (!seller) {
+      return res.status(404).json({ error: "Seller not found" });
+    }
+
+    // 5) create FINAL token → saved as httpOnly cookie (s_t)
+    const sellerEmail = seller.email || seller.name;
+    sellerToken(seller.id, sellerEmail, res); // sets cookie: s_t
+
+    // 6) check if seller profile is incomplete
+    const newSeller =
+      seller.needsManualEmail === true ||
+      !seller.email ||
+      !seller.phone ||
+      !seller.name ||
+      !seller.shop_name;
+
+    // 7) respond WITHOUT sending token
+    res.json({
+      success: true,
+      id: seller.id,
+      name: seller.name,
+      email: seller.email || null,
+      shop_name: newSeller ? null : seller.shop_name,
+      newSeller,
+    });
   } catch (err) {
     console.log("SuccessLogin error:", err);
     return res.status(401).json({ error: "Invalid or expired token" });

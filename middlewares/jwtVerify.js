@@ -1,7 +1,5 @@
-
-
+//jwtVerifySellerToken --- detectSeller
 import jwt from "jsonwebtoken";
-
 
 //.
 //.
@@ -12,6 +10,7 @@ export const jwtVerifySellerToken = (req, res, next) => {
 
   if (!s_t) {
     return res.status(401).json({
+      logout: true,
       token: "missing",
       error: true,
       errorMsg: "Please login first.",
@@ -30,6 +29,7 @@ export const jwtVerifySellerToken = (req, res, next) => {
 
       if (err.name === "TokenExpiredError") {
         return res.status(401).json({
+          logout: true,
           token: "expired",
           error: true,
           errorMsg: "Session expired. Please login again.",
@@ -37,6 +37,7 @@ export const jwtVerifySellerToken = (req, res, next) => {
       }
 
       return res.status(401).json({
+        logout: true,
         token: "invalid",
         error: true,
         errorMsg: "Invalid token. Please login again.",
@@ -44,6 +45,28 @@ export const jwtVerifySellerToken = (req, res, next) => {
     }
 
     req.user = user;
+    next();
+  });
+};
+//.
+//.
+//.
+// detectSeller
+export const detectSeller = (req, res, next) => {
+  const { s_t } = req.cookies;
+
+  // default: not seller
+  req.isSeller = false;
+  req.seller = null;
+
+  if (!s_t) return next();
+
+  jwt.verify(s_t, process.env.JWT_SECRET, (err, decoded) => {
+    if (!err && decoded) {
+      req.isSeller = true;
+      req.seller = decoded; // optional (seller id, role, etc)
+    }
+    // even if token invalid → continue normally
     next();
   });
 };
