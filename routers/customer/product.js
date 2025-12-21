@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import Product from "../../database/products.js";
-
+import Report from "../../database/report.js";
 const router = Router();
 
 // Multer setup to save images in /uploads folder
@@ -21,11 +21,32 @@ router.get("/product/:id", detectSeller, async (req, res) => {
       });
     }
 
+    // 👀 increase product views
+    await product.increment("views", { by: 1 });
+
+    // 📊 REPORT LOGIC
+    const today = new Date().toISOString().split("T")[0];
+
+    const [report, created] = await Report.findOrCreate({
+      where: {
+        seller_id: product.seller_id,
+        report_date: today,
+      },
+      defaults: {
+        productViews: 1,
+      },
+    });
+
+    // if report already exists → increment
+    if (!created) {
+      await report.increment("productViews", { by: 1 });
+    }
+
     res.status(200).json({
       success: true,
       error: false,
       product,
-      isSeller: req.isSeller, // 👈 MAGIC HERE
+      isSeller: req.isSeller,
     });
   } catch (error) {
     console.error(error);
