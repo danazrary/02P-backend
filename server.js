@@ -53,6 +53,7 @@ app.use(passport.initialize());
 }); */
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 app.use(cors(corsOptions));
+
 app.use("/", apiLimiter);
 app.use(helmet());
 app.use(hpp());
@@ -84,6 +85,7 @@ app.get("/profile", (req, res) => {
     res.status(401).json({ message: "Invalid token" });
   }
 });
+
 
 // CSRF Token endpoint
 await sequelize.authenticate();

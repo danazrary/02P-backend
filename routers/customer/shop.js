@@ -32,13 +32,15 @@ router.get("/:shopName", async (req, res) => {
         message: "Seller not found",
       });
     }
-
+    console.log("Cookies:", req.cookies,    req.cookies?.[`shop_visit_${seller.id}`]);
     const sellerId = seller.id;
     const today = new Date().toISOString().split("T")[0];
+    console.log("Today:", today);
 
     // 🍪 COOKIE NAME
     const visitCookieName = `shop_visit_${sellerId}`;
     const lastVisit = req.cookies?.[visitCookieName];
+    console.log("aaa", visitCookieName, lastVisit);
 
     let shouldIncrease = false;
 
@@ -65,11 +67,12 @@ router.get("/:shopName", async (req, res) => {
       }
 
       // 🍪 Save/update cookie
-      res.cookie(visitCookieName, Date.now(), {
-        maxAge: 24 * 60 * 60 * 1000, // 1 day
-        httpOnly: true,
-        sameSite: "lax",
-      });
+    res.cookie(visitCookieName, Date.now(), {
+      maxAge: 24 * 60 * 60 * 1000,
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/", // 🔥 IMPORTANT
+    });
     }
 
     // 🔹 SELLER PLAN
@@ -126,6 +129,5 @@ router.get("/:shopName", async (req, res) => {
     });
   }
 });
-
 
 export default router;
