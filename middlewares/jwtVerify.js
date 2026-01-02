@@ -71,3 +71,47 @@ export const detectSeller = (req, res, next) => {
   });
 };
 
+//.
+//.
+//.
+// check me
+export const checkMe = (req, res, next) => {
+  const { a_t, s_t } = req.cookies;
+
+  // default → customer
+  req.user = {
+    role: "customer",
+    data: null,
+  };
+
+  // 1️⃣ ADMIN has priority
+  if (a_t) {
+    return jwt.verify(a_t, process.env.JWT_SECRET, (err, decoded) => {
+      if (!err && decoded) {
+        req.user = {
+          role: "admin",
+          data: decoded,
+        };
+      }
+      return next();
+    });
+  }
+
+  // 2️⃣ SELLER
+  if (s_t) {
+    return jwt.verify(s_t, process.env.JWT_SECRET, (err, decoded) => {
+      if (!err && decoded) {
+        req.user = {
+          role: "seller",
+          data: decoded,
+        };
+      }
+      return next();
+    });
+  }
+
+  // 3️⃣ CUSTOMER (no token)
+  next();
+};
+
+

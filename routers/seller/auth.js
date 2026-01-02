@@ -5,7 +5,26 @@ import "../../utils/passportConfig.js";
 import Seller from "../../database/seller.js";
 import crypto from "crypto";
 import { sellerToken, shortSellerToken } from "../../utils/addingToken.js";
+import { checkMe } from "../../middlewares/jwtVerify.js";
 const router = express.Router();
+
+router.get("/check-me", checkMe, async (req, res) => {
+  const { user } = req;
+  console.log(user);
+  if (user.role === "customer") {
+    return res.json({ role: "customer" });
+  } else if (user.role === "seller") {
+const findSeller = await Seller.findByPk(user.data.id,{
+  attributes: ['shop_name', "id"]
+}); 
+console.log(findSeller);
+
+    return res.json({ role: "seller", seller: findSeller });
+  } else if (user.role === "admin") {
+
+    return res.json({ role: "admin" });
+  }
+});
 
 // routes/auth.js (example)
 router.get("/google/url", (req, res) => {

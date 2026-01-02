@@ -2,13 +2,13 @@ import express from "express";
 import multer from "multer";
 import path from "path";
 import Product from "../../database/products.js";
+import Seller from "../../database/seller.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import fs from "fs";
 const router = express.Router();
 
 // Multer setup to save images in /uploads folder
 const storage = multer.diskStorage({
-
   destination: function (req, file, cb) {
     cb(null, "uploads/products"); // folder must exist
   },
@@ -84,12 +84,19 @@ router.post(
         customInputs: customInputs ? JSON.parse(customInputs) : [],
       });
 
-      res
-        .status(201)
-        .json({ success: true, error: false, message: "Product created successfully", product });
+      res.status(201).json({
+        success: true,
+        error: false,
+        message: "Product created successfully",
+        product,
+      });
     } catch (error) {
       console.error(error);
-      res.status(500).json({ success: false, error: true, message: "Failed to create product" });
+      res.status(500).json({
+        success: false,
+        error: true,
+        message: "Failed to create product",
+      });
     }
   }
 );
@@ -108,7 +115,9 @@ router.put(
       });
 
       if (!product) {
-        return res.status(404).json({ success: false, error: true, message: "Product not found" });
+        return res
+          .status(404)
+          .json({ success: false, error: true, message: "Product not found" });
       }
 
       const {
@@ -177,13 +186,11 @@ router.put(
       });
     } catch (error) {
       console.error(error);
-      res
-        .status(500)
-        .json({
-          success: false,
-          error: true,
-          message: "Failed to update product",
-        });
+      res.status(500).json({
+        success: false,
+        error: true,
+        message: "Failed to update product",
+      });
     }
   }
 );
@@ -213,19 +220,60 @@ router.delete(
 
       await product.destroy();
 
-      res.status(200).json({success: true, error: false, message: "Product deleted successfully" });
+      res.status(200).json({
+        success: true,
+        error: false,
+        message: "Product deleted successfully",
+      });
     } catch (error) {
       console.error(error);
-      res
-        .status(500)
-        .json({
-          success: false,
-          error: true,
-          message: "Failed to delete product",
-        });
+      res.status(500).json({
+        success: false,
+        error: true,
+        message: "Failed to delete product",
+      });
     }
   }
 );
 
+// Route to get all products by seller shop name
+router.get("/products/shop/:shopName", async (req, res) => {
+  try {
+    const { shopName } = req.params;
+
+    // Find seller by shop name
+    const seller = await Seller.findOne({
+      where: { shop_name: shopName },
+    });
+
+    if (!seller) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "Seller not found",
+      });
+    }
+
+    // Get all products for this seller
+    const products = await Product.findAll({
+      where: { seller_id: seller.id },
+      order: [["createdAt", "DESC"]],
+    });
+
+    res.status(200).json({
+      success: true,
+      error: false,
+      data: products,
+      seller,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      error: true,
+      message: "Failed to fetch products",
+    });
+  }
+});
 
 export default router;

@@ -6,7 +6,7 @@ import Report from "../../database/report.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
-
+import SellerOffer from "../../database/sellerOffer.js";
 const router = Router();
 
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
@@ -43,6 +43,23 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
     // 🔹 get plan name
     // const plan = await Plan.findByPk(sellerPlanRow.plan_id);
 
+    const offers = await SellerOffer.findAll({
+      where: { seller_id: id, is_active: true },
+      attributes: [
+        "id",
+        "titleKu",
+        "titleAr",
+        "cover_image",
+        "type_offer",
+        "start_date",
+        "end_date",
+        "language",
+        "discount_price_type",
+        "discount_price",
+        "discount_percent",
+        "discount_or_free_delivery",
+      ],
+    });
     const products = await Product.findAll({
       where: { seller_id: id },
       attributes: [
@@ -68,6 +85,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       logout: false,
       sellerPlan: sellerPlanRow ? sellerPlanRow.name : "Free",
       products,
+      offers,
     });
   } catch (error) {
     console.error(error);

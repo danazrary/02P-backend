@@ -3,6 +3,8 @@ import sequelize from "./sequelize.js";
 import Seller from "./seller.js";
 import Plan from "./plan.js";
 import SellerPlan from "./sellerPlan.js";
+import Product from "./products.js";
+import SellerOffer from "./sellerOffer.js";
 
 /* ============================
    ASSOCIATIONS
@@ -14,11 +16,17 @@ SellerPlan.belongsTo(Seller, { foreignKey: "seller_id" });
 Plan.hasMany(SellerPlan, { foreignKey: "plan_id" });
 SellerPlan.belongsTo(Plan, { foreignKey: "plan_id" });
 
+Seller.hasMany(Product, { foreignKey: "seller_id" });
+Product.belongsTo(Seller, { foreignKey: "seller_id" });
+
+Seller.hasMany(SellerOffer, { foreignKey: "seller_id" });
+SellerOffer.belongsTo(Seller, { foreignKey: "seller_id" });
+
 /* ============================
    EXPORT
 ============================ */
 
-export { sequelize, Seller, Plan, SellerPlan };
+export { sequelize, Seller, Plan, SellerPlan, Product, SellerOffer };
 
 /* import { Sequelize } from "sequelize";
 import dotenv from "dotenv";

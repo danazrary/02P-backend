@@ -5,6 +5,7 @@ import sellerSettingsRouter from "./seller/setting.js";
 import sellerAddingProductRouter from "./seller/addProduct.js";
 import sellerDashboardRouter from "./seller/dashboard.js";
 import sellerDataRouter from "./seller/data.js";
+import sellerOfferRouter from "./seller/addOffer.js";
 //customer routers
 import customerShopRouter from "./customer/shop.js";
 import customerProductRouter from "./customer/product.js";
@@ -17,6 +18,7 @@ router.use("/seller/setting", sellerSettingsRouter);
 router.use("/seller", sellerAddingProductRouter);
 router.use("/seller", sellerDashboardRouter);
 router.use("/seller", sellerDataRouter);
+router.use("/seller", sellerOfferRouter);
 //customer routers
 router.use("/customer", customerProductRouter);
 router.use("/customer", customerShopRouter);
