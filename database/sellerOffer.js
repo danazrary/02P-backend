@@ -82,13 +82,18 @@ const SellerOffer = sequelize.define(
     discount_percent: {
       type: DataTypes.DECIMAL(5, 1),
       allowNull: true,
-  
     },
 
     discount_or_free_delivery: {
       type: DataTypes.ENUM("discount", "free_delivery", "both"),
       allowNull: true,
-    },  
+    },
+
+    apply_to: {
+      type: DataTypes.ENUM("all", "selected"),
+      allowNull: true,
+      defaultValue: "selected",
+    },
   },
   {
     timestamps: true,

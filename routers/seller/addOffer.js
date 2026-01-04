@@ -54,6 +54,7 @@ router.post(
         buy_product_id_quantity,
         get_product_id_quantity,
         fixed_or_percentage,
+        apply_to,
       } = req.body;
       console.log("data", req.body, "data end");
 
@@ -84,6 +85,7 @@ router.post(
           fixed_or_percentage === "percentage" ? null : discount_price || null,
         discount_percent:
           fixed_or_percentage === "fixed" ? null : discount_percent || null,
+        apply_to: apply_to || null,
         buy_product_id_quantity: buy_product_id_quantity
           ? JSON.parse(buy_product_id_quantity)
           : null,
@@ -146,6 +148,7 @@ router.put(
         discount_percent,
         buy_product_id_quantity,
         get_product_id_quantity,
+        apply_to,
       } = req.body;
 
       // Delete old cover image if new one is uploaded
@@ -171,6 +174,7 @@ router.put(
         discount_price_type: discount_price_type || null,
         discount_price: discount_price || null,
         discount_percent: discount_percent || null,
+        apply_to: apply_to || null,
         buy_product_id_quantity: buy_product_id_quantity
           ? JSON.parse(buy_product_id_quantity)
           : null,
