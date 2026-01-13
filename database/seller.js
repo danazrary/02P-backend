@@ -1,7 +1,7 @@
 import { DataTypes } from "sequelize";
 import sequelize from "./sequelize.js";
 
-const seller = sequelize.define(
+const Seller = sequelize.define(
   "seller",
   {
     googleId: {
@@ -39,6 +39,27 @@ const seller = sequelize.define(
       type: DataTypes.TEXT,
       allowNull: true,
     },
+    social_links: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: {
+        instagram: null,
+        facebook: null,
+        tiktok: null,
+        youtube: null,
+        x: null,
+        snapchat: null,
+        threads: null,
+        telegram: null,
+        whatsapp: null,
+        viber: null,
+      },
+    },
+
+    red_line: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
   },
   {
     timestamps: true,
@@ -46,4 +67,4 @@ const seller = sequelize.define(
   }
 );
 
-export default seller;
+export default Seller;

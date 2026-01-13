@@ -40,11 +40,7 @@ export async function getImageUrlFromCDN({ keys }) {
   return `https://${CLOUDFRONT_DOMAIN}/${keyString}`;
 }
 
-
-
-export async function uploadImageToS3(filePath, key ) {
-
-  
+export async function uploadImageToS3(filePath, key) {
   try {
     const fileStream =
       typeof filePath === "string" ? fs.createReadStream(filePath) : filePath;
@@ -52,7 +48,6 @@ export async function uploadImageToS3(filePath, key ) {
       Bucket: process.env.S3_BUCKET_NAME, // Your bucket name
       Key: key, // The name of the file to be saved in S3
       Body: fileStream, // File buffer
-     
     };
 
     // Upload the file to S3
@@ -63,7 +58,7 @@ export async function uploadImageToS3(filePath, key ) {
     console.error("Error uploading image:", err);
     throw err;
   }
-} 
+}
 export async function deleteImagesFromS3(imageKeys) {
   try {
     // Create an array of objects to delete
@@ -83,7 +78,6 @@ export async function deleteImagesFromS3(imageKeys) {
     const command = new DeleteObjectsCommand(deleteParams);
     const response = await s3Client.send(command);
 
-   
     return {
       success: true,
       message: "Images deleted successfully.",

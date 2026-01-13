@@ -73,9 +73,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         "hasDiscount",
         "discountPrice",
         "discountType",
-        "discountDays",
-        "discountHours",
-        "discountMinutes",
+        "discountStartDate",
+        "discountEndDate",
       ],
     });
 
@@ -84,6 +83,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       error: false,
       logout: false,
       sellerPlan: sellerPlanRow ? sellerPlanRow.name : "Free",
+      red_line: seller.red_line || null,
       products,
       offers,
     });

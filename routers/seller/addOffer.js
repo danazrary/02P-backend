@@ -265,7 +265,21 @@ router.get("/offer-details/:offerId", async (req, res) => {
           return { ...item, product };
         })
       );
+
+      // Check if all products were deleted
+      const allProductsDeleted = getBuyProductsDetails.every(item => item.product === null);
+      if (allProductsDeleted && getBuyProductsDetails.length > 0) {
+        // Delete offer if all products are gone
+        await offer.destroy();
+        return res.status(404).json({
+          success: true,
+          error: false,
+          offerIsDeleted: true,
+          message: "Offer deleted - all referenced products were removed",
+        });
+      }
     }
+
     if (offer.get_product_id_quantity) {
       getGetProductsDetails = await Promise.all(
         offer.get_product_id_quantity.map(async (item) => {
@@ -273,6 +287,18 @@ router.get("/offer-details/:offerId", async (req, res) => {
           return { ...item, product };
         })
       );
+
+      // Check if all products were deleted
+      const allProductsDeleted = getGetProductsDetails.every(item => item.product === null);
+      if (allProductsDeleted && getGetProductsDetails.length > 0) {
+        // Delete offer if all products are gone
+        await offer.destroy();
+        return res.status(404).json({
+          success: false,
+          error: true,
+          message: "Offer deleted - all referenced products were removed",
+        });
+      }
     }
 
     res.status(200).json({

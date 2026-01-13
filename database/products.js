@@ -57,17 +57,13 @@ const Product = sequelize.define(
       type: DataTypes.ENUM("permanent", "timer"),
       allowNull: true,
     },
-    discountDays: {
-      type: DataTypes.INTEGER,
-      defaultValue: 0,
+    discountStartDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
     },
-    discountHours: {
-      type: DataTypes.INTEGER,
-      defaultValue: 0,
-    },
-    discountMinutes: {
-      type: DataTypes.INTEGER,
-      defaultValue: 1,
+    discountEndDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
     },
     variantPrices: {
       type: DataTypes.JSON,

@@ -6,6 +6,9 @@ import sellerAddingProductRouter from "./seller/addProduct.js";
 import sellerDashboardRouter from "./seller/dashboard.js";
 import sellerDataRouter from "./seller/data.js";
 import sellerOfferRouter from "./seller/addOffer.js";
+import sellerRedLineRouter from "./seller/redLine.js";
+import sellerCustomerRouter from "./seller/sellersCustomer.js";
+import sellerProfileRouter from "./seller/profile.js";
 //customer routers
 import customerShopRouter from "./customer/shop.js";
 import customerProductRouter from "./customer/product.js";
@@ -19,6 +22,9 @@ router.use("/seller", sellerAddingProductRouter);
 router.use("/seller", sellerDashboardRouter);
 router.use("/seller", sellerDataRouter);
 router.use("/seller", sellerOfferRouter);
+router.use("/seller", sellerRedLineRouter);
+router.use("/seller", sellerCustomerRouter);
+router.use("/seller", sellerProfileRouter);
 //customer routers
 router.use("/customer", customerProductRouter);
 router.use("/customer", customerShopRouter);
