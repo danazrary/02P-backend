@@ -1,5 +1,6 @@
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
+
 import seller from "../database/seller.js";
 
 import { Strategy as FacebookStrategy } from "passport-facebook";

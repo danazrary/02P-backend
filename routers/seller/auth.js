@@ -6,6 +6,7 @@ import Seller from "../../database/seller.js";
 import crypto from "crypto";
 import { sellerToken, shortSellerToken } from "../../utils/addingToken.js";
 import { checkMe } from "../../middlewares/jwtVerify.js";
+import axios from "axios";
 const router = express.Router();
 
 router.get("/check-me", checkMe, async (req, res) => {
@@ -26,83 +27,41 @@ console.log(findSeller);
   }
 });
 
-// routes/auth.js (example)
 router.get("/google/url", (req, res) => {
   console.log("google/url");
-  // If using passport, construct the URL using passport or manually:
-  const url = `${
-    process.env.PASSPORT_GOOGLE_AUTH_URL || "api/seller/auth/google"
-  }`;
-  // simpler: redirect endpoint still preferred; but you can return URL
+
   res.json({
     url: `${req.protocol}://${req.get("host")}/api/seller/auth/google`,
   });
 });
 
-// 1️⃣ Start Google login/register
 router.get(
   "/google",
   passport.authenticate("google", { scope: ["profile", "email"] })
 );
 
-// 2️⃣ Callback (Google redirect)
+
 router.get(
   "/google/callback",
   passport.authenticate("google", { session: false }),
   (req, res) => {
-    console.log("google/callback");
-
     const seller = req.user;
 
-    // Create JWT
-    const token = sellerToken(seller.id, seller.email, res);
-    // Send token + user info to frontend
-    /* res.json({
-      success: true,
-      message: "Login successful",
-      token,
-      seller: {
-        id: seller.id,
-        name: seller.name,
-        email: seller.email,
-      },
-    }); */
-    const payload = {
-      token,
-      seller: {
-        id: seller.id,
-        name: seller.name,
-        email: seller.email,
-        phone: seller.phone,
-        needsManualEmail: seller.needsManualEmail,
-      },
-    };
+    // Create short-lived temp token
+    const tempToken = shortSellerToken(seller.id, { info: seller.name }, res);
 
-    const frontendOrigin =
-      process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+    const frontend = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
 
-    const nonce = crypto.randomBytes(16).toString("base64");
-    res.setHeader(
-      "Content-Security-Policy",
-      `script-src 'self' 'nonce-${nonce}'`
+    // Redirect the same tab directly to frontend OAuthSuccess
+    res.redirect(
+      `${frontend}/oauth-success?token=${tempToken}&provider=google`
     );
-
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-        <body>
-          <script nonce="${nonce}">
-            const payload = ${JSON.stringify(payload)};
-            if (window.opener) {
-              window.opener.postMessage(payload, "${frontendOrigin}");
-            }
-            window.close();
-          </script>
-        </body>
-      </html>
-    `);
   }
 );
+
+
+
+
 // Facebook routes
 router.get("/facebook/url", (req, res) => {
   res.json({
@@ -121,105 +80,127 @@ router.get(
 
 router.get(
   "/facebook/callback",
+
+  // 1️⃣ Handle cancel FIRST
+  (req, res, next) => {
+    if (req.query.error === "access_denied") {
+      const frontendUrl =
+        req.query.origin ||
+        process.env.FRONTEND_ORIGIN ||
+        "http://localhost:5173";
+
+      return res.redirect(`${frontendUrl}/login`);
+    }
+    next();
+  },
+
+  // 2️⃣ Passport only runs if NOT cancelled
   passport.authenticate("facebook", {
     session: false,
     failureRedirect: "/login",
   }),
+
+  // 3️⃣ Success
   (req, res) => {
     const seller = req.user;
     let token;
+
     if (!seller.email) {
       token = shortSellerToken(seller.id, { info: seller.name }, res);
     } else {
       token = sellerToken(seller.id, { info: seller.name }, res);
     }
 
-    // Get frontend URL from query params
     const frontendUrl =
       req.query.origin ||
       process.env.FRONTEND_ORIGIN ||
       "http://localhost:5173";
 
-    // Redirect to frontend with token
-    const redirectUrl = `${frontendUrl}/oauth-success?token=${token}&id=${
-      seller.id
-    }&name=${encodeURIComponent(seller.name)}`;
+   res.redirect(
+     `${frontendUrl}/oauth-success?token=${token}&provider=facebook`
+   );
 
-    res.redirect(redirectUrl);
   }
 );
 
-/* router.post("/successLogin", async (req, res) => {
-  console.log("success");
 
+router.get("/tiktok/url", (req, res) => {
+  const clientKey = process.env.TIKTOK_CLIENT_KEY;
+  const redirectURI = encodeURIComponent(
+    `${process.env.BACKEND_URL}/api/seller/auth/tiktok/callback`
+  );
+  const scope = "user.info.basic";
+
+  const url = `https://www.tiktok.com/v2/auth/authorize?client_key=${clientKey}&redirect_uri=${redirectURI}&response_type=code&scope=${scope}`;
+
+  res.json({ url });
+});
+
+
+
+router.get("/tiktok/callback", async (req, res) => {
   try {
-    // 1) get temporary token from frontend
-    const header = req.headers.authorization;
-    console.log("header", header);
+    const code = req.query.code;
+    const clientKey = process.env.TIKTOK_CLIENT_KEY;
+    const clientSecret = process.env.TIKTOK_CLIENT_SECRET;
+    const redirectURI = `${process.env.BACKEND_URL}/api/seller/auth/tiktok/callback`;
 
-    if (!header) {
-      return res.status(401).json({ error: "No token provided" });
-    }
+    // Exchange code for access token
+    const tokenRes = await axios.post(
+      "https://open.tiktokapis.com/v2/oauth/access_token/",
+      new URLSearchParams({
+        client_key: clientKey,
+        client_secret: clientSecret,
+        code: code,
+        grant_type: "authorization_code",
+        redirect_uri: redirectURI,
+      }).toString(),
+      {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      }
+    );
 
-    const tempToken = header.split(" ")[1];
+    const { access_token, open_id } = tokenRes.data.data;
 
-    // 2) verify the temporary token (4-min token)
-    const decoded = jwt.verify(tempToken, process.env.JWT_SECRET);
+    // Fetch user profile
+    const userRes = await axios.get(
+      `https://open-api.tiktok.com/user/info/?access_token=${access_token}&open_id=${open_id}`
+    );
 
-    // 3) read seller id FROM the token
-    const sellerId = decoded.id;
+    const tiktokUser = userRes.data.data;
 
-    // 4) fetch seller from database
-    const seller = await Seller.findByPk(sellerId);
+    // Now create or fetch seller in your DB
+    let sellerExist = await Seller.findOne({
+      where: { tiktokId: tiktokUser.open_id },
+    });
 
-    if (!seller) {
-      return res.status(404).json({ error: "Seller not found" });
-    }
-    let sellerEmail = seller.email;
-    if (!sellerEmail) {
-      sellerEmail = seller.name;
-    }
-    const token = sellerToken(seller.id, sellerEmail, res);
-    let newSeller;
-    if (
-      seller.needsManualEmail === true ||
-      !seller.email ||
-      !seller.phone ||
-      !seller.name ||
-      !seller.shop_name
-    ) {
-      newSeller = true;
-    } else {
-      newSeller = false;
-    }
-    // 5) create new long-lived token (7 days)
-
-    // 7) send data back
-    if (seller.email) {
-
-
-      res.json({
-        id: seller.id,
-        name: seller.name,
-        email: seller.email,
-        shop_name: newSeller === false ? seller.shop_name : null,
-        token,
-        newSeller,
-      });
-    } else if (!seller.email) {
-      res.json({
-        id: seller.id,
-        name: seller.name,
+    if (!sellerExist) {
+      sellerExist = await Seller.create({
+        tiktokId: tiktokUser.open_id,
+        name: tiktokUser.display_name,
         email: null,
-        token,
-        newSeller,
       });
     }
+
+    const tempToken = shortSellerToken(
+      sellerExist.id,
+      { info: sellerExist.name },
+      res
+    );
+    const frontend = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+
+    res.redirect(
+      `${frontend}/oauth-success?token=${tempToken}&provider=tiktok`
+    );
   } catch (err) {
-    console.log("SuccessLogin error:", err);
-    return res.status(401).json({ error: "Invalid or expired token" });
+    console.error("TikTok login error:", err);
+    res.redirect(
+      `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_login_failed`
+    );
   }
-}); */
+});
+
+
 router.post("/successLogin", async (req, res) => {
   console.log("success");
 

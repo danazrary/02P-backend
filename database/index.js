@@ -9,13 +9,18 @@ import SellerOffer from "./sellerOffer.js";
 /* ============================
    ASSOCIATIONS
 ============================ */
+Seller.hasMany(SellerPlan, { foreignKey: "seller_id", as: "plans" });
+SellerPlan.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
 
-Seller.hasMany(SellerPlan, { foreignKey: "seller_id" });
+Plan.hasMany(SellerPlan, { foreignKey: "plan_id", as: "sellerPlans" });
+SellerPlan.belongsTo(Plan, { foreignKey: "plan_id", as: "plan" });
+
+/* Seller.hasMany(SellerPlan, { foreignKey: "seller_id" });
 SellerPlan.belongsTo(Seller, { foreignKey: "seller_id" });
 
 Plan.hasMany(SellerPlan, { foreignKey: "plan_id" });
 SellerPlan.belongsTo(Plan, { foreignKey: "plan_id" });
-
+ */
 Seller.hasMany(Product, { foreignKey: "seller_id" });
 Product.belongsTo(Seller, { foreignKey: "seller_id" });
 

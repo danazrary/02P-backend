@@ -1,4 +1,6 @@
 import { Router } from "express";
+//admin routers
+import adminControlCenterRouter from "./admin/ControlCenter.js";
 //seller routers
 import sellerAuthRouter from "./seller/auth.js";
 import sellerSettingsRouter from "./seller/setting.js";
@@ -13,8 +15,10 @@ import sellerProfileRouter from "./seller/profile.js";
 import customerShopRouter from "./customer/shop.js";
 import customerProductRouter from "./customer/product.js";
 
-//admin routers
+
 const router = Router();
+//admin routers
+router.use("/admin/control-center", adminControlCenterRouter);
 //seller routers
 router.use("/seller/auth", sellerAuthRouter);
 router.use("/seller/setting", sellerSettingsRouter);
@@ -28,5 +32,5 @@ router.use("/seller", sellerProfileRouter);
 //customer routers
 router.use("/customer", customerProductRouter);
 router.use("/customer", customerShopRouter);
-//admin routers
+
 export default router;
