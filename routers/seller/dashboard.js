@@ -12,9 +12,17 @@ const router = Router();
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
   try {
     const { id } = req.user;
+    console.log(id);
 
     const seller = await Seller.findByPk(id);
+    console.log(seller);
+
     if (!seller) {
+      res.clearCookie("s_t", {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+      });
       return res.status(404).json({
         success: false,
         error: true,
@@ -31,14 +39,14 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       sellerPlanRecord = await SellerPlan.create({
         seller_id: id,
         plan_id: 1, // Free plan
-        starts_at: new Date(),
-        expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+        start_date: new Date(),
+        end_date: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
         is_trial: false,
         is_active: false,
       });
     }
 
-    const sellerPlanRow = await Plan.findByPk(sellerPlanRecord.id);
+    const sellerPlanRow = await Plan.findByPk(sellerPlanRecord.plan_id);
 
     // 🔹 get plan name
     // const plan = await Plan.findByPk(sellerPlanRow.plan_id);

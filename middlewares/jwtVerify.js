@@ -76,7 +76,7 @@ export const detectSeller = (req, res, next) => {
 //.
 // check me
 export const checkMe = (req, res, next) => {
-  const { a_t, s_t } = req.cookies;
+  const { admin_token, s_t } = req.cookies;
 
   // default → customer
   req.user = {
@@ -85,27 +85,51 @@ export const checkMe = (req, res, next) => {
   };
 
   // 1️⃣ ADMIN has priority
-  if (a_t) {
-    return jwt.verify(a_t, process.env.JWT_SECRET, (err, decoded) => {
-      if (!err && decoded) {
+  if (admin_token) {
+    return jwt.verify(
+      admin_token,
+      process.env.ADMIN_JWT_SECRET,
+      (err, decoded) => {
+        if (err || !decoded) {
+          // ❌ invalid / expired → remove cookie
+          res.clearCookie("admin_token", {
+            httpOnly: true,
+            sameSite: "strict",
+            secure: process.env.NODE_ENV === "production",
+          });
+          return next();
+        }
+
+        // ✅ valid admin
         req.user = {
           role: "admin",
           data: decoded,
         };
-      }
-      return next();
-    });
+
+        return next();
+      },
+    );
   }
 
   // 2️⃣ SELLER
   if (s_t) {
     return jwt.verify(s_t, process.env.JWT_SECRET, (err, decoded) => {
-      if (!err && decoded) {
-        req.user = {
-          role: "seller",
-          data: decoded,
-        };
+      if (err || !decoded) {
+        // ❌ invalid / expired → remove cookie
+        res.clearCookie("s_t", {
+          httpOnly: true,
+          sameSite: "strict",
+          secure: process.env.NODE_ENV === "production",
+        });
+        return next();
       }
+
+      // ✅ valid seller
+      req.user = {
+        role: "seller",
+        data: decoded,
+      };
+
       return next();
     });
   }
@@ -113,5 +137,44 @@ export const checkMe = (req, res, next) => {
   // 3️⃣ CUSTOMER (no token)
   next();
 };
+
+//.
+//.
+//.
+// admin
+export const adminAuth = (req, res, next) => {
+  const token = req.cookies.admin_token;
+  if (!token) {
+    return res.status(401).json({
+      error: true,
+      success: false,
+      message: "Admin not authenticated",
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.ADMIN_JWT_SECRET);
+
+    if (decoded.role !== "admin" && decoded.role !== "super_admin") {
+      res.clearCookie("admin_token");
+      return res.status(403).json({
+        error: true,
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    req.admin = decoded;
+    next();
+  } catch {
+    res.clearCookie("admin_token");
+    return res.status(401).json({
+      error: true,
+      success: false,
+      message: "Session expired, please login again",
+    });
+  }
+};
+
 
 

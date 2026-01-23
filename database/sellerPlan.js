@@ -24,7 +24,7 @@ const SellerPlan = sequelize.define(
   {
     tableName: "seller_plans",
     timestamps: true,
-  }
+  },
 );
 
 export default SellerPlan;

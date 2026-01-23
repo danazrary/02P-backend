@@ -61,7 +61,7 @@ router.post(
       completedProfile: true,
       error: false,
     });
-  }
+  },
 );
 
 router.post(
@@ -76,6 +76,7 @@ router.post(
 
       if (!shopName || !sellerName || !whatsappNumber) {
         return res.status(400).json({
+          success: false,
           error: true,
           message: "Missing required fields",
         });
@@ -85,6 +86,7 @@ router.post(
 
       if (!seller) {
         return res.status(404).json({
+          success: false,
           error: true,
           message: "Seller not found",
         });
@@ -120,11 +122,12 @@ router.post(
     } catch (err) {
       console.error(err);
       return res.status(500).json({
+        success: false,
         error: true,
         message: "Server error",
       });
     }
-  }
+  },
 );
 
 router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
@@ -145,7 +148,6 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
       phone: seller.phone,
     });
   } catch (err) {
-   
     return res
       .status(500)
       .json({ message: "Server error", error: true, success: false });
@@ -222,8 +224,7 @@ router.post(
         message: "Server error",
       });
     }
-  }
+  },
 );
-
 
 export default router;

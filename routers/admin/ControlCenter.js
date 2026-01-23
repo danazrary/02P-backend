@@ -5,18 +5,31 @@ import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import Product from "../../database/products.js";
 import SellerOffer from "../../database/sellerOffer.js";
-
+import { checkMe,adminAuth } from "../../middlewares/jwtVerify.js";
 const router = Router();
 
-/**
- * POST /admin/check-expired-plans
- * This route is meant to be called by a CRON job
- */
-router.post("/check-expired-plans", async (req, res) => {
+
+
+router.get("/check-me", checkMe, async (req, res) => {
+  const { user } = req;
+  console.log(user);
+  if (user.role === "customer") {
+    return res.json({ role: "customer" });
+  } else if (user.role === "seller") {
+    const findSeller = await Seller.findByPk(user.data.id, {
+      attributes: ["shop_name", "id"],
+    });
+    console.log(findSeller);
+
+    return res.json({ role: "seller", seller: findSeller });
+  } else if (user.role === "admin") {
+    return res.json({ role: "admin" });
+  }
+});
+router.post("/check-expired-plans", adminAuth, async (req, res) => {
   try {
     const now = new Date();
 
-    // find active plans that are expired
     const expiredPlans = await SellerPlan.findAll({
       where: {
         end_date: { [Op.lt]: now },
@@ -25,43 +38,47 @@ router.post("/check-expired-plans", async (req, res) => {
       include: [
         {
           model: Seller,
-          attributes: ["id", "name", "phone", "shop_name"],
+          as: "seller", // ✅ REQUIRED alias
+          attributes: ["id", "name", "shop_name", "phone"],
         },
         {
           model: Plan,
+          as: "plan", // ✅ REQUIRED alias
           attributes: ["name"],
         },
       ],
+      order: [["end_date", "ASC"]],
     });
 
-    for (const sellerPlan of expiredPlans) {
-      const seller = sellerPlan.seller;
+    // format data for frontend
+    const result = expiredPlans.map((sp) => ({
+      sellerId: sp.seller?.id ?? null,
+      sellerName: sp.seller?.name ?? null,
+      shopName: sp.seller?.shop_name ?? null,
+      phone: sp.seller?.phone ?? null,
+      planName: sp.plan?.name ?? null,
+      startDate: sp.start_date,
+      endDate: sp.end_date,
+    }));
 
-      if (!seller || !seller.phone) continue;
-
-      // ⚠️ SEND WHATSAPP HERE
-      // sendWhatsApp(seller.phone, message)
-
-      console.log(
-        `WhatsApp → ${seller.phone}: Plan "${sellerPlan.plan?.name}" expired`
-      );
-
-      // deactivate plan to avoid re-sending
-      sellerPlan.status = false;
-      await sellerPlan.save();
-    }
-
-    res.json({
+    return res.json({
       success: true,
-      expiredCount: expiredPlans.length,
+      error: false,
+      expiredCount: result.length,
+      data: result,
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+    console.error("check-expired-plans error:", err);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
   }
 });
 
-router.post("/cleanup-expired-sellers", async (req, res) => {
+
+router.post("/cleanup-expired-sellers", adminAuth, async (req, res) => {
   try {
     const now = new Date();
 
@@ -70,7 +87,7 @@ router.post("/cleanup-expired-sellers", async (req, res) => {
       where: {
         status: false,
         end_date: {
-          [Op.lt]: Sequelize.literal("DATE_SUB(NOW(), INTERVAL 10 DAY)"),
+          [Op.lt]: Sequelize.literal("DATE_SUB(NOW(), INTERVAL 15 DAY)"),
         },
       },
       attributes: ["seller_id"],
@@ -106,26 +123,27 @@ router.post("/cleanup-expired-sellers", async (req, res) => {
   }
 });
 
-router.post("/add-seller-plan", async (req, res) => {
+router.post("/add-seller-plan", adminAuth, async (req, res) => {
   try {
     const { seller_id, plan_id, is_trial = false } = req.body;
 
     if (!seller_id || !plan_id) {
-      return res.status(400).json({ message: "Missing data" });
+      return res
+        .status(400)
+        .json({ success: false, error: true, message: "Missing data" });
     }
 
     const seller = await Seller.findByPk(seller_id);
     if (!seller) {
-      return res.status(404).json({ message: "Seller not found" });
+      return res
+        .status(404)
+        .json({ success: false, error: true, message: "Seller not found" });
     }
 
     const plan = await Plan.findByPk(plan_id);
     if (!plan) {
-      return res.status(404).json({ message: "Plan not found" });
+      return res.status(404).json({ success: false, error: true, message: "Plan not found" });
     }
-
-    // deactivate all previous plans
-    await SellerPlan.update({ status: false }, { where: { seller_id } });
 
     const startDate = new Date();
     const endDate = new Date(startDate);
@@ -134,67 +152,127 @@ router.post("/add-seller-plan", async (req, res) => {
       endDate.setDate(endDate.getDate() + plan.duration_days);
     }
 
-    const newPlan = await SellerPlan.create({
-      seller_id,
-      plan_id,
-      start_date: startDate,
-      end_date: endDate,
-      is_trial,
-      status: true,
+    // 🔍 check if seller already has a plan record
+    const existingPlan = await SellerPlan.findOne({
+      where: { seller_id },
     });
+
+    let sellerPlan;
+
+    if (existingPlan) {
+      // 🔁 UPDATE existing plan
+      sellerPlan = await existingPlan.update({
+        plan_id,
+        start_date: startDate,
+        end_date: endDate,
+        is_trial,
+        status: true,
+      });
+    } else {
+      // ➕ CREATE new plan
+      sellerPlan = await SellerPlan.create({
+        seller_id,
+        plan_id,
+        start_date: startDate,
+        end_date: endDate,
+        is_trial,
+        status: true,
+      });
+    }
 
     res.json({
       success: true,
-      message: "Plan assigned successfully",
+      error: false,
+      message: existingPlan
+        ? "Plan updated successfully"
+        : "Plan assigned successfully",
       plan: {
         name: plan.name,
         billing_cycle: plan.billing_cycle,
         price: plan.price,
         max_products: plan.max_products,
-        start_date: startDate,
-        end_date: endDate,
+        start_date: sellerPlan.start_date,
+        end_date: sellerPlan.end_date,
       },
     });
   } catch (error) {
-    console.error(error);
+    console.error("add-seller-plan error:", error);
     res.status(500).json({ success: false });
   }
 });
 
-router.post("/activate-trial", async (req, res) => {
+
+router.post("/activate-trial", adminAuth, async (req, res) => {
   try {
     const { seller_id } = req.body;
 
     if (!seller_id) {
-      return res.status(400).json({ message: "seller_id is required" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: true,
+          message: "seller_id is required",
+        });
     }
 
-    // find seller plan with plan_id = 1
-    const sellerPlan = await SellerPlan.findOne({
-      where: {
-        seller_id,
-        plan_id: 1,
-        status: true,
-      },
-    });
-
-    if (!sellerPlan) {
+    // 1️⃣ Check if seller exists
+    const seller = await Seller.findByPk(seller_id);
+    if (!seller) {
       return res
         .status(404)
-        .json({ message: "Active free plan not found for this seller" });
+        .json({ success: false, error: true, message: "Seller not found" });
     }
 
-    // update trial flag only
-    sellerPlan.is_trial = true;
-    await sellerPlan.save();
+    // 2️⃣ Find any existing plan for this seller
+    let sellerPlan = await SellerPlan.findOne({
+      where: { seller_id },
+      order: [["end_date", "DESC"]], // get the latest plan if multiple
+    });
+
+    // 3️⃣ If seller has no plan, create a free trial
+    if (!sellerPlan) {
+      const startDate = new Date();
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + 7); // trial 7 days
+
+      sellerPlan = await SellerPlan.create({
+        seller_id,
+        plan_id: 1, // free/trial plan
+        start_date: startDate,
+        end_date: endDate,
+        is_trial: true,
+        status: true,
+      });
+    } else {
+      // 4️⃣ If existing plan is plan_id = 1, activate trial
+      if (sellerPlan.plan_id === 1) {
+        sellerPlan.is_trial = true;
+        await sellerPlan.save();
+      } else {
+        // If plan is > 1, don’t allow trial
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: "Seller already has a paid plan, trial not allowed",
+        });
+      }
+    }
 
     res.json({
       success: true,
+      error: false,
       message: "Trial activated successfully",
+      plan: {
+        start_date: sellerPlan.start_date,
+        end_date: sellerPlan.end_date,
+        is_trial: sellerPlan.is_trial,
+        plan_id: sellerPlan.plan_id,
+      },
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ success: false });
+    res.status(500).json({ success: false, error: true, message: "Server error" });
   }
 });
 

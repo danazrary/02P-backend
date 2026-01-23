@@ -12,6 +12,10 @@ export const apiLimiter = rateLimit({
   standardHeaders: true, // Adds RateLimit-Limit and RateLimit-Remaining headers
   legacyHeaders: false, // Disable deprecated X-RateLimit-* headers
 });
+export const adminLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 500,
+});
 
 export const corsOptions = {
   origin: [
