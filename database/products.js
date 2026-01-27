@@ -65,11 +65,23 @@ const Product = sequelize.define(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    hasRealPrice: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+    },
     variantPrices: {
       type: DataTypes.JSON,
       allowNull: true,
     },
+    variantPricesAr: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
     customInputs: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
+    customInputsAr: {
       type: DataTypes.JSON,
       allowNull: true,
     },
@@ -81,7 +93,7 @@ const Product = sequelize.define(
   {
     timestamps: true,
     tableName: "products",
-  }
+  },
 );
 
 export default Product;

@@ -37,6 +37,7 @@ router.post(
     try {
       const {
         language,
+        hasRealPrice,
         titleKu,
         titleAr,
         descriptionKu,
@@ -50,7 +51,9 @@ router.post(
         discountStartDate,
         discountEndDate,
         variantPrices,
+        variantPricesAr,
         customInputs,
+        customInputsAr,
       } = req.body;
 
       const { id } = req.user;
@@ -65,13 +68,14 @@ router.post(
       const product = await Product.create({
         seller_id: id,
         language,
+        hasRealPrice: hasRealPrice === "true" || hasRealPrice === true,
         titleKu,
         titleAr,
         descriptionKu,
         descriptionAr,
         images,
         youtubeLinks: youtubeLinks ? JSON.parse(youtubeLinks) : [],
-        realPrice,
+        realPrice: hasRealPrice === "true" ? realPrice : null,
         priceType,
         hasDiscount: hasDiscount === "true",
         discountPrice: discountPrice || null,
@@ -79,7 +83,9 @@ router.post(
         discountStartDate: discountStartDate || null,
         discountEndDate: discountEndDate || null,
         variantPrices: variantPrices ? JSON.parse(variantPrices) : [],
+        variantPricesAr: variantPricesAr ? JSON.parse(variantPricesAr) : [],
         customInputs: customInputs ? JSON.parse(customInputs) : [],
+        customInputsAr: customInputsAr ? JSON.parse(customInputsAr) : [],
       });
 
       res.status(201).json({
@@ -96,7 +102,7 @@ router.post(
         message: "Failed to create product",
       });
     }
-  }
+  },
 );
 
 router.put(
@@ -120,6 +126,7 @@ router.put(
 
       const {
         language,
+        hasRealPrice,
         titleKu,
         titleAr,
         descriptionKu,
@@ -133,7 +140,9 @@ router.put(
         discountEndDate,
         youtubeLinks,
         variantPrices,
+        variantPricesAr,
         customInputs,
+        customInputsAr,
         existingImages,
         removedImages,
       } = req.body;
@@ -150,13 +159,14 @@ router.put(
       /* ➕ Add new uploaded images */
       if (req.files && req.files.length > 0) {
         const newImages = req.files.map(
-          (file) => `/uploads/products/${file.filename}`
+          (file) => `/uploads/products/${file.filename}`,
         );
         finalImages = [...finalImages, ...newImages];
       }
 
       await product.update({
         language,
+        hasRealPrice: hasRealPrice === "true" || hasRealPrice === true,
         titleKu,
         titleAr,
         descriptionKu,
@@ -172,7 +182,9 @@ router.put(
           hasDiscount && discountType === "timer" ? discountEndDate : null,
         youtubeLinks: youtubeLinks ? JSON.parse(youtubeLinks) : [],
         variantPrices: variantPrices ? JSON.parse(variantPrices) : [],
+        variantPricesAr: variantPricesAr ? JSON.parse(variantPricesAr) : [],
         customInputs: customInputs ? JSON.parse(customInputs) : [],
+        customInputsAr: customInputsAr ? JSON.parse(customInputsAr) : [],
         images: finalImages,
       });
 
@@ -190,7 +202,7 @@ router.put(
         message: "Failed to update product",
       });
     }
-  }
+  },
 );
 
 router.delete(
@@ -231,7 +243,7 @@ router.delete(
         message: "Failed to delete product",
       });
     }
-  }
+  },
 );
 
 // Route to get all products by seller shop name
