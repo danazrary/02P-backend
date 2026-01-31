@@ -98,7 +98,7 @@ const SellerOffer = sequelize.define(
   {
     timestamps: true,
     tableName: "seller_offers",
-  }
+  },
 );
 
 export default SellerOffer;

@@ -5,6 +5,7 @@ import Seller from "../../database/seller.js";
 import Report from "../../database/report.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
+import SellerOffer from "../../database/sellerOffer.js";
 const router = Router();
 
 function isNewDay(lastVisit) {
@@ -32,7 +33,11 @@ router.get("/:shopName", async (req, res) => {
         message: "Seller not found",
       });
     }
-    console.log("Cookies:", req.cookies,    req.cookies?.[`shop_visit_${seller.id}`]);
+    console.log(
+      "Cookies:",
+      req.cookies,
+      req.cookies?.[`shop_visit_${seller.id}`],
+    );
     const sellerId = seller.id;
     const today = new Date().toISOString().split("T")[0];
     console.log("Today:", today);
@@ -67,12 +72,12 @@ router.get("/:shopName", async (req, res) => {
       }
 
       // 🍪 Save/update cookie
-    res.cookie(visitCookieName, Date.now(), {
-      maxAge: 24 * 60 * 60 * 1000,
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/", // 🔥 IMPORTANT
-    });
+      res.cookie(visitCookieName, Date.now(), {
+        maxAge: 24 * 60 * 60 * 1000,
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/", // 🔥 IMPORTANT
+      });
     }
 
     // 🔹 SELLER PLAN
@@ -92,6 +97,25 @@ router.get("/:shopName", async (req, res) => {
     }
 
     const sellerPlanRow = await Plan.findByPk(sellerPlanRecord.id);
+
+    // 🎯 Fetch all active offers
+    const offers = await SellerOffer.findAll({
+      where: { seller_id: sellerId, is_active: true },
+      attributes: [
+        "id",
+        "titleKu",
+        "titleAr",
+        "cover_image",
+        "type_offer",
+        "start_date",
+        "end_date",
+        "language",
+        "discount_price_type",
+        "discount_price",
+        "discount_percent",
+        "discount_or_free_delivery",
+      ],
+    });
 
     const products = await Product.findAll({
       where: { seller_id: sellerId },
@@ -117,6 +141,8 @@ router.get("/:shopName", async (req, res) => {
       error: false,
       logout: false,
       sellerPlan: sellerPlanRow ? sellerPlanRow.name : "Free",
+      red_line: seller.red_line || null,
+      offers,
       products,
     });
   } catch (error) {

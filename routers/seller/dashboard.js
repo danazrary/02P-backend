@@ -12,10 +12,8 @@ const router = Router();
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
   try {
     const { id } = req.user;
-    console.log(id);
 
     const seller = await Seller.findByPk(id);
-    console.log(seller);
 
     if (!seller) {
       res.clearCookie("s_t", {
@@ -68,6 +66,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         "discount_or_free_delivery",
       ],
     });
+
     const products = await Product.findAll({
       where: { seller_id: id },
       attributes: [
@@ -83,6 +82,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         "discountType",
         "discountStartDate",
         "discountEndDate",
+        "free_delivery",
       ],
     });
 

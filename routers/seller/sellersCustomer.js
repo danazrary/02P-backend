@@ -5,6 +5,7 @@ import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
+import { Op } from "sequelize";
 const router = Router();
 
 router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
@@ -90,23 +91,29 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     }
 
     // 5️⃣ Get all seller offers (only active ones)
-    const offers = await SellerOffer.findAll({
-      where: { seller_id: sellerId, is_active: true },
-      attributes: [
-        "id",
-        "titleKu",
-        "titleAr",
-        "cover_image",
-        "type_offer",
-        "start_date",
-        "end_date",
-        "language",
-        "discount_price_type",
-        "discount_price",
-        "discount_percent",
-        "discount_or_free_delivery",
-      ],
-    });
+   const offers = await SellerOffer.findAll({
+     where: {
+       seller_id: sellerId,
+       is_active: true,
+       type_offer: {
+         [Op.ne]: "discount_delivery", // 👈 exclude this type
+       },
+     },
+     attributes: [
+       "id",
+       "titleKu",
+       "titleAr",
+       "cover_image",
+       "type_offer",
+       "start_date",
+       "end_date",
+       "language",
+       "discount_price_type",
+       "discount_price",
+       "discount_percent",
+       "discount_or_free_delivery",
+     ],
+   });
 
     // 6️⃣ Get all seller products
     const products = await Product.findAll({

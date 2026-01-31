@@ -89,6 +89,10 @@ const Product = sequelize.define(
       type: DataTypes.INTEGER,
       defaultValue: 0,
     },
+    free_delivery: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
   },
   {
     timestamps: true,

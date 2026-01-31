@@ -2,6 +2,7 @@ import { Router } from "express";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import Product from "../../database/products.js";
 import Report from "../../database/report.js";
+import SellerOffer from "../../database/sellerOffer.js";
 const router = Router();
 
 // Multer setup to save images in /uploads folder
@@ -57,6 +58,5 @@ router.get("/product/:id", detectSeller, async (req, res) => {
     });
   }
 });
-
 
 export default router;
