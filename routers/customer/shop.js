@@ -128,7 +128,7 @@ router.get("/:shopName", async (req, res) => {
         "realPrice",
         "priceType",
         "hasDiscount",
-        "discountPrice",
+        "discount_percent",
         "discountType",
         "discountDays",
         "discountHours",

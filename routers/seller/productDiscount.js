@@ -40,7 +40,7 @@ router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
         "realPrice",
         "priceType",
         "hasDiscount",
-        "discountPrice",
+        "discount_percent",
         "discountType",
         "discountStartDate",
         "discountEndDate",
@@ -71,7 +71,7 @@ router.put("/products-discount/add", jwtVerifySellerToken, async (req, res) => {
     const {
       productIds,
       actionType, // 'discount', 'free_delivery', 'both'
-      discountPrice,
+      discount_percent,
       discountType, // 'permanent', 'timer'
       startDate,
       endDate,
@@ -88,7 +88,7 @@ router.put("/products-discount/add", jwtVerifySellerToken, async (req, res) => {
 
     if (actionType === "discount" || actionType === "both") {
       updateData.hasDiscount = true;
-      updateData.discountPrice = discountPrice;
+      updateData.discount_percent = discount_percent;
       updateData.discountType = discountType || "timer";
       updateData.discountStartDate = startDate;
       updateData.discountEndDate = endDate;
@@ -143,7 +143,7 @@ router.put(
 
       if (actionType === "discount" || actionType === "both") {
         updateData.hasDiscount = false;
-        updateData.discountPrice = null;
+        updateData.discount_percent = null;
         updateData.discountType = null;
         updateData.discountStartDate = null;
         updateData.discountEndDate = null;

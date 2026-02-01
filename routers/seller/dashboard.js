@@ -78,11 +78,12 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         "realPrice",
         "priceType",
         "hasDiscount",
-        "discountPrice",
+        "discount_percent",
         "discountType",
         "discountStartDate",
         "discountEndDate",
         "free_delivery",
+        "variantPrices",  
       ],
     });
 

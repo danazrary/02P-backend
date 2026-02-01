@@ -49,8 +49,8 @@ const Product = sequelize.define(
       type: DataTypes.BOOLEAN,
       defaultValue: false,
     },
-    discountPrice: {
-      type: DataTypes.DECIMAL(10, 2),
+    discount_percent: {
+      type: DataTypes.INTEGER,
       allowNull: true,
     },
     discountType: {
