@@ -49,7 +49,22 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
     // 🔹 get plan name
     // const plan = await Plan.findByPk(sellerPlanRow.plan_id);
 
-    const offers = await SellerOffer.findAll({
+    const currentDate = new Date();
+
+    // 🔹 Check product and offer limits
+    const maxProducts = sellerPlanRow ? sellerPlanRow.max_products : 0;
+    const currentProductCount = await Product.count({
+      where: { seller_id: id },
+    });
+    const currentOfferCount = await SellerOffer.count({
+      where: { seller_id: id, is_active: true },
+    });
+
+    const product_limit_reached = currentProductCount >= maxProducts;
+    const offer_limit_reached = currentOfferCount >= maxProducts;
+
+    // Get all active offers
+    const allOffers = await SellerOffer.findAll({
       where: { seller_id: id, is_active: true },
       attributes: [
         "id",
@@ -67,6 +82,21 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       ],
     });
 
+    // Filter and delete expired offers
+    const offers = [];
+    for (const offer of allOffers) {
+      const endDate = new Date(offer.end_date);
+      if (endDate >= currentDate) {
+        offers.push(offer);
+      } else {
+        // Delete expired offer from database
+        await SellerOffer.destroy({
+          where: { id: offer.id },
+        });
+        console.log(`🗑️ Deleted expired offer ${offer.id}`);
+      }
+    }
+
     const products = await Product.findAll({
       where: { seller_id: id },
       attributes: [
@@ -83,18 +113,59 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         "discountStartDate",
         "discountEndDate",
         "free_delivery",
-        "variantPrices",  
+        "variantPrices",
       ],
     });
+
+    // Check red_line expiration and remove if expired
+    let redLine = null;
+    if (seller.red_line) {
+      try {
+        const redLineData =
+          typeof seller.red_line === "string"
+            ? JSON.parse(seller.red_line)
+            : seller.red_line;
+
+        // Check if red_line has proper structure
+        if (
+          redLineData &&
+          typeof redLineData === "object" &&
+          redLineData.end_time
+        ) {
+          const endTime = new Date(redLineData.end_time);
+
+          // If expired, remove from database immediately
+          if (endTime < currentDate) {
+            await Seller.update({ red_line: null }, { where: { id: id } });
+            console.log(`🗑️ Removed expired red_line for seller ${id}`);
+          } else {
+            // Still valid, return it
+            redLine = redLineData;
+          }
+        } else {
+          // Invalid structure, remove it
+          await Seller.update({ red_line: null }, { where: { id: id } });
+        }
+      } catch (error) {
+        console.error("Error parsing red_line for seller", id, ":", error);
+        // If parsing fails, remove invalid data
+        await Seller.update({ red_line: null }, { where: { id: id } });
+      }
+    }
 
     res.status(200).json({
       success: true,
       error: false,
       logout: false,
       sellerPlan: sellerPlanRow ? sellerPlanRow.name : "Free",
-      red_line: seller.red_line || null,
+      red_line: redLine,
       products,
       offers,
+      product_limit_reached,
+      offer_limit_reached,
+      max_products: maxProducts,
+      current_product_count: currentProductCount,
+      current_offer_count: currentOfferCount,
     });
   } catch (error) {
     console.error(error);

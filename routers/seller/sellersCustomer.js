@@ -86,12 +86,14 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         },
         products: [],
         offers: [],
-        red_line: seller.red_line || null,
+        red_line: null,
       });
     }
 
+    const currentDate = new Date();
+
     // 5️⃣ Get all seller offers (only active ones)
-    const offers = await SellerOffer.findAll({
+    const allOffers = await SellerOffer.findAll({
       where: {
         seller_id: sellerId,
         is_active: true,
@@ -115,6 +117,24 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       ],
     });
 
+    // Filter and delete expired or not-yet-started offers
+    const offers = [];
+    for (const offer of allOffers) {
+      const startDate = new Date(offer.start_date);
+      const endDate = new Date(offer.end_date);
+
+      if (endDate < currentDate) {
+        // Delete expired offer from database
+        await SellerOffer.destroy({
+          where: { id: offer.id },
+        });
+        console.log(`🗑️ Deleted expired offer ${offer.id}`);
+      } else if (startDate <= currentDate && endDate >= currentDate) {
+        // Only show offers that have started and haven't ended
+        offers.push(offer);
+      }
+    }
+
     // 6️⃣ Get all seller products
     const products = await Product.findAll({
       where: { seller_id: sellerId },
@@ -130,10 +150,59 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         "discount_percent",
         "discountType",
         "discountStartDate",
+        "free_delivery",
         "discountEndDate",
         "variantPrices",
+        
       ],
     });
+
+    // Check red_line expiration and start time, remove if expired
+    let redLine = null;
+    if (seller.red_line) {
+      try {
+        const redLineData =
+          typeof seller.red_line === "string"
+            ? JSON.parse(seller.red_line)
+            : seller.red_line;
+
+        // Check if red_line has proper structure
+        if (
+          redLineData &&
+          typeof redLineData === "object" &&
+          redLineData.end_time &&
+          redLineData.start_time
+        ) {
+          const startTime = new Date(redLineData.start_time);
+          const endTime = new Date(redLineData.end_time);
+
+          // If expired, remove from database immediately
+          if (endTime < currentDate) {
+            await Seller.update(
+              { red_line: null },
+              { where: { id: sellerId } },
+            );
+            console.log(`🗑️ Removed expired red_line for seller ${sellerId}`);
+          } else if (startTime <= currentDate && endTime >= currentDate) {
+            // Only show if started and not ended
+            redLine = redLineData;
+          }
+          // If not started yet (startTime > currentDate), don't show but don't remove
+        } else {
+          // Invalid structure, remove it
+          await Seller.update({ red_line: null }, { where: { id: sellerId } });
+        }
+      } catch (error) {
+        console.error(
+          "Error parsing red_line for seller",
+          sellerId,
+          ":",
+          error,
+        );
+        // If parsing fails, remove invalid data
+        await Seller.update({ red_line: null }, { where: { id: sellerId } });
+      }
+    }
 
     // 7️⃣ Return complete seller data
     res.status(200).json({
@@ -150,7 +219,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       sellerPlan: planData ? planData.name : "Free",
       products,
       offers,
-      red_line: seller.red_line || null,
+      red_line: redLine,
     });
   } catch (error) {
     console.error(error);

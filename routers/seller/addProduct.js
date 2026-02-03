@@ -3,6 +3,8 @@ import multer from "multer";
 import path from "path";
 import Product from "../../database/products.js";
 import Seller from "../../database/seller.js";
+import SellerPlan from "../../database/sellerPlan.js";
+import Plan from "../../database/plan.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import fs from "fs";
 const router = express.Router();
@@ -35,6 +37,38 @@ router.post(
   upload.array("images", 5),
   async (req, res) => {
     try {
+      const { id } = req.user;
+
+      // Check seller plan and product limit
+      const sellerPlan = await SellerPlan.findOne({
+        where: { seller_id: id },
+      });
+
+      if (!sellerPlan) {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          message: "No plan found for this seller",
+        });
+      }
+
+      const plan = await Plan.findByPk(sellerPlan.plan_id);
+      const maxProducts = plan ? plan.max_products : 0;
+
+      const currentProductCount = await Product.count({
+        where: { seller_id: id },
+      });
+
+      if (currentProductCount >= maxProducts) {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          limit_reached: true,
+          message:
+            "Product limit reached. Please upgrade your plan or remove existing products.",
+        });
+      }
+
       const {
         language,
         hasRealPrice,
@@ -56,7 +90,7 @@ router.post(
         customInputsAr,
       } = req.body;
 
-      const { id } = req.user;
+      //  const { id } = req.user;
 
       // Save uploaded images paths
       const images = req.files

@@ -5,6 +5,8 @@ import SellerOffer from "../../database/sellerOffer.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import fs from "fs";
 import Product from "../../database/products.js";
+import SellerPlan from "../../database/sellerPlan.js";
+import Plan from "../../database/plan.js";
 
 const router = express.Router();
 
@@ -38,6 +40,70 @@ router.post(
   upload.single("coverImage"),
   async (req, res) => {
     try {
+      const { id } = req.user;
+
+      // Check seller plan and offer limit (using max_products for now)
+      const sellerPlan = await SellerPlan.findOne({
+        where: { seller_id: id },
+      });
+
+      if (!sellerPlan) {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          message: "No plan found for this seller",
+        });
+      }
+
+      const plan = await Plan.findByPk(sellerPlan.plan_id);
+      const maxOffers = plan ? plan.max_products : 0; // Using max_products for offers temporarily
+
+      const currentOfferCount = await SellerOffer.count({
+        where: { seller_id: id, is_active: true },
+      });
+
+      if (currentOfferCount >= maxOffers) {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          limit_reached: true,
+          message:
+            "Offer limit reached. Please upgrade your plan or remove existing offers.",
+        });
+      }
+
+      //  const { id } = req.user;
+
+      // Check seller plan and offer limit (using max_products for now)
+      /*  const sellerPlan = await SellerPlan.findOne({
+        where: { seller_id: id },
+      }); */
+
+      if (!sellerPlan) {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          message: "No plan found for this seller",
+        });
+      }
+
+      //const plan = await Plan.findByPk(sellerPlan.plan_id);
+      // const maxOffers = plan ? plan.max_products : 0; // Using max_products for offers temporarily
+
+      /*  const currentOfferCount = await SellerOffer.count({
+        where: { seller_id: id, is_active: true },
+      }); */
+
+      if (currentOfferCount >= maxOffers) {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          limit_reached: true,
+          message:
+            "Offer limit reached. Please upgrade your plan or remove existing offers.",
+        });
+      }
+
       const {
         type_offer,
         language,
@@ -58,7 +124,7 @@ router.post(
       } = req.body;
       console.log("data", req.body, "data end");
 
-      const { id } = req.user;
+      // const { id } = req.user;
 
       // Save uploaded cover image path
       const cover_image = req.file
@@ -108,7 +174,7 @@ router.post(
         message: "Failed to create offer",
       });
     }
-  }
+  },
 );
 
 // Route to edit offer
@@ -197,7 +263,7 @@ router.put(
         message: "Failed to update offer",
       });
     }
-  }
+  },
 );
 
 // Route to delete offer
@@ -241,7 +307,7 @@ router.delete(
         message: "Failed to delete offer",
       });
     }
-  }
+  },
 );
 // get offer details
 router.get("/offer-details/:offerId", async (req, res) => {
@@ -263,11 +329,13 @@ router.get("/offer-details/:offerId", async (req, res) => {
         offer.buy_product_id_quantity.map(async (item) => {
           const product = await Product.findByPk(item.id);
           return { ...item, product };
-        })
+        }),
       );
 
       // Check if all products were deleted
-      const allProductsDeleted = getBuyProductsDetails.every(item => item.product === null);
+      const allProductsDeleted = getBuyProductsDetails.every(
+        (item) => item.product === null,
+      );
       if (allProductsDeleted && getBuyProductsDetails.length > 0) {
         // Delete offer if all products are gone
         await offer.destroy();
@@ -285,11 +353,13 @@ router.get("/offer-details/:offerId", async (req, res) => {
         offer.get_product_id_quantity.map(async (item) => {
           const product = await Product.findByPk(item.id);
           return { ...item, product };
-        })
+        }),
       );
 
       // Check if all products were deleted
-      const allProductsDeleted = getGetProductsDetails.every(item => item.product === null);
+      const allProductsDeleted = getGetProductsDetails.every(
+        (item) => item.product === null,
+      );
       if (allProductsDeleted && getGetProductsDetails.length > 0) {
         // Delete offer if all products are gone
         await offer.destroy();

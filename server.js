@@ -21,6 +21,7 @@ import { verifyCsrfToken } from "./utils/csrfProtection.js";
 import { apiLimiter, corsOptions } from "./utils/helper.js";
 import { adminToken, adminRefreshToken } from "./utils/addingToken.js";
 import { sequelize } from "./database/index.js";
+import { scheduleCleanup } from "./utils/cleanupExpired.js";
 
 // Load environment variables (.env.product, .env.developedLH, .env.developingURL)
 dotenv.config();
@@ -62,7 +63,7 @@ app.use(
   bodyParser.urlencoded({
     extended: true,
     limit: process.env.BODY_LIMIT || "2mb",
-  })
+  }),
 );
 if (typeof sanitizeHtmlMiddleware === "function")
   app.use(sanitizeHtmlMiddleware);
@@ -85,7 +86,6 @@ app.get("/profile", (req, res) => {
     res.status(401).json({ message: "Invalid token" });
   }
 });
-
 
 // CSRF Token endpoint
 await sequelize.authenticate();
@@ -144,8 +144,9 @@ function startHttpsServer() {
 
     https.createServer(credentials, app).listen(port, bindHost, () => {
       console.log(
-        `🔒 HTTPS server running on https://${bindHost}:${port} (mode=${mode})`
+        `🔒 HTTPS server running on https://${bindHost}:${port} (mode=${mode})`,
       );
+      scheduleCleanup(); // Start cleanup scheduler
     });
   } catch (err) {
     console.error("❌ Failed to start HTTPS server:", err);
@@ -156,8 +157,9 @@ function startHttpsServer() {
 function startHttpServer() {
   http.createServer(app).listen(port, bindHost, () => {
     console.log(
-      `🚀 HTTP server running on http://${bindHost}:${port} (mode=${mode})`
+      `🚀 HTTP server running on http://${bindHost}:${port} (mode=${mode})`,
     );
+    scheduleCleanup(); // Start cleanup scheduler
   });
 }
 
