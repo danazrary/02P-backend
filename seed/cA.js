@@ -1,6 +1,6 @@
 
 import {hashPassword} from "../utils/helper.js";
-const password = "xxxxxxxxxx"; // CHANGE THIS
+const password = "@#dana56Zrar"; // CHANGE THIS
 
 const run = async () => {
     const hash = hashPassword(password);

@@ -5,10 +5,8 @@ import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import Product from "../../database/products.js";
 import SellerOffer from "../../database/sellerOffer.js";
-import { checkMe,adminAuth } from "../../middlewares/jwtVerify.js";
+import { checkMe, adminAuth } from "../../middlewares/jwtVerify.js";
 const router = Router();
-
-
 
 router.get("/check-me", checkMe, async (req, res) => {
   const { user } = req;
@@ -77,7 +75,6 @@ router.post("/check-expired-plans", adminAuth, async (req, res) => {
   }
 });
 
-
 router.post("/cleanup-expired-sellers", adminAuth, async (req, res) => {
   try {
     const now = new Date();
@@ -142,7 +139,9 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
 
     const plan = await Plan.findByPk(plan_id);
     if (!plan) {
-      return res.status(404).json({ success: false, error: true, message: "Plan not found" });
+      return res
+        .status(404)
+        .json({ success: false, error: true, message: "Plan not found" });
     }
 
     const startDate = new Date();
@@ -201,19 +200,16 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
   }
 });
 
-
 router.post("/activate-trial", adminAuth, async (req, res) => {
   try {
     const { seller_id } = req.body;
 
     if (!seller_id) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: true,
-          message: "seller_id is required",
-        });
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "seller_id is required",
+      });
     }
 
     // 1️⃣ Check if seller exists
@@ -272,10 +268,283 @@ router.post("/activate-trial", adminAuth, async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ success: false, error: true, message: "Server error" });
+    res
+      .status(500)
+      .json({ success: false, error: true, message: "Server error" });
   }
 });
 
+// Get all sellers with trial plans
+router.post("/get-trial-sellers", adminAuth, async (req, res) => {
+  try {
+    const trialSellers = await SellerPlan.findAll({
+      where: {
+        is_trial: true,
+        status: true,
+      },
+      include: [
+        {
+          model: Seller,
+          as: "seller",
+          attributes: ["id", "name", "shop_name"],
+        },
+      ],
+      order: [["end_date", "ASC"]],
+    });
 
+    const result = trialSellers.map((sp) => ({
+      sellerId: sp.seller?.id ?? null,
+      sellerName: sp.seller?.name ?? null,
+      shopName: sp.seller?.shop_name ?? null,
+      startDate: sp.start_date,
+      endDate: sp.end_date,
+    }));
+
+    return res.json({
+      success: true,
+      error: false,
+      count: result.length,
+      data: result,
+    });
+  } catch (err) {
+    console.error("get-trial-sellers error:", err);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
+  }
+});
+
+// End trial for a specific seller
+router.post("/end-trial", adminAuth, async (req, res) => {
+  try {
+    const { seller_id } = req.body;
+
+    if (!seller_id) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "seller_id is required",
+      });
+    }
+
+    const sellerPlan = await SellerPlan.findOne({
+      where: { seller_id, is_trial: true, status: true },
+    });
+
+    if (!sellerPlan) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "No active trial found for this seller",
+      });
+    }
+
+    // Set end_date to now and mark trial as ended
+    await sellerPlan.update({
+      end_date: new Date(),
+      is_trial: false,
+      trial_ended: true,
+      status: false,
+    });
+
+    return res.json({
+      success: true,
+      error: false,
+      message: "Trial ended successfully",
+    });
+  } catch (err) {
+    console.error("end-trial error:", err);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
+  }
+});
+
+// Check for sellers exceeding plan limits and remove excess
+router.post("/check-limit-violations", adminAuth, async (req, res) => {
+  try {
+    const sellerPlans = await SellerPlan.findAll({
+      where: { status: true },
+      include: [
+        {
+          model: Seller,
+          as: "seller",
+          attributes: ["id", "name", "shop_name"],
+        },
+        {
+          model: Plan,
+          as: "plan",
+          attributes: ["name", "max_products", "max_offers"],
+        },
+      ],
+    });
+
+    const violations = [];
+    let totalProductsRemoved = 0;
+    let totalOffersRemoved = 0;
+
+    for (const sp of sellerPlans) {
+      const sellerId = sp.seller_id;
+      const maxProducts = sp.plan?.max_products ?? 0;
+      const maxOffers = sp.plan?.max_offers ?? 0;
+
+      // Count current products and offers
+      const productCount = await Product.count({
+        where: { seller_id: sellerId },
+      });
+      const offerCount = await SellerOffer.count({
+        where: { seller_id: sellerId, is_active: true },
+      });
+
+      let productsRemoved = 0;
+      let offersRemoved = 0;
+
+      // Remove excess products
+      if (productCount > maxProducts) {
+        const excessCount = productCount - maxProducts;
+        const excessProducts = await Product.findAll({
+          where: { seller_id: sellerId },
+          order: [["createdAt", "DESC"]],
+          limit: excessCount,
+        });
+
+        for (const product of excessProducts) {
+          await product.destroy();
+          productsRemoved++;
+        }
+      }
+
+      // Remove excess offers
+      if (offerCount > maxOffers) {
+        const excessCount = offerCount - maxOffers;
+        const excessOffers = await SellerOffer.findAll({
+          where: { seller_id: sellerId, is_active: true },
+          order: [["createdAt", "DESC"]],
+          limit: excessCount,
+        });
+
+        for (const offer of excessOffers) {
+          await offer.destroy();
+          offersRemoved++;
+        }
+      }
+
+      if (productsRemoved > 0 || offersRemoved > 0) {
+        violations.push({
+          sellerId: sp.seller?.id,
+          sellerName: sp.seller?.name,
+          shopName: sp.seller?.shop_name,
+          planName: sp.plan?.name,
+          productsRemoved,
+          offersRemoved,
+        });
+        totalProductsRemoved += productsRemoved;
+        totalOffersRemoved += offersRemoved;
+      }
+    }
+
+    return res.json({
+      success: true,
+      error: false,
+      violationsCount: violations.length,
+      totalProductsRemoved,
+      totalOffersRemoved,
+      data: violations,
+    });
+  } catch (err) {
+    console.error("check-limit-violations error:", err);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
+  }
+});
+
+// Get all sellers with their plan information
+router.post("/get-all-sellers", adminAuth, async (req, res) => {
+  try {
+    const sellers = await Seller.findAll({
+      attributes: ["id", "name", "shop_name"],
+      include: [
+        {
+          model: SellerPlan,
+          as: "plans",
+          required: false,
+          include: [
+            {
+              model: Plan,
+              as: "plan",
+              attributes: ["name"],
+            },
+          ],
+        },
+      ],
+      order: [["id", "ASC"]],
+    });
+
+    const result = sellers.map((seller) => {
+      const sellerPlan = seller.plans?.[0] || seller.plans;
+      return {
+        sellerId: seller.id,
+        sellerName: seller.name,
+        shopName: seller.shop_name,
+        planName: sellerPlan?.plan?.name ?? "No Plan",
+        startDate: sellerPlan?.start_date ?? null,
+        endDate: sellerPlan?.end_date ?? null,
+      };
+    });
+
+    return res.json({
+      success: true,
+      error: false,
+      count: result.length,
+      data: result,
+    });
+  } catch (err) {
+    console.error("get-all-sellers error:", err);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
+  }
+});
+
+// Get all available plans
+router.post("/get-plans", adminAuth, async (req, res) => {
+  try {
+    const plans = await Plan.findAll({
+      attributes: [
+        "id",
+        "name",
+        "price",
+        "billing_cycle",
+        "duration_days",
+        "max_products",
+        "max_offers",
+      ],
+      order: [["id", "ASC"]],
+    });
+
+    return res.json({
+      success: true,
+      error: false,
+      count: plans.length,
+      data: plans,
+    });
+  } catch (err) {
+    console.error("get-plans error:", err);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
+  }
+});
 
 export default router;

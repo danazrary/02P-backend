@@ -24,11 +24,15 @@ const Plan = sequelize.define(
       type: DataTypes.INTEGER,
       allowNull: false,
     },
+    max_offers: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
   },
   {
     tableName: "plans",
     timestamps: true,
-  }
+  },
 );
 
 export default Plan;

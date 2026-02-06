@@ -37,60 +37,103 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     }
 
     const sellerId = seller.id;
+    const currentDate = new Date();
 
     // 3️⃣ Get seller plan
     let sellerPlanRecord = await SellerPlan.findOne({
       where: { seller_id: sellerId },
     });
 
-    let planStatus = "inactive";
-    let planData = null;
-
-    if (sellerPlanRecord) {
-      const endDate = new Date(sellerPlanRecord.end_date);
-      const currentDate = new Date();
-      const threeDaysAfterEnd = new Date(
-        endDate.getTime() + 3 * 24 * 60 * 60 * 1000,
-      );
-
-      // Check if end_date + 3 days has passed
-      if (currentDate > threeDaysAfterEnd) {
-        // Update status to inactive
-        await sellerPlanRecord.update({ status: false });
-        planStatus = "inactive";
-      } else if (sellerPlanRecord.status) {
-        // If status is true and we haven't passed the 3-day window, keep as active
-        planStatus = "active";
-      } else {
-        planStatus = "inactive";
-      }
-
-      // Get plan details
-      const plan = await Plan.findByPk(sellerPlanRecord.plan_id);
-      planData = plan ? plan.toJSON() : null;
-    }
-
-    // 4️⃣ If plan is inactive, return with limited data
-    if (planStatus === "inactive") {
+    // If no plan exists, shop is closed
+    if (!sellerPlanRecord) {
       return res.status(200).json({
         success: true,
         error: false,
         isSeller: false,
-        planStatus: "inactive",
-        message: "Seller plan is inactive",
+        yourShopClose: true,
+        closeReason: "no_plan",
+        message: "This shop is currently closed",
         seller: {
           id: seller.id,
           name: seller.name,
           shop_name: seller.shop_name,
           shop_image: seller.shop_image,
         },
-        products: [],
-        offers: [],
-        red_line: null,
       });
     }
 
-    const currentDate = new Date();
+    // Get plan details
+    const plan = await Plan.findByPk(sellerPlanRecord.plan_id);
+    const planName = plan ? plan.name : "";
+
+    // Check if plan is free_seller - shop is closed for customers
+    if (planName === "free_seller" || planName === "Free" || sellerPlanRecord.plan_id === 1) {
+      return res.status(200).json({
+        success: true,
+        error: false,
+        isSeller: false,
+        yourShopClose: true,
+        closeReason: "free_plan",
+        message: "This shop is currently closed",
+        seller: {
+          id: seller.id,
+          name: seller.name,
+          shop_name: seller.shop_name,
+          shop_image: seller.shop_image,
+        },
+      });
+    }
+
+    // Check if plan is trial_seller
+    if (planName === "trial_seller" || sellerPlanRecord.plan_id === 9) {
+      const endDate = new Date(sellerPlanRecord.end_date);
+      const timeDiff = currentDate - endDate;
+      const daysDiff = timeDiff / (1000 * 60 * 60 * 24);
+
+      // If trial ended more than 1 day ago, shop is closed
+      if (endDate < currentDate && daysDiff > 1) {
+        return res.status(200).json({
+          success: true,
+          error: false,
+          isSeller: false,
+          yourShopClose: true,
+          closeReason: "trial_expired",
+          message: "This shop is currently closed",
+          seller: {
+            id: seller.id,
+            name: seller.name,
+            shop_name: seller.shop_name,
+            shop_image: seller.shop_image,
+          },
+        });
+      }
+    }
+
+    // Check paid plans - if expired more than 1 day, shop is closed
+    if (planName !== "free_seller" && planName !== "Free" && 
+        planName !== "trial_seller" && sellerPlanRecord.plan_id !== 1 && 
+        sellerPlanRecord.plan_id !== 9) {
+      const endDate = new Date(sellerPlanRecord.end_date);
+      const timeDiff = currentDate - endDate;
+      const daysDiff = timeDiff / (1000 * 60 * 60 * 24);
+
+      if (endDate < currentDate && daysDiff > 1) {
+        return res.status(200).json({
+          success: true,
+          error: false,
+          isSeller: false,
+          yourShopClose: true,
+          closeReason: "plan_expired",
+          message: "This shop is currently closed",
+          seller: {
+            id: seller.id,
+            name: seller.name,
+            shop_name: seller.shop_name,
+            shop_image: seller.shop_image,
+          },
+        });
+      }
+    }
 
     // 5️⃣ Get all seller offers (only active ones)
     const allOffers = await SellerOffer.findAll({
@@ -209,14 +252,14 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       success: true,
       error: false,
       isSeller: false,
-      planStatus: "active",
+      yourShopClose: false,
       seller: {
         id: seller.id,
         name: seller.name,
         shop_name: seller.shop_name,
         shop_image: seller.shop_image,
       },
-      sellerPlan: planData ? planData.name : "Free",
+      sellerPlan: plan ? plan.name : "Free",
       products,
       offers,
       red_line: redLine,

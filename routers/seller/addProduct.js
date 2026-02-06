@@ -53,6 +53,21 @@ router.post(
       }
 
       const plan = await Plan.findByPk(sellerPlan.plan_id);
+
+      // Check if free plan - don't allow adding products
+      if (
+        sellerPlan.plan_id === 1 ||
+        plan?.name === "free_seller" ||
+        plan?.name === "Free"
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          free_plan: true,
+          message: "Free plan cannot add products. Please upgrade your plan.",
+        });
+      }
+
       const maxProducts = plan ? plan.max_products : 0;
 
       const currentProductCount = await Product.count({

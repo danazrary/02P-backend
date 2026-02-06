@@ -20,6 +20,10 @@ const SellerPlan = sequelize.define(
       type: DataTypes.BOOLEAN,
       defaultValue: true,
     },
+    trial_ended: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
   },
   {
     tableName: "seller_plans",

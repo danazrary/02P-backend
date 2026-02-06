@@ -26,13 +26,16 @@ router.post("/login", adminLimiter, async (req, res) => {
     console.log("is2", isMatch);
 
     if (!isMatch) {
+      console.log("gvhgh");
+      
       return res
         .status(401)
-        .json({ success: false, error: true, message: "Invalid credentials" });
+        .json({ success: false, error: true, message: "Invalid credentialsddd" });
     }
 
     // 🔐 STEP 4 — DEVICE TRUST CHECK
     const deviceHash = getDeviceHash(req);
+console.log(deviceHash);
 
     const trustedDevice = await AdminDevice.findOne({
       where: {
@@ -44,6 +47,8 @@ router.post("/login", adminLimiter, async (req, res) => {
 
     // If device NOT trusted
     if (!trustedDevice) {
+      console.log("block",trustedDevice);
+      
       // Check if this is the FIRST device
       const deviceCount = await AdminDevice.count({
         where: { admin_id: admin.id },
@@ -60,6 +65,8 @@ router.post("/login", adminLimiter, async (req, res) => {
           trusted: 1,
         });
       } else {
+        console.log("block");
+        
         // New device → BLOCK login
         return res.status(403).json({
           success: false,

@@ -42,7 +42,7 @@ router.post(
     try {
       const { id } = req.user;
 
-      // Check seller plan and offer limit (using max_products for now)
+      // Check seller plan and offer limit
       const sellerPlan = await SellerPlan.findOne({
         where: { seller_id: id },
       });
@@ -56,43 +56,26 @@ router.post(
       }
 
       const plan = await Plan.findByPk(sellerPlan.plan_id);
-      const maxOffers = plan ? plan.max_products : 0; // Using max_products for offers temporarily
+
+      // Check if free plan - don't allow adding offers
+      if (
+        sellerPlan.plan_id === 1 ||
+        plan?.name === "free_seller" ||
+        plan?.name === "Free"
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          free_plan: true,
+          message: "Free plan cannot add offers. Please upgrade your plan.",
+        });
+      }
+
+      const maxOffers = plan ? plan.max_offers : 0;
 
       const currentOfferCount = await SellerOffer.count({
         where: { seller_id: id, is_active: true },
       });
-
-      if (currentOfferCount >= maxOffers) {
-        return res.status(403).json({
-          success: false,
-          error: true,
-          limit_reached: true,
-          message:
-            "Offer limit reached. Please upgrade your plan or remove existing offers.",
-        });
-      }
-
-      //  const { id } = req.user;
-
-      // Check seller plan and offer limit (using max_products for now)
-      /*  const sellerPlan = await SellerPlan.findOne({
-        where: { seller_id: id },
-      }); */
-
-      if (!sellerPlan) {
-        return res.status(403).json({
-          success: false,
-          error: true,
-          message: "No plan found for this seller",
-        });
-      }
-
-      //const plan = await Plan.findByPk(sellerPlan.plan_id);
-      // const maxOffers = plan ? plan.max_products : 0; // Using max_products for offers temporarily
-
-      /*  const currentOfferCount = await SellerOffer.count({
-        where: { seller_id: id, is_active: true },
-      }); */
 
       if (currentOfferCount >= maxOffers) {
         return res.status(403).json({
