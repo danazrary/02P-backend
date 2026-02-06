@@ -64,7 +64,7 @@ const Seller = sequelize.define(
   {
     timestamps: true,
     tableName: "seller",
-  }
+  },
 );
 
 export default Seller;

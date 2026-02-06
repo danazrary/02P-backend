@@ -1,6 +1,8 @@
 import { Router } from "express";
 
 import Seller from "../../database/seller.js";
+import SellerPlan from "../../database/sellerPlan.js";
+import Plan from "../../database/plan.js";
 
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 
@@ -28,6 +30,47 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
         error: true,
         logout: true,
         message: "Seller not found",
+      });
+    }
+
+    /* -------------------- Plan Validation -------------------- */
+    // Check seller plan
+    const sellerPlan = await SellerPlan.findOne({
+      where: { seller_id: sellerId },
+    });
+
+    if (!sellerPlan) {
+      return res.status(403).json({
+        success: false,
+        error: true,
+        message: "No plan found for this seller",
+      });
+    }
+
+    const plan = await Plan.findByPk(sellerPlan.plan_id);
+
+    // Check if free plan - don't allow adding red line
+    if (
+      sellerPlan.plan_id === 1 ||
+      plan?.name === "free_seller" ||
+      plan?.name === "Free"
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: true,
+        free_plan: true,
+        message: "Free plan cannot add red line. Please upgrade your plan.",
+      });
+    }
+
+    // Check if plan has expired
+    const currentDate = new Date();
+    if (sellerPlan.end_date && new Date(sellerPlan.end_date) < currentDate) {
+      return res.status(403).json({
+        success: false,
+        error: true,
+        plan_expired: true,
+        message: "Your plan has expired. Please renew your plan to continue.",
       });
     }
 

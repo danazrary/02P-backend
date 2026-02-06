@@ -146,6 +146,7 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
       shopName: seller.shop_name,
       shopImage: seller.shop_image,
       phone: seller.phone,
+      socialLinks: seller.social_links || {},
     });
   } catch (err) {
     return res
@@ -161,7 +162,7 @@ router.post(
   async (req, res) => {
     try {
       const { id } = req.user;
-      const { sellerName, shopName, whatsappNumber } = req.body;
+      const { sellerName, shopName, whatsappNumber, socialLinks } = req.body;
 
       const seller = await Seller.findByPk(id);
       if (!seller) {
@@ -190,7 +191,22 @@ router.post(
         updateData.phone = whatsappNumber;
       }
 
-      // 🖼️ Handle image update
+      // � Handle social media links update
+      if (socialLinks) {
+        const parsedSocialLinks =
+          typeof socialLinks === "string"
+            ? JSON.parse(socialLinks)
+            : socialLinks;
+
+        const currentSocialLinks = seller.social_links || {};
+        const updatedSocialLinks = {
+          ...currentSocialLinks,
+          ...parsedSocialLinks,
+        };
+        updateData.social_links = updatedSocialLinks;
+      }
+
+      // �🖼️ Handle image update
       if (req.file) {
         if (seller.shop_image) {
           deleteFile(seller.shop_image); // remove old image

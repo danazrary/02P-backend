@@ -118,6 +118,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
             message:
               "Your trial period has ended. Renew within 24 hours or your shop will close.",
             seller_id: id,
+            seller_name: seller.name,
+            shop_name: seller.shop_name,
             plan_id: sellerPlanRecord.plan_id,
             sellerPlan: updatedPlanName,
             plan_end_date: sellerPlanRecord.end_date,
@@ -139,6 +141,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
             message:
               "Your shop is closed. Renew your plan or your data will be deleted.",
             seller_id: id,
+            seller_name: seller.name,
+            shop_name: seller.shop_name,
             plan_id: sellerPlanRecord.plan_id,
             sellerPlan: updatedPlanName,
             plan_end_date: sellerPlanRecord.end_date,
@@ -154,6 +158,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
             days_until_deletion: 0,
             message: "Your trial has expired and grace period has passed.",
             seller_id: id,
+            seller_name: seller.name,
+            shop_name: seller.shop_name,
             plan_id: sellerPlanRecord.plan_id,
             sellerPlan: updatedPlanName,
             plan_end_date: sellerPlanRecord.end_date,
@@ -197,6 +203,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
             message:
               "Your plan has expired. Renew within 24 hours or your shop will close.",
             seller_id: id,
+            seller_name: seller.name,
+            shop_name: seller.shop_name,
             plan_id: sellerPlanRecord.plan_id,
             sellerPlan: updatedPlanName,
             plan_end_date: sellerPlanRecord.end_date,
@@ -218,6 +226,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
             message:
               "Your shop is closed. Renew your plan or your data will be deleted.",
             seller_id: id,
+            seller_name: seller.name,
+            shop_name: seller.shop_name,
             plan_id: sellerPlanRecord.plan_id,
             sellerPlan: updatedPlanName,
             plan_end_date: sellerPlanRecord.end_date,
@@ -233,6 +243,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
             days_until_deletion: 0,
             message: "Your plan has expired and grace period has passed.",
             seller_id: id,
+            seller_name: seller.name,
+            shop_name: seller.shop_name,
             plan_id: sellerPlanRecord.plan_id,
             sellerPlan: updatedPlanName,
             plan_end_date: sellerPlanRecord.end_date,

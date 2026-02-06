@@ -14,10 +14,19 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
 
     // 1️⃣ Check if requester is a seller
     if (req.isSeller && req.seller) {
+     
+
+
+      const findSeller = await Seller.findByPk(req.seller.id, {
+        attributes: ["shop_name"],
+      });
+     
+      
       return res.status(200).json({
         success: true,
         error: false,
         isSeller: true,
+        shopName:findSeller ? findSeller.shop_name : null,
         message: "You are a seller. Redirect to seller dashboard.",
       });
     }
@@ -67,7 +76,11 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     const planName = plan ? plan.name : "";
 
     // Check if plan is free_seller - shop is closed for customers
-    if (planName === "free_seller" || planName === "Free" || sellerPlanRecord.plan_id === 1) {
+    if (
+      planName === "free_seller" ||
+      planName === "Free" ||
+      sellerPlanRecord.plan_id === 1
+    ) {
       return res.status(200).json({
         success: true,
         error: false,
@@ -110,9 +123,13 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     }
 
     // Check paid plans - if expired more than 1 day, shop is closed
-    if (planName !== "free_seller" && planName !== "Free" && 
-        planName !== "trial_seller" && sellerPlanRecord.plan_id !== 1 && 
-        sellerPlanRecord.plan_id !== 9) {
+    if (
+      planName !== "free_seller" &&
+      planName !== "Free" &&
+      planName !== "trial_seller" &&
+      sellerPlanRecord.plan_id !== 1 &&
+      sellerPlanRecord.plan_id !== 9
+    ) {
       const endDate = new Date(sellerPlanRecord.end_date);
       const timeDiff = currentDate - endDate;
       const daysDiff = timeDiff / (1000 * 60 * 60 * 24);
@@ -196,7 +213,6 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         "free_delivery",
         "discountEndDate",
         "variantPrices",
-        
       ],
     });
 
