@@ -1,9 +1,19 @@
 import { DataTypes } from "sequelize";
 import sequelize from "./sequelize.js";
 
+// Generate random 6-digit ID
+const generate6DigitId = () => {
+  return Math.floor(100000 + Math.random() * 900000);
+};
+
 const SellerOffer = sequelize.define(
   "SellerOffer",
   {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      allowNull: false,
+    },
     seller_id: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -98,6 +108,21 @@ const SellerOffer = sequelize.define(
   {
     timestamps: true,
     tableName: "seller_offers",
+    hooks: {
+      beforeValidate: async (offer) => {
+        if (!offer.id) {
+          for (let attempt = 0; attempt < 100; attempt++) {
+            const uniqueId = generate6DigitId();
+            const existing = await SellerOffer.findByPk(uniqueId);
+            if (!existing) {
+              offer.id = uniqueId;
+              return;
+            }
+          }
+          throw new Error("Failed to generate unique offer ID");
+        }
+      },
+    },
   },
 );
 

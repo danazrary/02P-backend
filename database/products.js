@@ -1,9 +1,19 @@
 import { DataTypes } from "sequelize";
 import sequelize from "./sequelize.js";
 
+// Generate random 6-digit ID
+const generate6DigitId = () => {
+  return Math.floor(100000 + Math.random() * 900000);
+};
+
 const Product = sequelize.define(
   "Product",
   {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      allowNull: false,
+    },
     seller_id: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -97,6 +107,21 @@ const Product = sequelize.define(
   {
     timestamps: true,
     tableName: "products",
+    hooks: {
+      beforeValidate: async (product) => {
+        if (!product.id) {
+          for (let attempt = 0; attempt < 100; attempt++) {
+            const uniqueId = generate6DigitId();
+            const existing = await Product.findByPk(uniqueId);
+            if (!existing) {
+              product.id = uniqueId;
+              return;
+            }
+          }
+          throw new Error("Failed to generate unique product ID");
+        }
+      },
+    },
   },
 );
 

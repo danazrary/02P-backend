@@ -229,7 +229,7 @@ router.post("/successLogin", async (req, res) => {
 
     // 5) create FINAL token → saved as httpOnly cookie (s_t)
     const sellerEmail = seller.email || seller.name;
-    sellerToken(seller.id, sellerEmail, res); // sets cookie: s_t
+    sellerToken(seller.id, sellerEmail, seller.shop_name, res); // sets cookie: s_t
 
     // 6) check if seller profile is incomplete
     const newSeller =

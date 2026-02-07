@@ -9,24 +9,22 @@ import { Op } from "sequelize";
 const router = Router();
 
 router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
+  console.log("11111111");
+
   try {
     const { shopName } = req.params;
 
     // 1️⃣ Check if requester is a seller
     if (req.isSeller && req.seller) {
-     
-
-
       const findSeller = await Seller.findByPk(req.seller.id, {
         attributes: ["shop_name"],
       });
-     
-      
+
       return res.status(200).json({
         success: true,
         error: false,
         isSeller: true,
-        shopName:findSeller ? findSeller.shop_name : null,
+        shopName: findSeller ? findSeller.shop_name : null,
         message: "You are a seller. Redirect to seller dashboard.",
       });
     }

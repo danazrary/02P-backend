@@ -7,11 +7,11 @@ dotenv.config();
 //.
 //.
 //seller token
-export function sellerToken(id, email, res) {
+export function sellerToken(id, email, shop_name, res) {
   const expiresInHours = 24;
 
   const token = jwt.sign(
-    { id, email, isSeller: true },
+    { id, email, shop_name, isSeller: true },
     process.env.JWT_SECRET,
     { expiresIn: `${expiresInHours}h` }
   );
