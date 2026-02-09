@@ -6,6 +6,7 @@ import Report from "../../database/report.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
+import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
 const router = Router();
 
 function isNewDay(lastVisit) {
@@ -117,7 +118,7 @@ router.get("/:shopName", async (req, res) => {
       ],
     });
 
-    const products = await Product.findAll({
+    let products = await Product.findAll({
       where: { seller_id: sellerId },
       attributes: [
         "id",
@@ -135,6 +136,9 @@ router.get("/:shopName", async (req, res) => {
         "discountMinutes",
       ],
     });
+
+    // Check and clean expired discounts and free delivery
+    products = await checkAndCleanProductExpiration(products);
 
     res.status(200).json({
       success: true,

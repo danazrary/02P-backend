@@ -6,6 +6,7 @@ import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import { Op } from "sequelize";
+import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
 const router = Router();
 
 router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
@@ -194,7 +195,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     }
 
     // 6️⃣ Get all seller products
-    const products = await Product.findAll({
+    let products = await Product.findAll({
       where: { seller_id: sellerId },
       attributes: [
         "id",
@@ -208,11 +209,17 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         "discount_percent",
         "discountType",
         "discountStartDate",
-        "free_delivery",
         "discountEndDate",
+        "freeDeliveryStartDate",
+        "freeDeliveryEndDate",
+        "free_delivery",
         "variantPrices",
+        "variantPricesAr",
       ],
     });
+
+    // Check and clean expired discounts and free delivery
+    products = await checkAndCleanProductExpiration(products);
 
     // Check red_line expiration and start time, remove if expired
     let redLine = null;

@@ -7,6 +7,7 @@ import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import SellerOffer from "../../database/sellerOffer.js";
+import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
 const router = Router();
 
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
@@ -302,7 +303,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       }
     }
 
-    const products = await Product.findAll({
+    let products = await Product.findAll({
       where: { seller_id: id },
       attributes: [
         "id",
@@ -317,10 +318,16 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         "discountType",
         "discountStartDate",
         "discountEndDate",
+        "freeDeliveryStartDate",
+        "freeDeliveryEndDate",
         "free_delivery",
         "variantPrices",
+        "variantPricesAr",
       ],
     });
+
+    // Check and clean expired discounts and free delivery
+    products = await checkAndCleanProductExpiration(products);
 
     // Check red_line expiration and remove if expired
     let redLine = null;

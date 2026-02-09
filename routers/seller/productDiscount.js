@@ -2,6 +2,7 @@ import { Router } from "express";
 import Product from "../../database/products.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { Op } from "sequelize";
+import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
 
 const router = Router();
 
@@ -29,7 +30,7 @@ router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
       whereClause[Op.or] = [{ hasDiscount: false }, { free_delivery: false }];
     }
 
-    const products = await Product.findAll({
+    let products = await Product.findAll({
       where: whereClause,
       attributes: [
         "id",
@@ -44,10 +45,14 @@ router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
         "discountType",
         "discountStartDate",
         "discountEndDate",
+        "freeDeliveryStartDate",
+        "freeDeliveryEndDate",
         "free_delivery",
       ],
-      order: [["createdAt", "DESC"]],
     });
+
+    // Check and clean expired discounts and free delivery
+    products = await checkAndCleanProductExpiration(products);
 
     res.status(200).json({
       success: true,
@@ -96,8 +101,8 @@ router.put("/products-discount/add", jwtVerifySellerToken, async (req, res) => {
 
     if (actionType === "free_delivery" || actionType === "both") {
       updateData.free_delivery = true;
-      updateData.discountStartDate = startDate;
-      updateData.discountEndDate = endDate;
+      updateData.freeDeliveryStartDate = startDate;
+      updateData.freeDeliveryEndDate = endDate;
     }
 
     const [updatedCount] = await Product.update(updateData, {
@@ -151,9 +156,8 @@ router.put(
 
       if (actionType === "free_delivery" || actionType === "both") {
         updateData.free_delivery = false;
-
-        updateData.discountStartDate = null;
-        updateData.discountEndDate = null;
+        updateData.freeDeliveryStartDate = null;
+        updateData.freeDeliveryEndDate = null;
       }
       const [updatedCount] = await Product.update(updateData, {
         where: whereClause,

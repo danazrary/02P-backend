@@ -75,6 +75,15 @@ const Product = sequelize.define(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    freeDeliveryStartDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    freeDeliveryEndDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+
     hasRealPrice: {
       type: DataTypes.BOOLEAN,
       defaultValue: true,
