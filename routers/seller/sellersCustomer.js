@@ -40,6 +40,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         success: false,
         error: true,
         isSeller: false,
+        shopName: shopName || null,
         message: "Seller shop not found",
       });
     }
