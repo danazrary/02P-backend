@@ -61,7 +61,14 @@ router.post("/cart-products", async (req, res) => {
     // Get seller info (phone for WhatsApp)
     const { default: Seller } = await import("../../database/seller.js");
     const seller = await Seller.findByPk(sellerId, {
-      attributes: ["id", "name", "shop_name", "shop_image", "phone"],
+      attributes: [
+        "id",
+        "name",
+        "shop_name",
+        "shop_image",
+        "phone",
+        "brand_color",
+      ],
     });
 
     res.status(200).json({

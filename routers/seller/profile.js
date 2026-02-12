@@ -18,6 +18,7 @@ router.get("/:shopName/profile", async (req, res) => {
         "name",
         "shop_name",
         "shop_image",
+        "brand_color",
         "social_links",
         "phone",
         "createdAt",
@@ -37,7 +38,7 @@ router.get("/:shopName/profile", async (req, res) => {
       name: sellerData.name,
       shopName: sellerData.shop_name,
       shopImage: sellerData.shop_image,
-      
+      brandColor: sellerData.brand_color || null,
       whatsapp: sellerData.phone || null,
       viber: sellerData.social_links?.viber || null,
       socialMedia: {

@@ -131,9 +131,13 @@ router.get("/:shopName", async (req, res) => {
         "hasDiscount",
         "discount_percent",
         "discountType",
-        "discountDays",
-        "discountHours",
-        "discountMinutes",
+        "discountStartDate",
+        "discountEndDate",
+        "freeDeliveryStartDate",
+        "freeDeliveryEndDate",
+        "free_delivery",
+        "variantPrices",
+        "variantPricesAr",
       ],
     });
 
@@ -146,6 +150,7 @@ router.get("/:shopName", async (req, res) => {
       logout: false,
       sellerPlan: sellerPlanRow ? sellerPlanRow.name : "Free",
       red_line: seller.red_line || null,
+      brand_color: seller.brand_color || null,
       offers,
       products,
     });

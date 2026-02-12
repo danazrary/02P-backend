@@ -282,6 +282,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         shop_image: seller.shop_image,
       },
       sellerPlan: plan ? plan.name : "Free",
+      brand_color: seller.brand_color || null,
       products,
       offers,
       red_line: redLine,

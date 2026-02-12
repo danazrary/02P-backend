@@ -55,7 +55,7 @@ router.get("/data", jwtVerifySellerToken, async (req, res) => {
     const startOfMonth = new Date(
       new Date().getFullYear(),
       new Date().getMonth(),
-      1
+      1,
     );
     const startOfYear = new Date(new Date().getFullYear(), 0, 1);
 
@@ -123,6 +123,7 @@ router.get("/data", jwtVerifySellerToken, async (req, res) => {
       error: false,
       logout: false,
       sellerPlan: sellerPlan ? sellerPlan.name : "Free",
+      brand_color: seller.brand_color || null,
       analytics,
       topProducts: formattedTopProducts,
       reports, // full raw report table if you need it later

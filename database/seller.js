@@ -60,6 +60,11 @@ const Seller = sequelize.define(
       type: DataTypes.JSON,
       allowNull: true,
     },
+    brand_color: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: null, // null means use default brand color
+    },
   },
   {
     timestamps: true,

@@ -71,7 +71,7 @@ router.post(
   async (req, res) => {
     try {
       const { id } = req.user;
-      const { shopName, sellerName, whatsappNumber } = req.body;
+      const { shopName, sellerName, whatsappNumber, brandColor } = req.body;
       console.log(id);
 
       if (!shopName || !sellerName || !whatsappNumber) {
@@ -110,6 +110,7 @@ router.post(
         phone: whatsappNumber,
         shop_name: shopName,
         shop_image: imageUrl,
+        brand_color: brandColor || null,
       });
 
       return res.status(200).json({
@@ -146,6 +147,7 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
       shopName: seller.shop_name,
       shopImage: seller.shop_image,
       phone: seller.phone,
+      brandColor: seller.brand_color || null,
       socialLinks: seller.social_links || {},
     });
   } catch (err) {
@@ -162,7 +164,8 @@ router.post(
   async (req, res) => {
     try {
       const { id } = req.user;
-      const { sellerName, shopName, whatsappNumber, socialLinks } = req.body;
+      const { sellerName, shopName, whatsappNumber, socialLinks, brandColor } =
+        req.body;
 
       const seller = await Seller.findByPk(id);
       if (!seller) {
@@ -189,6 +192,15 @@ router.post(
 
       if (whatsappNumber && whatsappNumber !== seller.phone) {
         updateData.phone = whatsappNumber;
+      }
+
+      // Handle brand color update
+      // brandColor can be empty string (to reset to default/null) or a color value
+      if (brandColor !== undefined) {
+        const newBrandColor = brandColor === "" ? null : brandColor;
+        if (newBrandColor !== seller.brand_color) {
+          updateData.brand_color = newBrandColor;
+        }
       }
 
       // � Handle social media links update

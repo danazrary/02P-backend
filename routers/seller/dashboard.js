@@ -377,6 +377,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       sellerPlan: sellerPlanRow ? sellerPlanRow.name : "Free",
       plan_start_date: sellerPlanRecord ? sellerPlanRecord.start_date : null,
       plan_end_date: sellerPlanRecord ? sellerPlanRecord.end_date : null,
+      brand_color: seller.brand_color || null,
       red_line: redLine,
       products,
       offers,
