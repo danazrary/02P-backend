@@ -14,6 +14,11 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
   try {
     const { id } = req.user;
 
+    // Get selected plan from query params (sent from frontend localStorage)
+    const selectedPlanFromClient = req.query.selectedPlan
+      ? JSON.parse(decodeURIComponent(req.query.selectedPlan))
+      : null;
+
     const seller = await Seller.findByPk(id);
 
     if (!seller) {
@@ -37,56 +42,48 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
 
     // ========== PLAN LOGIC ==========
 
-    // 1. No plan exists - Create trial plan
+    // 1. No plan exists - Check if user selected trial or give free plan
     if (!sellerPlanRecord) {
-      // Get trial plan (plan_id: 9)
-      const trialPlan = await Plan.findByPk(9);
-      const trialDays = trialPlan ? trialPlan.duration_days : 7;
+      // Check if user selected trial plan from pricing page
+      if (selectedPlanFromClient && selectedPlanFromClient.name === "trial") {
+        // Give trial plan (plan_id: 9)
+        const trialPlan = await Plan.findByPk(9);
+        const trialDays = trialPlan ? trialPlan.duration_days : 3;
 
-      sellerPlanRecord = await SellerPlan.create({
-        seller_id: id,
-        plan_id: 9, // Trial plan
-        start_date: new Date(),
-        end_date: new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000),
-        is_trial: true,
-        trial_ended: false,
-        status: true,
-      });
-      console.log(`✅ Created trial plan for seller ${id}`);
+        sellerPlanRecord = await SellerPlan.create({
+          seller_id: id,
+          plan_id: 9, // Trial plan
+          start_date: new Date(),
+          end_date: new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000),
+          is_trial: true,
+          trial_ended: false,
+          status: true,
+        });
+        console.log(
+          `✅ Created trial plan for seller ${id} (user selected trial)`,
+        );
+      } else {
+        // Give free plan (plan_id: 1) - user didn't select trial
+        sellerPlanRecord = await SellerPlan.create({
+          seller_id: id,
+          plan_id: 1, // Free seller plan
+          start_date: new Date(),
+          end_date: new Date("2099-12-31"), // Free plan has no real expiry
+          is_trial: false,
+          trial_ended: false,
+          status: true,
+        });
+        console.log(
+          `✅ Created free plan for seller ${id} (no trial selected)`,
+        );
+      }
     }
 
     // Get current plan details
     let sellerPlanRow = await Plan.findByPk(sellerPlanRecord.plan_id);
     const planName = sellerPlanRow ? sellerPlanRow.name : "";
 
-    // 2. If plan is "free_seller" - Check trial eligibility
-    if (
-      planName === "free_seller" ||
-      planName === "Free" ||
-      sellerPlanRecord.plan_id === 1
-    ) {
-      // Check if trial_ended is false - give trial
-      if (!sellerPlanRecord.trial_ended) {
-        const trialPlan = await Plan.findByPk(9);
-        const trialDays = trialPlan ? trialPlan.duration_days : 7;
-
-        // Update to trial plan
-        await sellerPlanRecord.update({
-          plan_id: 9,
-          start_date: new Date(),
-          end_date: new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000),
-          is_trial: true,
-          status: true,
-        });
-
-        // Refresh plan data
-        sellerPlanRow = await Plan.findByPk(9);
-        console.log(`✅ Upgraded seller ${id} from free to trial plan`);
-      }
-      // If trial_ended is true, continue with free plan
-    }
-
-    // 3. Check if plan is trial_seller
+    // 2. Check if plan is trial_seller
     const updatedPlanName = sellerPlanRow ? sellerPlanRow.name : "";
     if (updatedPlanName === "trial_seller" || sellerPlanRecord.plan_id === 9) {
       const endDate = new Date(sellerPlanRecord.end_date);
@@ -371,12 +368,18 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       logout: false,
       yourShopClose: false,
       seller_id: id,
+      seller_name: seller.name,
+      shop_name: seller.shop_name,
       plan_id: sellerPlanRecord ? sellerPlanRecord.plan_id : null,
       is_trial: sellerPlanRecord ? sellerPlanRecord.is_trial : false,
       trial_ended: sellerPlanRecord ? sellerPlanRecord.trial_ended : false,
       sellerPlan: sellerPlanRow ? sellerPlanRow.name : "Free",
       plan_start_date: sellerPlanRecord ? sellerPlanRecord.start_date : null,
       plan_end_date: sellerPlanRecord ? sellerPlanRecord.end_date : null,
+      // Show plan selection popup if user is on free plan
+      show_plan_selection: sellerPlanRecord?.plan_id === 1,
+      // Pass back selected plan info from client (if any) for the popup
+      selected_plan_info: selectedPlanFromClient || null,
       brand_color: seller.brand_color || null,
       red_line: redLine,
       products,
@@ -394,6 +397,72 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       success: false,
       error: true,
       logout: false,
+      message: "Server error",
+    });
+  }
+});
+
+// Activate trial plan for seller
+router.post("/activate-trial", jwtVerifySellerToken, async (req, res) => {
+  try {
+    const { id } = req.user;
+
+    // Find seller's current plan
+    const sellerPlanRecord = await SellerPlan.findOne({
+      where: { seller_id: id },
+    });
+
+    if (!sellerPlanRecord) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "No plan record found",
+      });
+    }
+
+    // Check if trial was already used
+    if (sellerPlanRecord.trial_ended) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Trial has already been used",
+      });
+    }
+
+    // Check if already on trial
+    if (sellerPlanRecord.plan_id === 9) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Already on trial plan",
+      });
+    }
+
+    // Activate trial plan (3 days)
+    const trialDays = 3;
+    await sellerPlanRecord.update({
+      plan_id: 9, // Trial plan ID
+      start_date: new Date(),
+      end_date: new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000),
+      is_trial: true,
+      status: true,
+    });
+
+    console.log(`\u2705 Activated trial plan for seller ${id}`);
+
+    return res.status(200).json({
+      success: true,
+      error: false,
+      message: "Trial activated successfully",
+      plan_id: 9,
+      trial_days: trialDays,
+      end_date: new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000),
+    });
+  } catch (error) {
+    console.error("Error activating trial:", error);
+    return res.status(500).json({
+      success: false,
+      error: true,
       message: "Server error",
     });
   }

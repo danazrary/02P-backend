@@ -90,10 +90,11 @@ router.get("/:shopName", async (req, res) => {
       sellerPlanRecord = await SellerPlan.create({
         seller_id: sellerId,
         plan_id: 1,
-        starts_at: new Date(),
-        expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+        start_date: new Date(),
+        end_date: new Date("2099-12-31"),
         is_trial: false,
-        is_active: false,
+        trial_ended: false,
+        status: true,
       });
     }
 
