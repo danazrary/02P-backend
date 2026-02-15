@@ -8,8 +8,16 @@
   "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "nodemon server.js"
-    
+    "start": "node server.js",
+    "start:https": "node server.js --env=https",
+    "start:prod": "NODE_ENV=production node server.js --env=https",
+    "dev": "nodemon server.js",
+    "dev:https": "nodemon server.js --env=https",
+    "pm2:start": "pm2 start server.js --name backend --node-args=\"--env=https\" --env production",
+    "pm2:stop": "pm2 stop backend",
+    "pm2:restart": "pm2 restart backend",
+    "pm2:logs": "pm2 logs backend",
+    "pm2:monit": "pm2 monit"
   },
   "dependencies": {
     "axios": "^1.13.2",

@@ -22,13 +22,14 @@ export const corsOptions = {
     "http://localhost:5173",
     "https://localhost:5173",
     "http://127.0.0.1:5173",
+    "https://127.0.0.1:5173",
     "http://192.168.1.17:5173",
+    "https://192.168.1.17:5173",
   ],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
-
 
 const solt = bcrypt.genSaltSync(10); //if you use genSalt you need to use async and await
 //you can change the 10 to more but it take more time

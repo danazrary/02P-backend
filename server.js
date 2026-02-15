@@ -23,15 +23,23 @@ import { adminToken, adminRefreshToken } from "./utils/addingToken.js";
 import { sequelize } from "./database/index.js";
 import { scheduleCleanup } from "./utils/cleanupExpired.js";
 
-// Load environment variables (.env.product, .env.developedLH, .env.developingURL)
-dotenv.config();
+// Load environment variables based on mode
+// Check if --env=https argument is passed
+const isHttpsMode = process.argv.includes("--env=https");
+const envFile = isHttpsMode ? ".env.https" : ".env";
+dotenv.config({ path: envFile });
+console.log(`🔧 Loading environment from: ${envFile}`);
 
 // --- CREATE EXPRESS APP ---
 const app = express();
-app.use((req, res, next) => {
-  console.log("🔥 INCOMING:", req.method, req.url);
-  next();
-});
+
+// Request logging - Only in development
+if (process.env.NODE_ENV !== "production") {
+  app.use((req, res, next) => {
+    console.log("🔥 INCOMING:", req.method, req.url);
+    next();
+  });
+}
 
 app.set("trust proxy", 1);
 app.use(passport.initialize());
@@ -55,7 +63,8 @@ app.use(passport.initialize());
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 app.use(cors(corsOptions));
 
-app.use("/", apiLimiter);
+app.use("/", apiLimiter); // Apply to all routes
+app.use("/api", apiLimiter); // Extra protection for API routes
 app.use(helmet());
 app.use(hpp());
 app.use(bodyParser.json({ limit: process.env.BODY_LIMIT || "2mb" }));
@@ -88,8 +97,6 @@ app.get("/profile", (req, res) => {
 });
 
 // CSRF Token endpoint
-await sequelize.authenticate();
-console.log("✅ DB connected");
 app.get("/csrf-token", (req, res) => {
   if (!res.locals || !res.locals.csrfToken)
     return res.status(500).json({ error: "CSRF token not available" });
@@ -130,10 +137,51 @@ app.post("/test", async (req, res) => {
 app.get("/test", (req, res) => res.send("Check your console for cookies."));
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
+// --- ERROR HANDLERS ---
+// 404 handler - must be after all routes
+app.use((req, res) => {
+  res.status(404).json({
+    error: "Route not found",
+    path: req.path,
+  });
+});
+
+// Global error handler - must be last
+app.use((err, req, res, next) => {
+  console.error("❌ Server Error:", err);
+
+  // Don't leak error details in production
+  const errorResponse = {
+    error:
+      process.env.NODE_ENV === "production"
+        ? "Internal server error"
+        : err.message,
+    ...(process.env.NODE_ENV !== "production" && { stack: err.stack }),
+  };
+
+  res.status(err.status || 500).json(errorResponse);
+});
+
+// --- DATABASE INITIALIZATION ---
+async function initializeDatabase() {
+  try {
+    await sequelize.authenticate();
+    console.log("✅ Database connected successfully");
+    return true;
+  } catch (err) {
+    console.error("❌ Database connection failed:", err.message);
+    if (process.env.NODE_ENV === "production") {
+      console.error("Cannot start server without database connection");
+      process.exit(1);
+    }
+    return false;
+  }
+}
+
 // --- SERVER CONFIG ---
 const port = Number(process.env.PORT || 3001);
 const mode = process.env.ENVIRONMENT?.trim() || "product";
-const bindHost = process.env.BIND_HOST || "127.0.0.1";
+const bindHost = process.env.BIND_HOST || "0.0.0.0";
 
 // --- SERVER START FUNCTIONS ---
 function startHttpsServer() {
@@ -163,12 +211,24 @@ function startHttpServer() {
   });
 }
 
-// --- START SERVER BASED ON MODE ---
-if (mode === "product" || mode === "developingURL") {
-  startHttpsServer();
-} else {
-  startHttpServer(); // Default to HTTP for all modes
+// --- START SERVER ---
+async function startServer() {
+  // Initialize database first
+  await initializeDatabase();
+
+  // Start appropriate server based on mode
+  if (mode === "product" || mode === "developingURL") {
+    startHttpsServer();
+  } else {
+    startHttpServer();
+  }
 }
+
+// Start the server
+startServer().catch((err) => {
+  console.error("❌ Failed to start server:", err);
+  process.exit(1);
+});
 
 // --- CLEAN SHUTDOWN ---
 process.on("SIGINT", () => {
