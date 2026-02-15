@@ -1,34 +1,21 @@
 import express from "express";
-import multer from "multer";
-import path from "path";
 import Product from "../../database/products.js";
 import Seller from "../../database/seller.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
-import fs from "fs";
+import {
+  uploadProducts,
+  getImageUrlPath,
+  deleteImage,
+} from "../../utils/uploadHandler.js";
+
 const router = express.Router();
 
-// Multer setup to save images in /uploads folder
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, "uploads/products"); // folder must exist
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  },
-});
-const deleteFileIfExists = (filePath) => {
-  const fullPath = path.join(process.cwd(), filePath);
-  if (fs.existsSync(fullPath)) {
-    fs.unlinkSync(fullPath);
-  }
-};
-const upload = multer({
-  storage,
-  limits: { fieldSize: 10 * 1024 * 1024 }, // 10 MB per field
-});
+// Use centralized upload middleware that handles environment-based storage
+// In development (NODE_ENV=development): saves to backend/uploads/products
+// In production (NODE_ENV=production): saves to VPS_UPLOAD_PATH/products
+const upload = uploadProducts;
 
 // Route to create product
 router.post(
@@ -107,9 +94,9 @@ router.post(
 
       //  const { id } = req.user;
 
-      // Save uploaded images paths
+      // Save uploaded images paths using environment-aware path
       const images = req.files
-        ? req.files.map((file) => `/uploads/products/${file.filename}`)
+        ? req.files.map((file) => getImageUrlPath("products", file.filename))
         : [];
       console.log(req.body);
       console.log(req.files);
@@ -199,7 +186,7 @@ router.put(
       /* 🗑️ Delete removed images from disk */
       if (removedImages) {
         const parsedRemoved = JSON.parse(removedImages);
-        parsedRemoved.forEach((img) => deleteFileIfExists(img));
+        parsedRemoved.forEach((img) => deleteImage(img));
       }
 
       /* 🖼️ Keep existing images */
@@ -207,8 +194,8 @@ router.put(
 
       /* ➕ Add new uploaded images */
       if (req.files && req.files.length > 0) {
-        const newImages = req.files.map(
-          (file) => `/uploads/products/${file.filename}`,
+        const newImages = req.files.map((file) =>
+          getImageUrlPath("products", file.filename),
         );
         finalImages = [...finalImages, ...newImages];
       }
@@ -274,7 +261,7 @@ router.delete(
 
       /* 🧹 Delete all images from disk */
       if (product.images && product.images.length > 0) {
-        product.images.forEach((img) => deleteFileIfExists(img));
+        product.images.forEach((img) => deleteImage(img));
       }
 
       await product.destroy();

@@ -60,7 +60,16 @@ app.use(passport.initialize());
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 }); */
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+
+// Serve static uploads based on environment
+// In development: serve from backend/uploads
+// In production: serve from VPS_UPLOAD_PATH (e.g., /var/www/uploads)
+const uploadsPath =
+  process.env.NODE_ENV === "production"
+    ? process.env.VPS_UPLOAD_PATH || "/var/www/uploads"
+    : path.join(process.cwd(), "uploads");
+app.use("/uploads", express.static(uploadsPath));
+
 app.use(cors(corsOptions));
 
 app.use("/", apiLimiter); // Apply to all routes

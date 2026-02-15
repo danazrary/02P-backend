@@ -1,37 +1,21 @@
 import express from "express";
-import multer from "multer";
-import path from "path";
 import SellerOffer from "../../database/sellerOffer.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
-import fs from "fs";
 import Product from "../../database/products.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
+import {
+  uploadOffers,
+  getImageUrlPath,
+  deleteImage,
+} from "../../utils/uploadHandler.js";
 
 const router = express.Router();
 
-// Multer setup to save images in /uploads/offers folder
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, "uploads/offers"); // folder must exist
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  },
-});
-
-const deleteFileIfExists = (filePath) => {
-  const fullPath = path.join(process.cwd(), filePath);
-  if (fs.existsSync(fullPath)) {
-    fs.unlinkSync(fullPath);
-  }
-};
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB per file
-});
+// Use centralized upload middleware that handles environment-based storage
+// In development (NODE_ENV=development): saves to backend/uploads/offers
+// In production (NODE_ENV=production): saves to VPS_UPLOAD_PATH/offers
+const upload = uploadOffers;
 
 // Route to create offer
 router.post(
@@ -109,9 +93,9 @@ router.post(
 
       // const { id } = req.user;
 
-      // Save uploaded cover image path
+      // Save uploaded cover image path using environment-aware path
       const cover_image = req.file
-        ? `/uploads/offers/${req.file.filename}`
+        ? getImageUrlPath("offers", req.file.filename)
         : null;
 
       const offer = await SellerOffer.create({
@@ -202,11 +186,11 @@ router.put(
 
       // Delete old cover image if new one is uploaded
       if (req.file && offer.cover_image) {
-        deleteFileIfExists(offer.cover_image);
+        deleteImage(offer.cover_image);
       }
 
       const cover_image = req.file
-        ? `/uploads/offers/${req.file.filename}`
+        ? getImageUrlPath("offers", req.file.filename)
         : offer.cover_image;
 
       await offer.update({
@@ -272,7 +256,7 @@ router.delete(
 
       // Delete cover image from disk
       if (offer.cover_image) {
-        deleteFileIfExists(offer.cover_image);
+        deleteImage(offer.cover_image);
       }
 
       await offer.destroy();

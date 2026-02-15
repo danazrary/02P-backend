@@ -34,7 +34,7 @@ coverage/
 .env.http
 .env.https
 .env.production  # Production secrets - NEVER commit
-
+.env.production.example  # Example production secrets - safe to commit
 # Mac system files
 .DS_Store
 

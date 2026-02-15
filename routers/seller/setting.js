@@ -13,6 +13,7 @@ import { sellerToken, shortSellerToken } from "../../utils/addingToken.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { deleteFile } from "../../utils/deleteFile.js";
 import { uploadSellerImage } from "../../middlewares/uploadSellerImage.js";
+import { getImageUrlPath } from "../../utils/uploadHandler.js";
 
 const router = Router();
 
@@ -101,8 +102,8 @@ router.post(
           deleteFile(seller.shop_image);
         }
 
-        // ✅ save new image
-        imageUrl = `/uploads/sellers/${req.file.filename}`;
+        // ✅ save new image with environment-aware path
+        imageUrl = getImageUrlPath("sellers", req.file.filename);
       }
 
       await seller.update({
@@ -223,7 +224,7 @@ router.post(
         if (seller.shop_image) {
           deleteFile(seller.shop_image); // remove old image
         }
-        updateData.shop_image = `/uploads/sellers/${req.file.filename}`;
+        updateData.shop_image = getImageUrlPath("sellers", req.file.filename);
       }
 
       // 🟡 No changes detected
