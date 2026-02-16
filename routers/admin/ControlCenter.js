@@ -24,14 +24,16 @@ router.get("/check-me", checkMe, async (req, res) => {
     return res.json({ role: "admin" });
   }
 });
-router.post("/check-expired-plans", adminAuth, async (req, res) => {
+router.get("/check-expired-plans", adminAuth, async (req, res) => {
   try {
+    console.log("checking");
+
     const now = new Date();
 
     const expiredPlans = await SellerPlan.findAll({
       where: {
         end_date: { [Op.lt]: now },
-        status: true,
+       
       },
       include: [
         {
@@ -47,6 +49,7 @@ router.post("/check-expired-plans", adminAuth, async (req, res) => {
       ],
       order: [["end_date", "ASC"]],
     });
+    console.log("expe", expiredPlans);
 
     // format data for frontend
     const result = expiredPlans.map((sp) => ({

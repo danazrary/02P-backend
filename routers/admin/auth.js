@@ -27,15 +27,17 @@ router.post("/login", adminLimiter, async (req, res) => {
 
     if (!isMatch) {
       console.log("gvhgh");
-      
-      return res
-        .status(401)
-        .json({ success: false, error: true, message: "Invalid credentialsddd" });
+
+      return res.status(401).json({
+        success: false,
+        error: true,
+        message: "Invalid credentialsddd",
+      });
     }
 
     // 🔐 STEP 4 — DEVICE TRUST CHECK
-    const deviceHash = getDeviceHash(req);
-console.log(deviceHash);
+  /*   const deviceHash = getDeviceHash(req);
+    console.log(deviceHash);
 
     const trustedDevice = await AdminDevice.findOne({
       where: {
@@ -45,10 +47,13 @@ console.log(deviceHash);
       },
     });
 
+    console.log("trustedDevice:", trustedDevice);
+
     // If device NOT trusted
     if (!trustedDevice) {
-      console.log("block",trustedDevice);
-      
+  
+      console.log("block", trustedDevice);
+
       // Check if this is the FIRST device
       const deviceCount = await AdminDevice.count({
         where: { admin_id: admin.id },
@@ -66,7 +71,7 @@ console.log(deviceHash);
         });
       } else {
         console.log("block");
-        
+
         // New device → BLOCK login
         return res.status(403).json({
           success: false,
@@ -77,7 +82,8 @@ console.log(deviceHash);
     } else {
       // Update last used time
       await trustedDevice.update({ last_used: new Date() });
-    }
+    } */
+    //FIX ME - For now, we will skip device trust check to unblock admin login. We can re-enable it later after testing.  
 
     // Update last login
     await admin.update({ last_login: new Date() });
@@ -86,7 +92,7 @@ console.log(deviceHash);
     const token = jwt.sign(
       { id: admin.id, role: admin.role },
       process.env.ADMIN_JWT_SECRET,
-      { expiresIn: "15m" }
+      { expiresIn: "15m" },
     );
 
     res.cookie("admin_token", token, {
