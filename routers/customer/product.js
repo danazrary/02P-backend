@@ -3,6 +3,7 @@ import { detectSeller } from "../../middlewares/jwtVerify.js";
 import Product from "../../database/products.js";
 import Report from "../../database/report.js";
 import SellerOffer from "../../database/sellerOffer.js";
+import Feedback from "../../database/feedback.js";
 import { Op } from "sequelize";
 import {
   checkAndCleanProductExpiration,
@@ -141,6 +142,50 @@ router.get("/product/:id", detectSeller, async (req, res) => {
       success: false,
       error: true,
       message: "Failed to fetch product",
+    });
+  }
+});
+router.post("/add-feedback", async (req, res) => {
+  try {
+    const { message, rating, type } = req.body;
+
+    if (!message || message.trim() === "") {
+      return res.status(400).json({
+        success: false,
+        message: "Message is required",
+      });
+    }
+
+    if (!type || type.trim() === "") {
+      return res.status(400).json({
+        success: false,
+        message: "Type is required",
+      });
+    }
+
+    if (rating && (rating < 1 || rating > 5)) {
+      return res.status(400).json({
+        success: false,
+        message: "Rating must be between 1 and 5",
+      });
+    }
+
+    const feedback = await Feedback.create({
+      message: message.trim(),
+      rating: rating || null,
+      type: type.trim(),
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Feedback submitted successfully",
+      data: feedback,
+    });
+  } catch (error) {
+    console.error("Error saving feedback:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
     });
   }
 });

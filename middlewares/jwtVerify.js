@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 //seller token
 export const jwtVerifySellerToken = (req, res, next) => {
   const { s_t } = req.cookies;
+console.log("s_t",s_t);
 
   if (!s_t) {
     return res.status(401).json({

@@ -13,6 +13,7 @@ const router = Router();
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
   try {
     const { id } = req.user;
+console.log("id",id);
 
     // Get selected plan from query params (sent from frontend localStorage)
     const selectedPlanFromClient = req.query.selectedPlan
