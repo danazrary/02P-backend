@@ -13,7 +13,7 @@ const router = Router();
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
   try {
     const { id } = req.user;
-console.log("id",id);
+    console.log("id", id);
 
     // Get selected plan from query params (sent from frontend localStorage)
     const selectedPlanFromClient = req.query.selectedPlan
@@ -327,8 +327,13 @@ console.log("id",id);
     // Check and clean expired discounts and free delivery
     products = await checkAndCleanProductExpiration(products);
 
-    // Check red_line expiration and remove if expired
+    // Check red_line (Kurdish) and red_lineAr (Arabic) expiration
     let redLine = null;
+    let redLineKu = null;
+    let redLineAr = null;
+    let needsCleanup = { ku: false, ar: false };
+
+    // Process Kurdish red_line
     if (seller.red_line) {
       try {
         const redLineData =
@@ -336,7 +341,6 @@ console.log("id",id);
             ? JSON.parse(seller.red_line)
             : seller.red_line;
 
-        // Check if red_line has proper structure
         if (
           redLineData &&
           typeof redLineData === "object" &&
@@ -344,23 +348,74 @@ console.log("id",id);
         ) {
           const endTime = new Date(redLineData.end_time);
 
-          // If expired, remove from database immediately
           if (endTime < currentDate) {
-            await Seller.update({ red_line: null }, { where: { id: id } });
-            console.log(`🗑️ Removed expired red_line for seller ${id}`);
+            needsCleanup.ku = true;
           } else {
-            // Still valid, return it
-            redLine = redLineData;
+            redLineKu = redLineData;
           }
         } else {
-          // Invalid structure, remove it
-          await Seller.update({ red_line: null }, { where: { id: id } });
+          needsCleanup.ku = true;
         }
       } catch (error) {
         console.error("Error parsing red_line for seller", id, ":", error);
-        // If parsing fails, remove invalid data
-        await Seller.update({ red_line: null }, { where: { id: id } });
+        needsCleanup.ku = true;
       }
+    }
+
+    // Process Arabic red_lineAr
+    if (seller.red_lineAr) {
+      try {
+        const redLineData =
+          typeof seller.red_lineAr === "string"
+            ? JSON.parse(seller.red_lineAr)
+            : seller.red_lineAr;
+
+        if (
+          redLineData &&
+          typeof redLineData === "object" &&
+          redLineData.end_time
+        ) {
+          const endTime = new Date(redLineData.end_time);
+
+          if (endTime < currentDate) {
+            needsCleanup.ar = true;
+          } else {
+            redLineAr = redLineData;
+          }
+        } else {
+          needsCleanup.ar = true;
+        }
+      } catch (error) {
+        console.error("Error parsing red_lineAr for seller", id, ":", error);
+        needsCleanup.ar = true;
+      }
+    }
+
+    // Cleanup expired/invalid data
+    if (needsCleanup.ku || needsCleanup.ar) {
+      const updateObj = {};
+      if (needsCleanup.ku) updateObj.red_line = null;
+      if (needsCleanup.ar) updateObj.red_lineAr = null;
+      await Seller.update(updateObj, { where: { id: id } });
+      if (needsCleanup.ku)
+        console.log(`🗑️ Removed expired red_line (Kurdish) for seller ${id}`);
+      if (needsCleanup.ar)
+        console.log(`🗑️ Removed expired red_lineAr (Arabic) for seller ${id}`);
+    }
+
+    // Build combined redLine response
+    if (redLineKu || redLineAr) {
+      let language = "both";
+      if (redLineKu && !redLineAr) language = "kurdish";
+      else if (!redLineKu && redLineAr) language = "arabic";
+
+      redLine = {
+        textKu: redLineKu?.text || "",
+        textAr: redLineAr?.text || "",
+        language,
+        start_time: redLineKu?.start_time || redLineAr?.start_time,
+        end_time: redLineKu?.end_time || redLineAr?.end_time,
+      };
     }
 
     res.status(200).json({

@@ -11,14 +11,38 @@ const router = Router();
 router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
   try {
     const { id: sellerId } = req.user;
-    const { text, start_time, end_time } = req.body;
+    const { textKu, textAr, language, start_time, end_time } = req.body;
 
-    // Validation
-    if (!text || !start_time || !end_time) {
+    // Validation - check required times
+    if (!start_time || !end_time) {
       return res.status(400).json({
         success: false,
         error: true,
-        message: "Please provide text, start_time, and end_time",
+        message: "Please provide start_time and end_time",
+      });
+    }
+
+    // Validate text based on language selection
+    const lang = language || "arabic"; // default to arabic
+    if (lang === "kurdish" && !textKu?.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Please provide Kurdish text",
+      });
+    }
+    if (lang === "arabic" && !textAr?.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Please provide Arabic text",
+      });
+    }
+    if (lang === "both" && (!textKu?.trim() || !textAr?.trim())) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Please provide both Kurdish and Arabic text",
       });
     }
 
@@ -74,23 +98,60 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // Update or create red_line data
-    const redLineData = {
-      text: text.trim(),
+    // Build update object based on language selection
+    const updateData = {};
+    const responseData = {
+      language: lang,
       start_time,
       end_time,
       created_at: new Date(),
     };
 
-    await seller.update({
-      red_line: redLineData,
-    });
+    if (lang === "kurdish") {
+      // Kurdish only - save to red_line, clear red_lineAr
+      updateData.red_line = {
+        text: textKu.trim(),
+        start_time,
+        end_time,
+        created_at: new Date(),
+      };
+      updateData.red_lineAr = null;
+      responseData.textKu = textKu.trim();
+    } else if (lang === "arabic") {
+      // Arabic only - save to red_lineAr, clear red_line
+      updateData.red_lineAr = {
+        text: textAr.trim(),
+        start_time,
+        end_time,
+        created_at: new Date(),
+      };
+      updateData.red_line = null;
+      responseData.textAr = textAr.trim();
+    } else {
+      // Both - save Kurdish to red_line, Arabic to red_lineAr
+      updateData.red_line = {
+        text: textKu.trim(),
+        start_time,
+        end_time,
+        created_at: new Date(),
+      };
+      updateData.red_lineAr = {
+        text: textAr.trim(),
+        start_time,
+        end_time,
+        created_at: new Date(),
+      };
+      responseData.textKu = textKu.trim();
+      responseData.textAr = textAr.trim();
+    }
+
+    await seller.update(updateData);
 
     return res.status(200).json({
       success: true,
       error: false,
       logout: false,
-      data: redLineData,
+      data: responseData,
     });
   } catch (error) {
     console.error(error);
@@ -118,9 +179,10 @@ router.delete("/delete-redline", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // Delete red_line data
+    // Delete red_line data (both columns)
     await seller.update({
       red_line: null,
+      red_lineAr: null,
     });
 
     return res.status(200).json({

@@ -222,8 +222,13 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     // Check and clean expired discounts and free delivery
     products = await checkAndCleanProductExpiration(products);
 
-    // Check red_line expiration and start time, remove if expired
+    // Check red_line (Kurdish) and red_lineAr (Arabic) expiration and start time
     let redLine = null;
+    let redLineKu = null;
+    let redLineAr = null;
+    let needsCleanup = { ku: false, ar: false };
+
+    // Process Kurdish red_line
     if (seller.red_line) {
       try {
         const redLineData =
@@ -231,7 +236,6 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
             ? JSON.parse(seller.red_line)
             : seller.red_line;
 
-        // Check if red_line has proper structure
         if (
           redLineData &&
           typeof redLineData === "object" &&
@@ -241,21 +245,13 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
           const startTime = new Date(redLineData.start_time);
           const endTime = new Date(redLineData.end_time);
 
-          // If expired, remove from database immediately
           if (endTime < currentDate) {
-            await Seller.update(
-              { red_line: null },
-              { where: { id: sellerId } },
-            );
-            console.log(`🗑️ Removed expired red_line for seller ${sellerId}`);
+            needsCleanup.ku = true;
           } else if (startTime <= currentDate && endTime >= currentDate) {
-            // Only show if started and not ended
-            redLine = redLineData;
+            redLineKu = redLineData;
           }
-          // If not started yet (startTime > currentDate), don't show but don't remove
         } else {
-          // Invalid structure, remove it
-          await Seller.update({ red_line: null }, { where: { id: sellerId } });
+          needsCleanup.ku = true;
         }
       } catch (error) {
         console.error(
@@ -264,9 +260,75 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
           ":",
           error,
         );
-        // If parsing fails, remove invalid data
-        await Seller.update({ red_line: null }, { where: { id: sellerId } });
+        needsCleanup.ku = true;
       }
+    }
+
+    // Process Arabic red_lineAr
+    if (seller.red_lineAr) {
+      try {
+        const redLineData =
+          typeof seller.red_lineAr === "string"
+            ? JSON.parse(seller.red_lineAr)
+            : seller.red_lineAr;
+
+        if (
+          redLineData &&
+          typeof redLineData === "object" &&
+          redLineData.end_time &&
+          redLineData.start_time
+        ) {
+          const startTime = new Date(redLineData.start_time);
+          const endTime = new Date(redLineData.end_time);
+
+          if (endTime < currentDate) {
+            needsCleanup.ar = true;
+          } else if (startTime <= currentDate && endTime >= currentDate) {
+            redLineAr = redLineData;
+          }
+        } else {
+          needsCleanup.ar = true;
+        }
+      } catch (error) {
+        console.error(
+          "Error parsing red_lineAr for seller",
+          sellerId,
+          ":",
+          error,
+        );
+        needsCleanup.ar = true;
+      }
+    }
+
+    // Cleanup expired/invalid data
+    if (needsCleanup.ku || needsCleanup.ar) {
+      const updateObj = {};
+      if (needsCleanup.ku) updateObj.red_line = null;
+      if (needsCleanup.ar) updateObj.red_lineAr = null;
+      await Seller.update(updateObj, { where: { id: sellerId } });
+      if (needsCleanup.ku)
+        console.log(
+          `🗑️ Removed expired red_line (Kurdish) for seller ${sellerId}`,
+        );
+      if (needsCleanup.ar)
+        console.log(
+          `🗑️ Removed expired red_lineAr (Arabic) for seller ${sellerId}`,
+        );
+    }
+
+    // Build combined redLine response
+    if (redLineKu || redLineAr) {
+      let language = "both";
+      if (redLineKu && !redLineAr) language = "kurdish";
+      else if (!redLineKu && redLineAr) language = "arabic";
+
+      redLine = {
+        textKu: redLineKu?.text || "",
+        textAr: redLineAr?.text || "",
+        language,
+        start_time: redLineKu?.start_time || redLineAr?.start_time,
+        end_time: redLineKu?.end_time || redLineAr?.end_time,
+      };
     }
 
     // 7️⃣ Return complete seller data

@@ -145,12 +145,39 @@ router.get("/:shopName", async (req, res) => {
     // Check and clean expired discounts and free delivery
     products = await checkAndCleanProductExpiration(products);
 
+    // Build combined redLine from both Kurdish (red_line) and Arabic (red_lineAr)
+    let redLine = null;
+    const redLineKu = seller.red_line
+      ? typeof seller.red_line === "string"
+        ? JSON.parse(seller.red_line)
+        : seller.red_line
+      : null;
+    const redLineAr = seller.red_lineAr
+      ? typeof seller.red_lineAr === "string"
+        ? JSON.parse(seller.red_lineAr)
+        : seller.red_lineAr
+      : null;
+
+    if (redLineKu || redLineAr) {
+      let language = "both";
+      if (redLineKu && !redLineAr) language = "kurdish";
+      else if (!redLineKu && redLineAr) language = "arabic";
+
+      redLine = {
+        textKu: redLineKu?.text || "",
+        textAr: redLineAr?.text || "",
+        language,
+        start_time: redLineKu?.start_time || redLineAr?.start_time,
+        end_time: redLineKu?.end_time || redLineAr?.end_time,
+      };
+    }
+
     res.status(200).json({
       success: true,
       error: false,
       logout: false,
       sellerPlan: sellerPlanRow ? sellerPlanRow.name : "Free",
-      red_line: seller.red_line || null,
+      red_line: redLine,
       brand_color: seller.brand_color || null,
       offers,
       products,

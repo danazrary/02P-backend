@@ -11,45 +11,94 @@ export async function cleanupExpiredData() {
     console.log("🧹 Starting cleanup of expired data...");
     console.log("📅 Current date:", currentDate.toISOString());
 
-    // 1️⃣ Clean up expired red lines
+    // 1️⃣ Clean up expired red lines (both Kurdish and Arabic)
     const sellers = await Seller.findAll({
-      attributes: ["id", "name", "red_line"],
+      attributes: ["id", "name", "red_line", "red_lineAr"],
     });
 
     console.log(`📊 Found ${sellers.length} total sellers`);
 
     let redLinesRemoved = 0;
     for (const seller of sellers) {
-      // Skip if red_line is null or undefined
-      if (!seller.red_line) continue;
+      const updateObj = {};
 
-      try {
-        const redLineData =
-          typeof seller.red_line === "string"
-            ? JSON.parse(seller.red_line)
-            : seller.red_line;
+      // Check Kurdish red_line
+      if (seller.red_line) {
+        try {
+          const redLineData =
+            typeof seller.red_line === "string"
+              ? JSON.parse(seller.red_line)
+              : seller.red_line;
 
-        // Skip if empty object or no end_time
-        if (
-          !redLineData ||
-          typeof redLineData !== "object" ||
-          !redLineData.end_time
-        ) {
-          continue;
+          if (
+            redLineData &&
+            typeof redLineData === "object" &&
+            redLineData.end_time
+          ) {
+            const endTime = new Date(redLineData.end_time);
+            console.log(
+              `🔍 Seller ${seller.id} (${seller.name}) Kurdish: end_time=${endTime.toISOString()}, expired=${endTime < currentDate}`,
+            );
+
+            if (endTime < currentDate) {
+              updateObj.red_line = null;
+            }
+          }
+        } catch (error) {
+          console.error(
+            `Error parsing red_line for seller ${seller.id}:`,
+            error,
+          );
+          updateObj.red_line = null;
         }
+      }
 
-        const endTime = new Date(redLineData.end_time);
-        console.log(
-          `🔍 Seller ${seller.id} (${seller.name}): end_time=${endTime.toISOString()}, expired=${endTime < currentDate}`,
-        );
+      // Check Arabic red_lineAr
+      if (seller.red_lineAr) {
+        try {
+          const redLineData =
+            typeof seller.red_lineAr === "string"
+              ? JSON.parse(seller.red_lineAr)
+              : seller.red_lineAr;
 
-        if (endTime < currentDate) {
-          await Seller.update({ red_line: null }, { where: { id: seller.id } });
-          console.log(`❌ Removed expired red_line for seller ${seller.id}`);
+          if (
+            redLineData &&
+            typeof redLineData === "object" &&
+            redLineData.end_time
+          ) {
+            const endTime = new Date(redLineData.end_time);
+            console.log(
+              `🔍 Seller ${seller.id} (${seller.name}) Arabic: end_time=${endTime.toISOString()}, expired=${endTime < currentDate}`,
+            );
+
+            if (endTime < currentDate) {
+              updateObj.red_lineAr = null;
+            }
+          }
+        } catch (error) {
+          console.error(
+            `Error parsing red_lineAr for seller ${seller.id}:`,
+            error,
+          );
+          updateObj.red_lineAr = null;
+        }
+      }
+
+      // Update if any cleanup needed
+      if (Object.keys(updateObj).length > 0) {
+        await Seller.update(updateObj, { where: { id: seller.id } });
+        if (updateObj.red_line !== undefined) {
+          console.log(
+            `❌ Removed expired red_line (Kurdish) for seller ${seller.id}`,
+          );
           redLinesRemoved++;
         }
-      } catch (error) {
-        console.error(`Error parsing red_line for seller ${seller.id}:`, error);
+        if (updateObj.red_lineAr !== undefined) {
+          console.log(
+            `❌ Removed expired red_lineAr (Arabic) for seller ${seller.id}`,
+          );
+          redLinesRemoved++;
+        }
       }
     }
 

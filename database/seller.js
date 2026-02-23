@@ -60,6 +60,10 @@ const Seller = sequelize.define(
       type: DataTypes.JSON,
       allowNull: true,
     },
+    red_lineAr: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
     brand_color: {
       type: DataTypes.STRING,
       allowNull: true,
