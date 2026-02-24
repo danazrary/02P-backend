@@ -101,27 +101,37 @@ router.post(
       console.log(req.body);
       console.log(req.files);
 
+      const isRealPricePost = hasRealPrice === "true" || hasRealPrice === true;
+
       const product = await Product.create({
         seller_id: id,
         language,
-        hasRealPrice: hasRealPrice === "true" || hasRealPrice === true,
+        hasRealPrice: isRealPricePost,
         titleKu,
         titleAr,
         descriptionKu,
         descriptionAr,
         images,
         youtubeLinks: youtubeLinks ? JSON.parse(youtubeLinks) : [],
-        realPrice: hasRealPrice === "true" ? realPrice : null,
+        realPrice: isRealPricePost && realPrice !== "" ? realPrice : null,
         priceType,
         hasDiscount: hasDiscount === "true",
         discount_percent: discount_percent || null,
         discountType: discountType || null,
         discountStartDate: discountStartDate || null,
         discountEndDate: discountEndDate || null,
-        variantPrices: variantPrices ? JSON.parse(variantPrices) : [],
-        variantPricesAr: variantPricesAr ? JSON.parse(variantPricesAr) : [],
-        customInputs: customInputs ? JSON.parse(customInputs) : [],
-        customInputsAr: customInputsAr ? JSON.parse(customInputsAr) : [],
+        variantPrices: variantPrices
+          ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
+          : [],
+        variantPricesAr: variantPricesAr
+          ? JSON.parse(variantPricesAr).filter((v) => v.price && v.price !== "")
+          : [],
+        customInputs: customInputs
+          ? JSON.parse(customInputs).filter((c) => c.name && c.name !== "")
+          : [],
+        customInputsAr: customInputsAr
+          ? JSON.parse(customInputsAr).filter((c) => c.name && c.name !== "")
+          : [],
       });
 
       res.status(201).json({
@@ -200,14 +210,30 @@ router.put(
         finalImages = [...finalImages, ...newImages];
       }
 
+      const isRealPrice = hasRealPrice === "true" || hasRealPrice === true;
+
+      // Parse and filter out empty variant/custom rows
+      const parsedVariantPrices = variantPrices
+        ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
+        : [];
+      const parsedVariantPricesAr = variantPricesAr
+        ? JSON.parse(variantPricesAr).filter((v) => v.price && v.price !== "")
+        : [];
+      const parsedCustomInputs = customInputs
+        ? JSON.parse(customInputs).filter((c) => c.name && c.name !== "")
+        : [];
+      const parsedCustomInputsAr = customInputsAr
+        ? JSON.parse(customInputsAr).filter((c) => c.name && c.name !== "")
+        : [];
+
       await product.update({
         language,
-        hasRealPrice: hasRealPrice === "true" || hasRealPrice === true,
+        hasRealPrice: isRealPrice,
         titleKu,
         titleAr,
         descriptionKu,
         descriptionAr,
-        realPrice,
+        realPrice: isRealPrice && realPrice !== "" ? realPrice : null,
         priceType,
         hasDiscount: hasDiscount === "true" || hasDiscount === true,
         discount_percent: hasDiscount ? discount_percent : null,
@@ -217,10 +243,10 @@ router.put(
         discountEndDate:
           hasDiscount && discountType === "timer" ? discountEndDate : null,
         youtubeLinks: youtubeLinks ? JSON.parse(youtubeLinks) : [],
-        variantPrices: variantPrices ? JSON.parse(variantPrices) : [],
-        variantPricesAr: variantPricesAr ? JSON.parse(variantPricesAr) : [],
-        customInputs: customInputs ? JSON.parse(customInputs) : [],
-        customInputsAr: customInputsAr ? JSON.parse(customInputsAr) : [],
+        variantPrices: parsedVariantPrices,
+        variantPricesAr: parsedVariantPricesAr,
+        customInputs: parsedCustomInputs,
+        customInputsAr: parsedCustomInputsAr,
         images: finalImages,
       });
 
