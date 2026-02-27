@@ -123,6 +123,7 @@ router.get("/:shopName", async (req, res) => {
       where: { seller_id: sellerId },
       attributes: [
         "id",
+        "hasRealPrice",
         "language",
         "titleKu",
         "titleAr",

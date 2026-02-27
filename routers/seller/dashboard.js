@@ -305,6 +305,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       where: { seller_id: id },
       attributes: [
         "id",
+        "hasRealPrice",
         "language",
         "titleKu",
         "titleAr",
