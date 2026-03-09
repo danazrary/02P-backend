@@ -16,6 +16,7 @@ import sellerProductDiscountRouter from "./seller/productDiscount.js";
 //customer routers
 import customerShopRouter from "./customer/shop.js";
 import customerProductRouter from "./customer/product.js";
+import customerQuestionsRouter from "./customer/questions.js";
 
 const router = Router();
 //admin routers
@@ -34,6 +35,7 @@ router.use("/seller", sellerProfileRouter);
 router.use("/seller", sellerProductDiscountRouter);
 //customer routers
 router.use("/customer", customerProductRouter);
+router.use("/customer", customerQuestionsRouter);
 router.use("/customer", customerShopRouter);
 
 export default router;

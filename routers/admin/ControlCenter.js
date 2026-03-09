@@ -5,6 +5,7 @@ import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import Product from "../../database/products.js";
 import SellerOffer from "../../database/sellerOffer.js";
+import Question from "../../database/questions.js";
 import { checkMe, adminAuth } from "../../middlewares/jwtVerify.js";
 const router = Router();
 
@@ -33,7 +34,6 @@ router.get("/check-expired-plans", adminAuth, async (req, res) => {
     const expiredPlans = await SellerPlan.findAll({
       where: {
         end_date: { [Op.lt]: now },
-       
       },
       include: [
         {
@@ -542,6 +542,105 @@ router.post("/get-plans", adminAuth, async (req, res) => {
     });
   } catch (err) {
     console.error("get-plans error:", err);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
+  }
+});
+
+// Add a new question
+router.post("/add-question", adminAuth, async (req, res) => {
+  try {
+    const {
+      titleKu,
+      titleAr,
+      descriptionKu,
+      descriptionAr,
+      youtubeUrlKu,
+      youtubeUrlAr,
+    } = req.body;
+
+    const question = await Question.create({
+      titleKu: titleKu || null,
+      titleAr: titleAr || null,
+      descriptionKu: descriptionKu || null,
+      descriptionAr: descriptionAr || null,
+      youtubeUrlKu: youtubeUrlKu || null,
+      youtubeUrlAr: youtubeUrlAr || null,
+    });
+
+    return res.json({
+      success: true,
+      error: false,
+      message: "Question added successfully",
+      data: question,
+    });
+  } catch (err) {
+    console.error("add-question error:", err);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
+  }
+});
+
+// Get all questions
+router.post("/get-questions", adminAuth, async (req, res) => {
+  try {
+    const questions = await Question.findAll({
+      order: [["createdAt", "DESC"]],
+    });
+
+    return res.json({
+      success: true,
+      error: false,
+      count: questions.length,
+      data: questions,
+    });
+  } catch (err) {
+    console.error("get-questions error:", err);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
+  }
+});
+
+// Delete a question
+router.post("/delete-question", adminAuth, async (req, res) => {
+  try {
+    const { question_id } = req.body;
+
+    if (!question_id) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "question_id is required",
+      });
+    }
+
+    const question = await Question.findByPk(question_id);
+    if (!question) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "Question not found",
+      });
+    }
+
+    await question.destroy();
+
+    return res.json({
+      success: true,
+      error: false,
+      message: "Question deleted successfully",
+    });
+  } catch (err) {
+    console.error("delete-question error:", err);
     return res.status(500).json({
       success: false,
       error: true,

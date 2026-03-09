@@ -195,32 +195,41 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       }
     }
 
-    // 6️⃣ Get all seller products
-    let products = await Product.findAll({
-      where: { seller_id: sellerId },
-      attributes: [
-        "id",
-        "language",
-        "titleKu",
-        "titleAr",
-        "images",
-        "realPrice",
-        "priceType",
-        "hasDiscount",
-        "discount_percent",
-        "discountType",
-        "discountStartDate",
-        "discountEndDate",
-        "freeDeliveryStartDate",
-        "freeDeliveryEndDate",
-        "free_delivery",
-        "variantPrices",
-        "variantPricesAr",
-      ],
-    });
+    // 6️⃣ Get seller products (paginated)
+    const productLimit = Math.min(parseInt(req.query.productLimit) || 30, 100);
+    const productOffset = parseInt(req.query.productOffset) || 0;
+
+    const { count: totalProducts, rows: rawProducts } =
+      await Product.findAndCountAll({
+        where: { seller_id: sellerId },
+        attributes: [
+          "id",
+          "hasRealPrice",
+          "language",
+          "titleKu",
+          "titleAr",
+          "images",
+          "realPrice",
+          "priceType",
+          "hasDiscount",
+          "discount_percent",
+          "discountType",
+          "discountStartDate",
+          "discountEndDate",
+          "freeDeliveryStartDate",
+          "freeDeliveryEndDate",
+          "free_delivery",
+          "variantPrices",
+          "variantPricesAr",
+        ],
+        limit: productLimit,
+        offset: productOffset,
+        order: [["id", "DESC"]],
+      });
 
     // Check and clean expired discounts and free delivery
-    products = await checkAndCleanProductExpiration(products);
+    let products = await checkAndCleanProductExpiration(rawProducts);
+    const hasMoreProducts = productOffset + productLimit < totalProducts;
 
     // Check red_line (Kurdish) and red_lineAr (Arabic) expiration and start time
     let redLine = null;
@@ -346,6 +355,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       sellerPlan: plan ? plan.name : "Free",
       brand_color: seller.brand_color || null,
       products,
+      totalProducts,
+      hasMoreProducts,
       offers,
       red_line: redLine,
     });
@@ -355,6 +366,60 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       success: false,
       error: true,
       isSeller: false,
+      message: "Server error",
+    });
+  }
+});
+
+/**
+ * Lightweight endpoint to load more products for a seller (pagination)
+ * Used by both home page and dashboard "Load More" buttons
+ */
+router.get("/more-products/:sellerId", async (req, res) => {
+  try {
+    const { sellerId } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+    const offset = parseInt(req.query.offset) || 0;
+
+    const { count: total, rows: rawProducts } = await Product.findAndCountAll({
+      where: { seller_id: sellerId },
+      attributes: [
+        "id",
+        "hasRealPrice",
+        "language",
+        "titleKu",
+        "titleAr",
+        "images",
+        "realPrice",
+        "priceType",
+        "hasDiscount",
+        "discount_percent",
+        "discountType",
+        "discountStartDate",
+        "discountEndDate",
+        "freeDeliveryStartDate",
+        "freeDeliveryEndDate",
+        "free_delivery",
+        "variantPrices",
+        "variantPricesAr",
+      ],
+      limit,
+      offset,
+      order: [["id", "DESC"]],
+    });
+
+    const products = await checkAndCleanProductExpiration(rawProducts);
+
+    return res.status(200).json({
+      success: true,
+      products,
+      total,
+      hasMore: offset + limit < total,
+    });
+  } catch (error) {
+    console.error("Error loading more products:", error);
+    return res.status(500).json({
+      success: false,
       message: "Server error",
     });
   }

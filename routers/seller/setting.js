@@ -14,6 +14,7 @@ import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { deleteFile } from "../../utils/deleteFile.js";
 import { uploadSellerImage } from "../../middlewares/uploadSellerImage.js";
 import { getImageUrlPath } from "../../utils/uploadHandler.js";
+import { isReservedShopName } from "../../utils/reservedShopNames.js";
 
 const router = Router();
 
@@ -80,6 +81,17 @@ router.post(
           success: false,
           error: true,
           message: "Missing required fields",
+        });
+      }
+
+      // Check for reserved shop names
+      if (isReservedShopName(shopName)) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: [
+            "This shop name is reserved and cannot be used. Please choose a different name.",
+          ],
         });
       }
 
@@ -167,6 +179,16 @@ router.post(
       const { id } = req.user;
       const { sellerName, shopName, whatsappNumber, socialLinks, brandColor } =
         req.body;
+
+      // Check for reserved shop names
+      if (shopName && isReservedShopName(shopName)) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message:
+            "This shop name is reserved and cannot be used. Please choose a different name.",
+        });
+      }
 
       const seller = await Seller.findByPk(id);
       if (!seller) {

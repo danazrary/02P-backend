@@ -301,32 +301,40 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       }
     }
 
-    let products = await Product.findAll({
-      where: { seller_id: id },
-      attributes: [
-        "id",
-        "hasRealPrice",
-        "language",
-        "titleKu",
-        "titleAr",
-        "images",
-        "realPrice",
-        "priceType",
-        "hasDiscount",
-        "discount_percent",
-        "discountType",
-        "discountStartDate",
-        "discountEndDate",
-        "freeDeliveryStartDate",
-        "freeDeliveryEndDate",
-        "free_delivery",
-        "variantPrices",
-        "variantPricesAr",
-      ],
-    });
+    const productLimit = Math.min(parseInt(req.query.productLimit) || 30, 100);
+    const productOffset = parseInt(req.query.productOffset) || 0;
+
+    const { count: totalProductsCount, rows: rawProducts } =
+      await Product.findAndCountAll({
+        where: { seller_id: id },
+        attributes: [
+          "id",
+          "hasRealPrice",
+          "language",
+          "titleKu",
+          "titleAr",
+          "images",
+          "realPrice",
+          "priceType",
+          "hasDiscount",
+          "discount_percent",
+          "discountType",
+          "discountStartDate",
+          "discountEndDate",
+          "freeDeliveryStartDate",
+          "freeDeliveryEndDate",
+          "free_delivery",
+          "variantPrices",
+          "variantPricesAr",
+        ],
+        limit: productLimit,
+        offset: productOffset,
+        order: [["id", "DESC"]],
+      });
 
     // Check and clean expired discounts and free delivery
-    products = await checkAndCleanProductExpiration(products);
+    let products = await checkAndCleanProductExpiration(rawProducts);
+    const hasMoreProducts = productOffset + productLimit < totalProductsCount;
 
     // Check red_line (Kurdish) and red_lineAr (Arabic) expiration
     let redLine = null;
@@ -440,6 +448,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       brand_color: seller.brand_color || null,
       red_line: redLine,
       products,
+      totalProducts: totalProductsCount,
+      hasMoreProducts,
       offers,
       product_limit_reached,
       offer_limit_reached,

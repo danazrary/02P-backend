@@ -20,7 +20,11 @@ const Question = sequelize.define(
       type: DataTypes.TEXT,
       allowNull: true,
     },
-    youtubeLink: {
+    youtubeUrlKu: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    youtubeUrlAr: {
       type: DataTypes.STRING,
       allowNull: true,
     },
@@ -28,7 +32,7 @@ const Question = sequelize.define(
   {
     timestamps: true,
     tableName: "questions",
-  }
+  },
 );
 
 export default Question;

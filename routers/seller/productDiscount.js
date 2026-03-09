@@ -11,6 +11,8 @@ router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
   try {
     const { id } = req.user;
     const { filterType } = req.query; // 'discount', 'free_delivery', 'both', 'none'
+    const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+    const offset = parseInt(req.query.offset) || 0;
 
     let whereClause = { seller_id: id };
 
@@ -30,7 +32,7 @@ router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
       whereClause[Op.or] = [{ hasDiscount: false }, { free_delivery: false }];
     }
 
-    let products = await Product.findAll({
+    const { count: total, rows: rawProducts } = await Product.findAndCountAll({
       where: whereClause,
       attributes: [
         "id",
@@ -49,15 +51,20 @@ router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
         "freeDeliveryEndDate",
         "free_delivery",
       ],
+      limit,
+      offset,
+      order: [["id", "DESC"]],
     });
 
     // Check and clean expired discounts and free delivery
-    products = await checkAndCleanProductExpiration(products);
+    const products = await checkAndCleanProductExpiration(rawProducts);
 
     res.status(200).json({
       success: true,
       error: false,
       data: products,
+      total,
+      hasMore: offset + limit < total,
     });
   } catch (error) {
     console.error("Error fetching products for discount:", error);

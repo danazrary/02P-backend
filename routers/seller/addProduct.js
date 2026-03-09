@@ -308,14 +308,17 @@ router.delete(
   },
 );
 
-// Route to get all products by seller shop name
+// Route to get products by seller shop name (paginated, lightweight fields)
 router.get("/products/shop/:shopName", async (req, res) => {
   try {
     const { shopName } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const offset = parseInt(req.query.offset) || 0;
 
     // Find seller by shop name
     const seller = await Seller.findOne({
       where: { shop_name: shopName },
+      attributes: ["id", "shop_name"],
     });
 
     if (!seller) {
@@ -326,16 +329,32 @@ router.get("/products/shop/:shopName", async (req, res) => {
       });
     }
 
-    // Get all products for this seller
-    const products = await Product.findAll({
+    // Get products with only the fields needed by frontend
+    const { count, rows: products } = await Product.findAndCountAll({
       where: { seller_id: seller.id },
+      attributes: [
+        "id",
+        "titleKu",
+        "titleAr",
+        "images",
+        "realPrice",
+        "priceType",
+        "hasRealPrice",
+        "language",
+        "variantPrices",
+        "variantPricesAr",
+      ],
       order: [["createdAt", "DESC"]],
+      limit,
+      offset,
     });
 
     res.status(200).json({
       success: true,
       error: false,
       data: products,
+      total: count,
+      hasMore: offset + limit < count,
       seller,
     });
   } catch (error) {
