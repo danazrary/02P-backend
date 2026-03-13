@@ -15,14 +15,13 @@ router.get("/check-me", checkMe, async (req, res) => {
   if (user.role === "customer") {
     return res.json({ role: "customer" });
   } else if (user.role === "seller") {
-const findSeller = await Seller.findByPk(user.data.id,{
-  attributes: ['shop_name', "id"]
-}); 
-console.log(findSeller);
+    const findSeller = await Seller.findByPk(user.data.id, {
+      attributes: ["shop_name", "id"],
+    });
+    console.log(findSeller);
 
     return res.json({ role: "seller", seller: findSeller });
   } else if (user.role === "admin") {
-
     return res.json({ role: "admin" });
   }
 });
@@ -37,9 +36,8 @@ router.get("/google/url", (req, res) => {
 
 router.get(
   "/google",
-  passport.authenticate("google", { scope: ["profile", "email"] })
+  passport.authenticate("google", { scope: ["profile", "email"] }),
 );
-
 
 router.get(
   "/google/callback",
@@ -54,13 +52,10 @@ router.get(
 
     // Redirect the same tab directly to frontend OAuthSuccess
     res.redirect(
-      `${frontend}/oauth-success?token=${tempToken}&provider=google`
+      `${frontend}/oauth-success?token=${tempToken}&provider=google`,
     );
-  }
+  },
 );
-
-
-
 
 // Facebook routes
 router.get("/facebook/url", (req, res) => {
@@ -72,7 +67,7 @@ router.get("/facebook/url", (req, res) => {
 // Start OAuth
 router.get(
   "/facebook",
-  passport.authenticate("facebook", { scope: ["email"] })
+  passport.authenticate("facebook", { scope: ["email"] }),
 );
 
 // Callback
@@ -116,18 +111,16 @@ router.get(
       process.env.FRONTEND_ORIGIN ||
       "http://localhost:5173";
 
-   res.redirect(
-     `${frontendUrl}/oauth-success?token=${token}&provider=facebook`
-   );
-
-  }
+    res.redirect(
+      `${frontendUrl}/oauth-success?token=${token}&provider=facebook`,
+    );
+  },
 );
-
 
 router.get("/tiktok/url", (req, res) => {
   const clientKey = process.env.TIKTOK_CLIENT_KEY;
   const redirectURI = encodeURIComponent(
-    `${process.env.BACKEND_URL}/api/seller/auth/tiktok/callback`
+    `${process.env.BACKEND_URL}/api/seller/auth/tiktok/callback`,
   );
   const scope = "user.info.basic";
 
@@ -135,8 +128,6 @@ router.get("/tiktok/url", (req, res) => {
 
   res.json({ url });
 });
-
-
 
 router.get("/tiktok/callback", async (req, res) => {
   try {
@@ -157,14 +148,14 @@ router.get("/tiktok/callback", async (req, res) => {
       }).toString(),
       {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      }
+      },
     );
 
     const { access_token, open_id } = tokenRes.data.data;
 
     // Fetch user profile
     const userRes = await axios.get(
-      `https://open-api.tiktok.com/user/info/?access_token=${access_token}&open_id=${open_id}`
+      `https://open-api.tiktok.com/user/info/?access_token=${access_token}&open_id=${open_id}`,
     );
 
     const tiktokUser = userRes.data.data;
@@ -185,21 +176,20 @@ router.get("/tiktok/callback", async (req, res) => {
     const tempToken = shortSellerToken(
       sellerExist.id,
       { info: sellerExist.name },
-      res
+      res,
     );
     const frontend = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
 
     res.redirect(
-      `${frontend}/oauth-success?token=${tempToken}&provider=tiktok`
+      `${frontend}/oauth-success?token=${tempToken}&provider=tiktok`,
     );
   } catch (err) {
     console.error("TikTok login error:", err);
     res.redirect(
-      `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_login_failed`
+      `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_login_failed`,
     );
   }
 });
-
 
 router.post("/successLogin", async (req, res) => {
   console.log("success");
@@ -259,11 +249,9 @@ router.post("/successLogin", async (req, res) => {
 //.
 // // Logout route
 
-
-
 router.post("/logout", (req, res) => {
   console.log("here");
-  
+
   try {
     // Clear auth cookies
     res.clearCookie("s_t", {
@@ -285,8 +273,5 @@ router.post("/logout", (req, res) => {
     });
   }
 });
-
-
-
 
 export default router;

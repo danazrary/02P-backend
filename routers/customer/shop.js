@@ -7,6 +7,7 @@ import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
+import { Op } from "sequelize";
 const router = Router();
 
 function isNewDay(lastVisit) {
@@ -189,6 +190,95 @@ router.get("/:shopName", async (req, res) => {
       success: false,
       error: true,
       logout: false,
+      message: "Server error",
+    });
+  }
+});
+
+// Search products in a shop
+router.get("/:shopName/search", async (req, res) => {
+  try {
+    const { shopName } = req.params;
+    const { q, filter = "title" } = req.query;
+
+    if (!q || q.trim().length === 0) {
+      return res.status(200).json({
+        success: true,
+        products: [],
+        message: "No search query provided",
+      });
+    }
+
+    const seller = await Seller.findOne({ where: { shop_name: shopName } });
+    if (!seller) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "Seller not found",
+      });
+    }
+
+    const searchTerm = q.trim();
+
+    // Build search conditions based on filter
+    let searchConditions;
+    if (filter === "description") {
+      // Search only in descriptions
+      searchConditions = [
+        { descriptionKu: { [Op.like]: `%${searchTerm}%` } },
+        { descriptionAr: { [Op.like]: `%${searchTerm}%` } },
+      ];
+    } else {
+      // Search in titles (default) - also includes descriptions for more results
+      searchConditions = [
+        { titleKu: { [Op.like]: `%${searchTerm}%` } },
+        { titleAr: { [Op.like]: `%${searchTerm}%` } },
+        { descriptionKu: { [Op.like]: `%${searchTerm}%` } },
+        { descriptionAr: { [Op.like]: `%${searchTerm}%` } },
+      ];
+    }
+
+    let products = await Product.findAll({
+      where: {
+        seller_id: seller.id,
+        [Op.or]: searchConditions,
+      },
+      attributes: [
+        "id",
+        "hasRealPrice",
+        "language",
+        "titleKu",
+        "titleAr",
+        "images",
+        "realPrice",
+        "priceType",
+        "hasDiscount",
+        "discount_percent",
+        "discountType",
+        "discountStartDate",
+        "discountEndDate",
+        "freeDeliveryStartDate",
+        "freeDeliveryEndDate",
+        "free_delivery",
+        "variantPrices",
+        "variantPricesAr",
+      ],
+      limit: 50,
+    });
+
+    // Check and clean expired discounts and free delivery
+    products = await checkAndCleanProductExpiration(products);
+
+    res.status(200).json({
+      success: true,
+      products,
+      count: products.length,
+    });
+  } catch (error) {
+    console.error("Search error:", error);
+    res.status(500).json({
+      success: false,
+      error: true,
       message: "Server error",
     });
   }
