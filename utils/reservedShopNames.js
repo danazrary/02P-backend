@@ -2,6 +2,8 @@
 // These names conflict with application routes and would cause routing issues
 
 export const RESERVED_SHOP_NAMES = [
+  // Preview shop route
+  "your-shop-name",
   // Customer root routes
   "login",
   "register",
