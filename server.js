@@ -76,11 +76,11 @@ app.use("/", apiLimiter); // Apply to all routes
 app.use("/api", apiLimiter); // Extra protection for API routes
 app.use(helmet());
 app.use(hpp());
-app.use(bodyParser.json({ limit: process.env.BODY_LIMIT || "2mb" }));
+app.use(bodyParser.json({ limit: process.env.BODY_LIMIT || "10mb" }));
 app.use(
   bodyParser.urlencoded({
     extended: true,
-    limit: process.env.BODY_LIMIT || "2mb",
+    limit: process.env.BODY_LIMIT || "10mb",
   }),
 );
 if (typeof sanitizeHtmlMiddleware === "function")
