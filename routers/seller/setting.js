@@ -48,7 +48,8 @@ router.post(
     if (
       seller.phone === null ||
       seller.shop_name === null ||
-      seller.name === null
+      seller.name === null ||
+      seller.terms_accepted_at === null
     ) {
       return res.status(200).json({
         message: "Seller found",
@@ -73,14 +74,31 @@ router.post(
   async (req, res) => {
     try {
       const { id } = req.user;
-      const { shopName, sellerName, whatsappNumber, brandColor } = req.body;
+      const {
+        shopName,
+        sellerName,
+        whatsappNumber,
+        brandColor,
+        termsAccepted,
+      } = req.body;
       console.log(id);
 
       if (!shopName || !sellerName || !whatsappNumber) {
         return res.status(400).json({
           success: false,
           error: true,
-          message: "Missing required fields",
+          message: ["Missing required fields"],
+        });
+      }
+
+      // Check if terms are accepted
+      if (termsAccepted !== "true" && termsAccepted !== true) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: [
+            "You must accept the terms and conditions to create your seller profile.",
+          ],
         });
       }
 
@@ -124,6 +142,7 @@ router.post(
         shop_name: shopName,
         shop_image: imageUrl,
         brand_color: brandColor || null,
+        terms_accepted_at: new Date(), // Record when terms were accepted
       });
 
       return res.status(200).json({

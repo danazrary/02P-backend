@@ -69,6 +69,11 @@ const Seller = sequelize.define(
       allowNull: true,
       defaultValue: null, // null means use default brand color
     },
+    terms_accepted_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      defaultValue: null, // null means terms not yet accepted
+    },
   },
   {
     timestamps: true,
