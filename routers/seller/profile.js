@@ -3,8 +3,6 @@ import Seller from "../../database/seller.js";
 const router = Router();
 
 router.get("/:shopName/profile", async (req, res) => {
-  console.log("ffff");
-
   try {
     const { shopName } = req.params;
 

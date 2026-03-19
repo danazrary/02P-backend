@@ -89,7 +89,6 @@ router.post(
         fixed_or_percentage,
         apply_to,
       } = req.body;
-      console.log("data", req.body, "data end");
 
       // const { id } = req.user;
 

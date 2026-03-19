@@ -10,8 +10,6 @@ import { checkAndCleanProductExpiration } from "../../utils/checkProductExpirati
 const router = Router();
 
 router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
-  console.log("11111111");
-
   try {
     const { shopName } = req.params;
 

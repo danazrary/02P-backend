@@ -11,14 +11,12 @@ const router = Router();
 
 router.get("/check-me", checkMe, async (req, res) => {
   const { user } = req;
-  console.log(user);
   if (user.role === "customer") {
     return res.json({ role: "customer" });
   } else if (user.role === "seller") {
     const findSeller = await Seller.findByPk(user.data.id, {
       attributes: ["shop_name", "id"],
     });
-    console.log(findSeller);
 
     return res.json({ role: "seller", seller: findSeller });
   } else if (user.role === "admin") {
@@ -27,8 +25,6 @@ router.get("/check-me", checkMe, async (req, res) => {
 });
 router.get("/check-expired-plans", adminAuth, async (req, res) => {
   try {
-    console.log("checking");
-
     const now = new Date();
 
     const expiredPlans = await SellerPlan.findAll({
@@ -49,7 +45,6 @@ router.get("/check-expired-plans", adminAuth, async (req, res) => {
       ],
       order: [["end_date", "ASC"]],
     });
-    console.log("expe", expiredPlans);
 
     // format data for frontend
     const result = expiredPlans.map((sp) => ({

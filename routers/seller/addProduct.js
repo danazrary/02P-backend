@@ -98,8 +98,6 @@ router.post(
       const images = req.files
         ? req.files.map((file) => getImageUrlPath("products", file.filename))
         : [];
-      console.log(req.body);
-      console.log(req.files);
 
       const isRealPricePost = hasRealPrice === "true" || hasRealPrice === true;
 

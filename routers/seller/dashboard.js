@@ -13,7 +13,6 @@ const router = Router();
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
   try {
     const { id } = req.user;
-    console.log("id", id);
 
     // Get selected plan from query params (sent from frontend localStorage)
     const selectedPlanFromClient = req.query.selectedPlan
@@ -60,9 +59,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
           trial_ended: false,
           status: true,
         });
-        console.log(
-          `✅ Created trial plan for seller ${id} (user selected trial)`,
-        );
+      
       } else {
         // Give free plan (plan_id: 1) - user didn't select trial
         sellerPlanRecord = await SellerPlan.create({
@@ -74,9 +71,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
           trial_ended: false,
           status: true,
         });
-        console.log(
-          `✅ Created free plan for seller ${id} (no trial selected)`,
-        );
+       
       }
     }
 

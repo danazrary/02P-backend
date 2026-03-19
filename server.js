@@ -92,8 +92,6 @@ app.use(csrfMiddleware);
 app.use("/api", allRouters);
 
 app.get("/profile", (req, res) => {
-  console.log("pppppp");
-
   const token = req.cookies.token || req.headers.authorization?.split(" ")[1];
   if (!token) return res.status(401).json({ message: "Unauthorized" });
 
@@ -126,8 +124,6 @@ app.post("/protected", (req, res) => {
 
 // Token test routes
 app.post("/test", async (req, res) => {
-  console.log("test");
-
   try {
     const token = adminToken("dana@gmail.com", "0000000", res);
     adminRefreshToken("dana@gmail.com", "0000000", res);

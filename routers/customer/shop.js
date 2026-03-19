@@ -35,19 +35,12 @@ router.get("/:shopName", async (req, res) => {
         message: "Seller not found",
       });
     }
-    console.log(
-      "Cookies:",
-      req.cookies,
-      req.cookies?.[`shop_visit_${seller.id}`],
-    );
     const sellerId = seller.id;
     const today = new Date().toISOString().split("T")[0];
-    console.log("Today:", today);
 
     // 🍪 COOKIE NAME
     const visitCookieName = `shop_visit_${sellerId}`;
     const lastVisit = req.cookies?.[visitCookieName];
-    console.log("aaa", visitCookieName, lastVisit);
 
     let shouldIncrease = false;
 

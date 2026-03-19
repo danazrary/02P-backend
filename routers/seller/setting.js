@@ -22,10 +22,7 @@ router.post(
   "/complete-profile-check",
   jwtVerifySellerToken,
   async (req, res) => {
-    console.log("fghfgh");
-
     const { id, email, isSeller } = req.user;
-    console.log(req.user);
 
     // Additional validation
     if (!id || !email || !isSeller) {
@@ -81,7 +78,6 @@ router.post(
         brandColor,
         termsAccepted,
       } = req.body;
-      console.log(id);
 
       if (!shopName || !sellerName || !whatsappNumber) {
         return res.status(400).json({

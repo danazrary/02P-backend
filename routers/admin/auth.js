@@ -10,10 +10,8 @@ const router = Router();
 router.post("/login", adminLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
-    console.log(email, password);
 
     const admin = await Admin.findOne({ where: { email } });
-    console.log("1admin:", admin);
 
     if (!admin || !admin.is_active) {
       return res
@@ -23,11 +21,8 @@ router.post("/login", adminLimiter, async (req, res) => {
 
     // const isMatch = await bcrypt.compare(password, admin.password_hash);
     const isMatch = comparePassword(password, admin.password_hash);
-    console.log("is2", isMatch);
 
     if (!isMatch) {
-      console.log("gvhgh");
-
       return res.status(401).json({
         success: false,
         error: true,

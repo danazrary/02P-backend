@@ -13,8 +13,6 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
-        console.log("google passcong");
-
         const email = profile.emails[0].value;
         const name = profile.displayName;
         const googleId = profile.id;
@@ -31,10 +29,6 @@ passport.use(
 
         return done(null, sellerExist);
       } catch (err) {
-        console.log(
-          "error-------------------------------------------------------------------------------------------------",
-          err,
-        );
         return done(err, null);
       }
     },
@@ -86,7 +80,6 @@ passport.use(
 
         return done(null, sellerExist);
       } catch (err) {
-        console.log("Facebook error:", err);
         return done(err, null);
       }
     },

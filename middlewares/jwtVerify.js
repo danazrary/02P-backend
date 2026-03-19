@@ -7,7 +7,6 @@ import jwt from "jsonwebtoken";
 //seller token
 export const jwtVerifySellerToken = (req, res, next) => {
   const { s_t } = req.cookies;
-console.log("s_t",s_t);
 
   if (!s_t) {
     return res.status(401).json({
@@ -144,10 +143,8 @@ export const checkMe = (req, res, next) => {
 //.
 // admin
 export const adminAuth = (req, res, next) => {
-  console.log("started");
   const token = req.cookies.admin_token;
-  console.log("token:", token);
-  
+
   if (!token) {
     return res.status(401).json({
       error: true,
@@ -169,8 +166,6 @@ export const adminAuth = (req, res, next) => {
     }
 
     req.admin = decoded;
-    console.log("ended");
-    
     next();
   } catch {
     res.clearCookie("admin_token");
@@ -181,6 +176,3 @@ export const adminAuth = (req, res, next) => {
     });
   }
 };
-
-
-

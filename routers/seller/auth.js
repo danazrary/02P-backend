@@ -11,14 +11,12 @@ const router = express.Router();
 
 router.get("/check-me", checkMe, async (req, res) => {
   const { user } = req;
-  console.log(user);
   if (user.role === "customer") {
     return res.json({ role: "customer" });
   } else if (user.role === "seller") {
     const findSeller = await Seller.findByPk(user.data.id, {
       attributes: ["shop_name", "id"],
     });
-    console.log(findSeller);
 
     return res.json({ role: "seller", seller: findSeller });
   } else if (user.role === "admin") {
@@ -27,8 +25,6 @@ router.get("/check-me", checkMe, async (req, res) => {
 });
 
 router.get("/google/url", (req, res) => {
-  console.log("google/url");
-
   res.json({
     url: `${req.protocol}://${req.get("host")}/api/seller/auth/google`,
   });
@@ -192,8 +188,6 @@ router.get("/tiktok/callback", async (req, res) => {
 });
 
 router.post("/successLogin", async (req, res) => {
-  console.log("success");
-
   try {
     // 1) get temporary token from Authorization header
     const header = req.headers.authorization;
@@ -239,7 +233,6 @@ router.post("/successLogin", async (req, res) => {
       newSeller,
     });
   } catch (err) {
-    console.log("SuccessLogin error:", err);
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 });
@@ -250,8 +243,6 @@ router.post("/successLogin", async (req, res) => {
 // // Logout route
 
 router.post("/logout", (req, res) => {
-  console.log("here");
-
   try {
     // Clear auth cookies
     res.clearCookie("s_t", {
