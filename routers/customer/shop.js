@@ -99,7 +99,7 @@ router.get("/:shopName", async (req, res) => {
       });
     }
 
-    const sellerPlanRow = await Plan.findByPk(sellerPlanRecord.id);
+    const sellerPlanRow = await Plan.findByPk(sellerPlanRecord.plan_id);
 
     // 🎯 Fetch all active offers
     const offers = await SellerOffer.findAll({

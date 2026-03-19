@@ -5,7 +5,7 @@ import { adminLimiter } from "../../utils/helper.js";
 import Admin from "../../database/admin.js";
 import AdminDevice from "../../database/adminDevice.js";
 import { getDeviceHash } from "../../utils/device.js";
-import { comparePassword } from "../../utils/helper.js ";
+import { comparePassword } from "../../utils/helper.js";
 const router = Router();
 router.post("/login", adminLimiter, async (req, res) => {
   try {
@@ -36,7 +36,7 @@ router.post("/login", adminLimiter, async (req, res) => {
     }
 
     // 🔐 STEP 4 — DEVICE TRUST CHECK
-  /*   const deviceHash = getDeviceHash(req);
+    /*   const deviceHash = getDeviceHash(req);
     console.log(deviceHash);
 
     const trustedDevice = await AdminDevice.findOne({
@@ -83,7 +83,7 @@ router.post("/login", adminLimiter, async (req, res) => {
       // Update last used time
       await trustedDevice.update({ last_used: new Date() });
     } */
-    //FIX ME - For now, we will skip device trust check to unblock admin login. We can re-enable it later after testing.  
+    //FIX ME - For now, we will skip device trust check to unblock admin login. We can re-enable it later after testing.
 
     // Update last login
     await admin.update({ last_login: new Date() });

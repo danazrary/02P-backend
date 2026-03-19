@@ -17,15 +17,24 @@ export const adminLimiter = rateLimit({
   max: 500,
 });
 
+const devOrigins = [
+  "http://localhost:5173",
+  "https://localhost:5173",
+  "http://127.0.0.1:5173",
+  "https://127.0.0.1:5173",
+  "http://192.168.1.17:5173",
+  "https://192.168.1.17:5173",
+];
+
+const prodOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
+  : [];
+
 export const corsOptions = {
-  origin: [
-    "http://localhost:5173",
-    "https://localhost:5173",
-    "http://127.0.0.1:5173",
-    "https://127.0.0.1:5173",
-    "http://192.168.1.17:5173",
-    "https://192.168.1.17:5173",
-  ],
+  origin:
+    process.env.NODE_ENV === "production"
+      ? prodOrigins
+      : [...devOrigins, ...prodOrigins],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],

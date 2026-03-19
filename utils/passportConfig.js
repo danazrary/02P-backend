@@ -9,7 +9,7 @@ passport.use(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: "http://localhost:3001/api/seller/auth/google/callback",
+      callbackURL: `${process.env.BACKEND_URL || "http://localhost:3001"}/api/seller/auth/google/callback`,
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
@@ -33,12 +33,12 @@ passport.use(
       } catch (err) {
         console.log(
           "error-------------------------------------------------------------------------------------------------",
-          err
+          err,
         );
         return done(err, null);
       }
-    }
-  )
+    },
+  ),
 );
 // facebook strategy
 passport.use(
@@ -46,7 +46,7 @@ passport.use(
     {
       clientID: process.env.FB_CLIENT_ID,
       clientSecret: process.env.FB_CLIENT_SECRET,
-      callbackURL: "http://localhost:3001/api/seller/auth/facebook/callback",
+      callbackURL: `${process.env.BACKEND_URL || "http://localhost:3001"}/api/seller/auth/facebook/callback`,
       profileFields: ["id", "displayName", "emails"],
     },
     async (accessToken, refreshToken, profile, done) => {
@@ -89,6 +89,6 @@ passport.use(
         console.log("Facebook error:", err);
         return done(err, null);
       }
-    }
-  )
+    },
+  ),
 );
