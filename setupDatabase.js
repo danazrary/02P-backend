@@ -12,6 +12,12 @@ import {
   SellerPlan,
   Product,
   SellerOffer,
+  Admin,
+  AdminDevice,
+  Feedback,
+  Offer,
+  Question,
+  Report,
 } from "./database/index.js";
 
 const setupDatabase = async () => {
@@ -30,6 +36,12 @@ const setupDatabase = async () => {
     console.log("   - seller_plans");
     console.log("   - products");
     console.log("   - seller_offers");
+    console.log("   - admins");
+    console.log("   - admin_devices");
+    console.log("   - feedbacks");
+    console.log("   - offers");
+    console.log("   - questions");
+    console.log("   - reports");
 
     process.exit(0);
   } catch (error) {
