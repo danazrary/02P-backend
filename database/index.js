@@ -43,7 +43,20 @@ Report.belongsTo(Seller, { foreignKey: "seller_id" });
    EXPORT
 ============================ */
 
-export { sequelize, Seller, Plan, SellerPlan, Product, SellerOffer, Admin, AdminDevice, Feedback, Offer, Question, Report };
+export {
+  sequelize,
+  Seller,
+  Plan,
+  SellerPlan,
+  Product,
+  SellerOffer,
+  Admin,
+  AdminDevice,
+  Feedback,
+  Offer,
+  Question,
+  Report,
+};
 
 /* import { Sequelize } from "sequelize";
 import dotenv from "dotenv";
