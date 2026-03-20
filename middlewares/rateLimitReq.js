@@ -19,7 +19,7 @@ export const userAuthLimiter = rateLimit({
 });
 export const sellerAuthLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
-  max: 50, // Limit each IP to 5 requests per windowMs
+  max: 20, // Limit each IP to 20 requests per windowMs
   message: {
     error: true,
     errorMsg: "کیشەێک ڕوویدا تکایە دواتر هەوڵبدەوە",

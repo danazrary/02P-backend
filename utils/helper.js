@@ -14,7 +14,7 @@ export const apiLimiter = rateLimit({
 });
 export const adminLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
-  max: 500,
+  max: 4,
 });
 
 const devOrigins = [
