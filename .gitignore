@@ -48,6 +48,10 @@ yarn.lock
 
 # Build directories
 dist/
+
+# Uploaded files - ignore contents but keep folder structure
+uploads/**/*
+!uploads/**/.gitkeep
 build/
 
 # Temporary files
