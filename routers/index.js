@@ -13,6 +13,7 @@ import sellerRedLineRouter from "./seller/redLine.js";
 import sellerCustomerRouter from "./seller/sellersCustomer.js";
 import sellerProfileRouter from "./seller/profile.js";
 import sellerProductDiscountRouter from "./seller/productDiscount.js";
+import sellerDeleteAccountRouter from "./seller/deleteAccount.js";
 //customer routers
 import customerShopRouter from "./customer/shop.js";
 import customerProductRouter from "./customer/product.js";
@@ -33,6 +34,7 @@ router.use("/seller", sellerRedLineRouter);
 router.use("/seller", sellerCustomerRouter);
 router.use("/seller", sellerProfileRouter);
 router.use("/seller", sellerProductDiscountRouter);
+router.use("/seller", sellerDeleteAccountRouter);
 //customer routers
 router.use("/customer", customerProductRouter);
 router.use("/customer", customerQuestionsRouter);

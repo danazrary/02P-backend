@@ -10,7 +10,7 @@ const AdminDevice = sequelize.define(
       primaryKey: true,
     },
     admin_id: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.INTEGER.UNSIGNED,
       allowNull: false,
     },
     device_hash: {
@@ -34,7 +34,7 @@ const AdminDevice = sequelize.define(
   {
     tableName: "admin_devices",
     timestamps: false,
-  }
+  },
 );
 
 export default AdminDevice;
