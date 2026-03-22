@@ -15,7 +15,7 @@ export const RESERVED_SHOP_NAMES = [
   "contact",
   "privacy-policy",
   "terms-and-conditions",
-
+  "data-deletion",
   "contact-us",
   "pricing",
   "questions",
