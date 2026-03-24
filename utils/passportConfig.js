@@ -34,8 +34,40 @@ passport.use(
     },
   ),
 );
+
 // facebook strategy
 passport.use(
+  new FacebookStrategy(
+    {
+      clientID: process.env.FB_CLIENT_ID,
+      clientSecret: process.env.FB_CLIENT_SECRET,
+      callbackURL: `${process.env.BACKEND_URL || "http://localhost:3001"}/api/seller/auth/facebook/callback`,
+      profileFields: ["id", "displayName"], // removed "emails"
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      try {
+        const facebookId = profile.id;
+        const name = profile.displayName;
+
+        let sellerExist = await seller.findOne({ where: { facebookId } });
+
+        if (!sellerExist) {
+          sellerExist = await seller.create({
+            facebookId,
+            name,
+            email: null,
+            needsManualEmail: true,
+          });
+        }
+
+        return done(null, sellerExist);
+      } catch (err) {
+        return done(err, null);
+      }
+    },
+  ),
+);
+/* passport.use(
   new FacebookStrategy(
     {
       clientID: process.env.FB_CLIENT_ID,
@@ -84,4 +116,4 @@ passport.use(
       }
     },
   ),
-);
+); */

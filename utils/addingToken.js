@@ -11,17 +11,22 @@ const isSecure = process.env.ENVIRONMENT === "product";
 export function sellerToken(id, email, shop_name, res) {
   const expiresInHours = 24;
 
-  const token = jwt.sign(
-    { id, email, shop_name, isSeller: true },
-    process.env.JWT_SECRET,
-    { expiresIn: `${expiresInHours}h` },
-  );
+  const payload = {
+    id,
+    email: typeof email === "string" ? email : "", // make sure it's string
+    shop_name: shop_name || "",
+    isSeller: true,
+  };
+
+  const token = jwt.sign(payload, process.env.JWT_SECRET, {
+    expiresIn: `${expiresInHours}h`,
+  });
 
   res.cookie("s_t", token, {
     httpOnly: true,
-    secure: process.env.ENVIRONMENT === "product", //
+    secure: process.env.ENVIRONMENT === "product",
     sameSite: "strict",
-    maxAge: expiresInHours * 60 * 60 * 1000, // ✅ SAME AS JWT
+    maxAge: expiresInHours * 60 * 60 * 1000,
     path: "/",
   });
 
@@ -29,8 +34,23 @@ export function sellerToken(id, email, shop_name, res) {
 }
 
 export function shortSellerToken(id, info, res) {
-  const token = jwt.sign({ id, info, isSeller: true }, process.env.JWT_SECRET, {
+  // info should be a simple string or object with plain fields
+  const payload = {
+    id,
+    info: typeof info === "string" ? info : JSON.stringify(info), // safe serialization
+    isSeller: true,
+  };
+
+  const token = jwt.sign(payload, process.env.JWT_SECRET, {
     expiresIn: "3m", // 3 minutes
+  });
+
+  res.cookie("s_t", token, {
+    httpOnly: true,
+    secure: process.env.ENVIRONMENT === "product",
+    sameSite: "strict",
+    maxAge: 3 * 60 * 1000,
+    path: "/",
   });
 
   return token;

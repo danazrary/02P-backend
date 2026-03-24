@@ -19,3 +19,4 @@ export async function giveTrialToSeller(sellerId) {
     is_active: true,
   });
 }
+/*  */

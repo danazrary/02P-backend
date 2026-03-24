@@ -14,6 +14,7 @@ const Seller = sequelize.define(
       unique: true,
       allowNull: true,
     },
+    tiktokId: { type: DataTypes.STRING, unique: true, allowNull: true },
     name: {
       type: DataTypes.STRING,
       allowNull: true,
@@ -21,7 +22,7 @@ const Seller = sequelize.define(
     email: {
       type: DataTypes.STRING,
       unique: true,
-      allowNull: false, // must have email
+      allowNull: true, // must have email
     },
     needsManualEmail: {
       type: DataTypes.BOOLEAN,

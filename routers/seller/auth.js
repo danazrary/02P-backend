@@ -8,6 +8,16 @@ import { sellerToken, shortSellerToken } from "../../utils/addingToken.js";
 import { checkMe } from "../../middlewares/jwtVerify.js";
 import axios from "axios";
 const router = express.Router();
+function generateCodeVerifier() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function generateCodeChallenge(verifier) {
+  return crypto.createHash("sha256").update(verifier).digest("base64url");
+}
+
+// Temporary in-memory store (use Redis in production)
+const pkceStore = {};
 
 router.get("/check-me", checkMe, async (req, res) => {
   const { user } = req;
@@ -63,12 +73,71 @@ router.get("/facebook/url", (req, res) => {
 // Start OAuth
 router.get(
   "/facebook",
+  passport.authenticate("facebook", { scope: [] }), // removed "email" scope
+);
+
+// Callback
+router.get(
+  "/facebook/callback",
+
+  // 1️⃣ Handle cancel FIRST
+  (req, res, next) => {
+    if (req.query.error === "access_denied") {
+      const frontendUrl =
+        req.query.origin ||
+        process.env.FRONTEND_ORIGIN ||
+        "http://localhost:5173";
+
+      return res.redirect(`${frontendUrl}/login`);
+    }
+    next();
+  },
+
+  // 2️⃣ Passport only runs if NOT cancelled
+  passport.authenticate("facebook", {
+    session: false,
+    failureRedirect: "/login",
+  }),
+
+  // 3️⃣ Success
+  (req, res) => {
+    const seller = req.user;
+    let token;
+
+    // email may exist if seller added it manually after first login
+    if (!seller.email) {
+      token = shortSellerToken(seller.id, seller.name, res);
+    } else {
+      token = sellerToken(seller.id, seller.email, seller.shop_name, res);
+    }
+
+    const frontendUrl =
+      process.env.ENVIRONMENT === "product"
+        ? "https://dwkanlink.com"
+        : req.query.origin ||
+          process.env.FRONTEND_ORIGIN ||
+          "http://localhost:5173";
+
+    res.redirect(
+      `${frontendUrl}/oauth-success?token=${token}&provider=facebook`,
+    );
+  },
+);
+/* router.get("/facebook/url", (req, res) => {
+  res.json({
+    url: `${req.protocol}://${req.get("host")}/api/seller/auth/facebook`,
+  });
+});
+
+// Start OAuth
+router.get(
+  "/facebook",
   passport.authenticate("facebook", { scope: ["email"] }),
 );
 
 // Callback
 // Backend callback - FIXED VERSION
-
+//http://localhost:3000/api/seller/auth/facebook/callback
 router.get(
   "/facebook/callback",
 
@@ -97,21 +166,24 @@ router.get(
     let token;
 
     if (!seller.email) {
-      token = shortSellerToken(seller.id, { info: seller.name }, res);
+      // pass only plain string
+      token = shortSellerToken(seller.id, seller.name, res);
     } else {
-      token = sellerToken(seller.id, { info: seller.name }, res);
+      // email must be a string, shop_name must be string
+      token = sellerToken(seller.id, seller.email, seller.shop_name, res);
     }
 
     const frontendUrl =
-      req.query.origin ||
-      process.env.FRONTEND_ORIGIN ||
-      "http://localhost:5173";
-
+      process.env.ENVIRONMENT === "product"
+        ? "https://dwkanlink.com"
+        : req.query.origin ||
+          process.env.FRONTEND_ORIGIN ||
+          "http://localhost:5173";
     res.redirect(
       `${frontendUrl}/oauth-success?token=${token}&provider=facebook`,
     );
   },
-);
+); */
 
 router.get("/tiktok/url", (req, res) => {
   const clientKey = process.env.TIKTOK_CLIENT_KEY;
@@ -120,52 +192,100 @@ router.get("/tiktok/url", (req, res) => {
   );
   const scope = "user.info.basic";
 
-  const url = `https://www.tiktok.com/v2/auth/authorize?client_key=${clientKey}&redirect_uri=${redirectURI}&response_type=code&scope=${scope}`;
+  // Generate PKCE values
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = generateCodeChallenge(codeVerifier);
+  const state = crypto.randomBytes(16).toString("hex");
+
+  // Store verifier keyed by state (expires in 10 min)
+  pkceStore[state] = { codeVerifier, expiresAt: Date.now() + 10 * 60 * 1000 };
+
+  const url =
+    `https://www.tiktok.com/v2/auth/authorize?` +
+    `client_key=${clientKey}` +
+    `&response_type=code` +
+    `&scope=${scope}` +
+    `&redirect_uri=${redirectURI}` +
+    `&state=${state}` +
+    `&code_challenge=${codeChallenge}` +
+    `&code_challenge_method=S256`;
 
   res.json({ url });
 });
 
 router.get("/tiktok/callback", async (req, res) => {
   try {
-    const code = req.query.code;
+    const { code, state } = req.query;
+
+    if (!code) {
+      return res.redirect(
+        `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_no_code`,
+      );
+    }
+
+    // Retrieve and validate PKCE verifier
+    const pkceData = pkceStore[state];
+    if (!pkceData || Date.now() > pkceData.expiresAt) {
+      return res.redirect(
+        `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_invalid_state`,
+      );
+    }
+    const { codeVerifier } = pkceData;
+    delete pkceStore[state]; // one-time use
+
     const clientKey = process.env.TIKTOK_CLIENT_KEY;
     const clientSecret = process.env.TIKTOK_CLIENT_SECRET;
     const redirectURI = `${process.env.BACKEND_URL}/api/seller/auth/tiktok/callback`;
 
-    // Exchange code for access token
+    // Exchange code for access token (include code_verifier)
     const tokenRes = await axios.post(
-      "https://open.tiktokapis.com/v2/oauth/access_token/",
+      "https://open.tiktokapis.com/v2/oauth/token/",
       new URLSearchParams({
         client_key: clientKey,
         client_secret: clientSecret,
         code: code,
         grant_type: "authorization_code",
         redirect_uri: redirectURI,
+        code_verifier: codeVerifier, // 👈 This was missing
       }).toString(),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
+    );
+    if (!tokenRes.data || !tokenRes.data.access_token) {
+      console.error("TikTok token error:", tokenRes.data);
+      return res.redirect(
+        `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_login_failed`,
+      );
+    }
+
+    const { access_token, open_id } = tokenRes.data;
+    // ✅ Fix: use v2 user info endpoint (old one is deprecated)
+    const userRes = await axios.get(
+      "https://open.tiktokapis.com/v2/user/info/",
       {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        headers: { Authorization: `Bearer ${access_token}` },
+        params: { fields: "open_id,display_name,avatar_url" },
       },
     );
 
-    const { access_token, open_id } = tokenRes.data.data;
+    if (!userRes.data || !userRes.data.data) {
+      console.error("TikTok user fetch error:", userRes.data);
+      return res.redirect(
+        `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_login_failed`,
+      );
+    }
 
-    // Fetch user profile
-    const userRes = await axios.get(
-      `https://open-api.tiktok.com/user/info/?access_token=${access_token}&open_id=${open_id}`,
-    );
+    const tiktokUser = userRes.data.data.user;
 
-    const tiktokUser = userRes.data.data;
-
-    // Now create or fetch seller in your DB
+    // Create or fetch seller in DB
     let sellerExist = await Seller.findOne({
       where: { tiktokId: tiktokUser.open_id },
     });
-
     if (!sellerExist) {
       sellerExist = await Seller.create({
         tiktokId: tiktokUser.open_id,
-        name: tiktokUser.display_name,
+        name: tiktokUser.display_name || "TikTok User",
         email: null,
+        needsManualEmail: true,
       });
     }
 
@@ -175,12 +295,11 @@ router.get("/tiktok/callback", async (req, res) => {
       res,
     );
     const frontend = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
-
     res.redirect(
       `${frontend}/oauth-success?token=${tempToken}&provider=tiktok`,
     );
   } catch (err) {
-    console.error("TikTok login error:", err);
+    console.error("TikTok login error:", err.response?.data || err.message);
     res.redirect(
       `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_login_failed`,
     );

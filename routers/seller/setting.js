@@ -9,7 +9,11 @@ import jwt from "jsonwebtoken";
 import "../../utils/passportConfig.js";
 import Seller from "../../database/seller.js";
 import crypto from "crypto";
-import { sellerToken, shortSellerToken } from "../../utils/addingToken.js";
+import {
+ 
+  sellerToken,
+  shortSellerToken,
+} from "../../utils/addingToken.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { deleteFile } from "../../utils/deleteFile.js";
 import { uploadSellerImage } from "../../middlewares/uploadSellerImage.js";
@@ -22,10 +26,10 @@ router.post(
   "/complete-profile-check",
   jwtVerifySellerToken,
   async (req, res) => {
-    const { id, email, isSeller } = req.user;
+    const { id,  isSeller } = req.user;
 
     // Additional validation
-    if (!id || !email || !isSeller) {
+    if (!id || !isSeller) {
       return res.status(401).json({
         message: "Unauthorized",
         isSeller: false,
@@ -46,10 +50,12 @@ router.post(
       seller.phone === null ||
       seller.shop_name === null ||
       seller.name === null ||
-      seller.terms_accepted_at === null
+      seller.terms_accepted_at === null ||
+      seller.email === null
     ) {
       return res.status(200).json({
         message: "Seller found",
+        seller,
         isSeller: true,
         completedProfile: false,
         error: false,
@@ -77,6 +83,7 @@ router.post(
         whatsappNumber,
         brandColor,
         termsAccepted,
+        email,
       } = req.body;
 
       if (!shopName || !sellerName || !whatsappNumber) {
@@ -119,16 +126,50 @@ router.post(
         });
       }
 
+      // Helper: treat both actual null and the string "null" as missing
+      const emailIsMissing = (val) =>
+        val === null || val === "null" || val === "" || val === undefined;
+
+      // If seller has no email, validate and set the provided one
+      if (emailIsMissing(seller.email)) {
+        if (!email) {
+          return res.status(400).json({
+            success: false,
+            error: true,
+            message: ["Email is required"],
+          });
+        }
+
+        // Check if email is already taken by another seller
+        const existingEmail = await Seller.findOne({
+          where: { email },
+        });
+
+        if (existingEmail && existingEmail.id !== id) {
+          return res.status(400).json({
+            success: false,
+            error: true,
+            message: ["This email is already in use by another account"],
+          });
+        }
+      }
+
+      // Clean up string "null" left by Facebook auth — normalize to real null
+      if (seller.email === "null") {
+        await seller.update({ email: null });
+        seller.email = null;
+      }
+
       let imageUrl = seller.shop_image; // default: keep old image
 
-      // ✅ If new image uploaded
+      // If new image uploaded
       if (req.file) {
-        // 🧹 remove old image if exists
+        // remove old image if exists
         if (seller.shop_image) {
           deleteFile(seller.shop_image);
         }
 
-        // ✅ save new image with environment-aware path
+        // save new image with environment-aware path
         imageUrl = getImageUrlPath("sellers", req.file.filename);
       }
 
@@ -138,7 +179,10 @@ router.post(
         shop_name: shopName,
         shop_image: imageUrl,
         brand_color: brandColor || null,
-        terms_accepted_at: new Date(), // Record when terms were accepted
+        terms_accepted_at: new Date(),
+        // Only update email if it was null — never overwrite an existing email
+        // Only update email if it was missing — never overwrite a real email
+        ...(emailIsMissing(seller.email) && email ? { email } : {}),
       });
 
       return res.status(200).json({
