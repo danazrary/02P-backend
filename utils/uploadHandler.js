@@ -19,10 +19,12 @@ export function isProduction() {
  * @returns {string} - Full path to upload directory
  */
 export function getUploadDir(subfolder = "") {
-  const baseDir = isProduction()
-    ? process.env.VPS_UPLOAD_PATH || "/var/www/uploads"
-    : path.join(process.cwd(), "uploads");
 
+
+  /* const baseDir1 = isProduction()
+    ? process.env.VPS_UPLOAD_PATH || "/var/www/uploads"
+    : path.join(process.cwd(), "uploads"); */
+const baseDir = process.env.VPS_UPLOAD_PATH || "/var/www/uploads";
   const fullDir = subfolder ? path.join(baseDir, subfolder) : baseDir;
 
   // Ensure directory exists
