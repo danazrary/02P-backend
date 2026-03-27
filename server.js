@@ -62,6 +62,9 @@ app.use(passport.initialize());
   next();
 }); */
 
+// Apply CORS before static file serving
+app.use(cors(corsOptions));
+
 // Serve static uploads based on environment
 // In development: serve from backend/uploads
 // In production: serve from VPS_UPLOAD_PATH (e.g., /var/www/uploads)
@@ -70,8 +73,6 @@ const uploadsPath =
     ? process.env.VPS_UPLOAD_PATH || "/var/www/uploads"
     : path.join(process.cwd(), "uploads");
 app.use("/uploads", express.static(uploadsPath));
-
-app.use(cors(corsOptions));
 
 app.use("/", apiLimiter); // Apply to all routes
 app.use("/api", apiLimiter); // Extra protection for API routes

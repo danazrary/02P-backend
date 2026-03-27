@@ -19,12 +19,10 @@ export function isProduction() {
  * @returns {string} - Full path to upload directory
  */
 export function getUploadDir(subfolder = "") {
-
-
-  /* const baseDir1 = isProduction()
+  const baseDir = isProduction()
     ? process.env.VPS_UPLOAD_PATH || "/var/www/uploads"
-    : path.join(process.cwd(), "uploads"); */
-const baseDir = process.env.VPS_UPLOAD_PATH || "/var/www/uploads";
+    : path.join(process.cwd(), "uploads");
+
   const fullDir = subfolder ? path.join(baseDir, subfolder) : baseDir;
 
   // Ensure directory exists
@@ -42,17 +40,8 @@ const baseDir = process.env.VPS_UPLOAD_PATH || "/var/www/uploads";
  * @returns {string} - Relative URL path
  */
 export function getImageUrlPath(subfolder, filename) {
-const vpsStaticUrl = process.env.VPS_STATIC_URL || "/uploads";
-   return `${vpsStaticUrl}/${subfolder}/${filename}`;
-/* 
-  if (isProduction()) {
-    // In production, return the VPS static path
-   // const vpsStaticUrl = process.env.VPS_STATIC_URL || "/uploads";
-   // return `${vpsStaticUrl}/${subfolder}/${filename}`;
-  }
-  // In development, return local path
+  // Always use /uploads as the URL path since that's how the frontend requests it
   return `/uploads/${subfolder}/${filename}`;
- */
 }
 /**
  * Get the full absolute path of an image for file operations
