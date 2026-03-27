@@ -42,15 +42,18 @@ const baseDir = process.env.VPS_UPLOAD_PATH || "/var/www/uploads";
  * @returns {string} - Relative URL path
  */
 export function getImageUrlPath(subfolder, filename) {
+const vpsStaticUrl = process.env.VPS_STATIC_URL || "/uploads";
+   return `${vpsStaticUrl}/${subfolder}/${filename}`;
+/* 
   if (isProduction()) {
     // In production, return the VPS static path
-    const vpsStaticUrl = process.env.VPS_STATIC_URL || "/uploads";
-    return `${vpsStaticUrl}/${subfolder}/${filename}`;
+   // const vpsStaticUrl = process.env.VPS_STATIC_URL || "/uploads";
+   // return `${vpsStaticUrl}/${subfolder}/${filename}`;
   }
   // In development, return local path
   return `/uploads/${subfolder}/${filename}`;
+ */
 }
-
 /**
  * Get the full absolute path of an image for file operations
  * @param {string} relativePath - Relative path like '/uploads/products/image.jpg'

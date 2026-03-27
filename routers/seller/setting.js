@@ -9,11 +9,7 @@ import jwt from "jsonwebtoken";
 import "../../utils/passportConfig.js";
 import Seller from "../../database/seller.js";
 import crypto from "crypto";
-import {
- 
-  sellerToken,
-  shortSellerToken,
-} from "../../utils/addingToken.js";
+import { sellerToken, shortSellerToken } from "../../utils/addingToken.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { deleteFile } from "../../utils/deleteFile.js";
 import { uploadSellerImage } from "../../middlewares/uploadSellerImage.js";
@@ -26,7 +22,7 @@ router.post(
   "/complete-profile-check",
   jwtVerifySellerToken,
   async (req, res) => {
-    const { id,  isSeller } = req.user;
+    const { id, isSeller } = req.user;
 
     // Additional validation
     if (!id || !isSeller) {
@@ -80,6 +76,7 @@ router.post(
       const {
         shopName,
         sellerName,
+        sellerNumber,
         whatsappNumber,
         brandColor,
         termsAccepted,
@@ -91,6 +88,34 @@ router.post(
           success: false,
           error: true,
           message: ["Missing required fields"],
+        });
+      }
+
+      // Validate sellerName length
+      if (sellerName.length < 4) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: ["Seller name must be at least 4 characters long"],
+        });
+      }
+
+      // Validate sellerNumber only contains digits
+      if (sellerNumber && !/^\d+$/.test(sellerNumber)) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: ["Seller number must only contain numbers"],
+        });
+      }
+
+      // Validate whatsappNumber is exactly 11 digits
+      const cleanedWhatsappNumber = whatsappNumber.replace(/\D/g, "");
+      if (cleanedWhatsappNumber.length !== 11) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: ["WhatsApp number must be exactly 11 digits"],
         });
       }
 
@@ -179,6 +204,7 @@ router.post(
         shop_name: shopName,
         shop_image: imageUrl,
         brand_color: brandColor || null,
+        seller_number: sellerNumber || null,
         terms_accepted_at: new Date(),
         // Only update email if it was null — never overwrite an existing email
         // Only update email if it was missing — never overwrite a real email
@@ -215,7 +241,9 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
     return res.status(200).json({
       success: true,
       error: false,
+      email: seller.email || "",
       sellerName: seller.name,
+      sellerNumber: seller.seller_number || "",
       shopName: seller.shop_name,
       shopImage: seller.shop_image,
       phone: seller.phone,
@@ -236,8 +264,44 @@ router.post(
   async (req, res) => {
     try {
       const { id } = req.user;
-      const { sellerName, shopName, whatsappNumber, socialLinks, brandColor } =
-        req.body;
+      const {
+        sellerName,
+        sellerNumber,
+        shopName,
+        whatsappNumber,
+        socialLinks,
+        brandColor,
+      } = req.body;
+
+      // Validate sellerName length if provided
+      if (sellerName && sellerName.length < 4) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: "Seller name must be at least 4 characters long",
+        });
+      }
+
+      // Validate sellerNumber only contains digits if provided
+      if (sellerNumber && !/^\d+$/.test(sellerNumber)) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: "Seller number must only contain numbers",
+        });
+      }
+
+      // Validate whatsappNumber is exactly 11 digits if provided
+      if (whatsappNumber) {
+        const cleanedWhatsappNumber = whatsappNumber.replace(/\D/g, "");
+        if (cleanedWhatsappNumber.length !== 11) {
+          return res.status(400).json({
+            success: false,
+            error: true,
+            message: "WhatsApp number must be exactly 11 digits",
+          });
+        }
+      }
 
       // Check for reserved shop names
       if (shopName && isReservedShopName(shopName)) {
@@ -266,6 +330,10 @@ router.post(
 
       if (sellerName && sellerName !== seller.name) {
         updateData.name = sellerName;
+      }
+
+      if (sellerNumber && sellerNumber !== seller.seller_number) {
+        updateData.seller_number = sellerNumber;
       }
 
       if (shopName && shopName !== seller.shop_name) {

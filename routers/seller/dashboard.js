@@ -1,27 +1,229 @@
 import { Router } from "express";
+import { Op } from "sequelize";
+import sequelize from "../../database/sequelize.js";
 
 import Product from "../../database/products.js";
 import Seller from "../../database/seller.js";
-import Report from "../../database/report.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
-import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import SellerOffer from "../../database/sellerOffer.js";
+import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
+
 const router = Router();
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const FREE_PLAN_ID = 1;
+const TRIAL_PLAN_ID = 9;
+const FREE_PLAN_END_DATE = new Date("2099-12-31");
+const GRACE_PERIOD_HOURS = 24;
+const DELETION_PERIOD_DAYS = 16;
+const MAX_PRODUCT_LIMIT = 100;
+const DEFAULT_PRODUCT_LIMIT = 30;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Safely parse a JSON string or return the value as-is if already an object.
+ * Returns null on any failure.
+ */
+function safeJsonParse(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse and validate the `selectedPlan` query param from the client.
+ * Accepts only { name: string } to prevent prototype pollution or injection.
+ */
+function parseSelectedPlan(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = safeJsonParse(decodeURIComponent(raw));
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof parsed.name === "string"
+    ) {
+      return { name: parsed.name };
+    }
+  } catch {
+    // malformed input — ignore
+  }
+  return null;
+}
+
+/**
+ * Compute expiry phase from an end date relative to now.
+ * Returns null when the plan has NOT yet expired.
+ */
+function getExpiryState(endDate, now) {
+  if (endDate >= now) return null;
+
+  const hoursElapsed = (now - endDate) / (1000 * 60 * 60);
+  const daysElapsed = hoursElapsed / 24;
+
+  if (hoursElapsed < GRACE_PERIOD_HOURS) {
+    const hoursRemaining = Math.floor(GRACE_PERIOD_HOURS - hoursElapsed);
+    const minutesRemaining = Math.floor(
+      (GRACE_PERIOD_HOURS - hoursElapsed - hoursRemaining) * 60,
+    );
+    return { phase: "warning", hoursRemaining, minutesRemaining };
+  }
+
+  if (daysElapsed <= DELETION_PERIOD_DAYS) {
+    return {
+      phase: "closed",
+      daysUntilDeletion: Math.floor(DELETION_PERIOD_DAYS - daysElapsed),
+    };
+  }
+
+  return { phase: "deleted" };
+}
+
+/**
+ * Shared seller identity fields reused across all responses.
+ */
+function sellerBase(seller, sellerPlanRecord, planName) {
+  return {
+    success: true,
+    error: false,
+    logout: false,
+    seller_id: seller.id,
+    seller_name: seller.name,
+    shop_name: seller.shop_name,
+    plan_id: sellerPlanRecord?.plan_id ?? null,
+    sellerPlan: planName,
+    plan_end_date: sellerPlanRecord?.end_date ?? null,
+  };
+}
+
+/**
+ * Handle an expired plan (trial or paid).
+ * Uses isolated write transactions only when a DB update is needed.
+ * Returns a complete response object when the plan is expired, or null if still valid.
+ */
+async function handleExpiredPlan(
+  seller,
+  sellerPlanRecord,
+  planName,
+  closeReason,
+  now,
+) {
+  const endDate = new Date(sellerPlanRecord.end_date);
+  const state = getExpiryState(endDate, now);
+  if (!state) return null; // plan still active
+
+  const base = sellerBase(seller, sellerPlanRecord, planName);
+  const isTrial = sellerPlanRecord.plan_id === TRIAL_PLAN_ID;
+
+  if (state.phase === "warning") {
+    // Write: mark trial as ended (trial plans only)
+    if (isTrial) {
+      const t = await sequelize.transaction();
+      try {
+        await sellerPlanRecord.update(
+          { trial_ended: true },
+          { transaction: t },
+        );
+        await t.commit();
+      } catch (err) {
+        await t.rollback();
+        throw err;
+      }
+    }
+    return {
+      ...base,
+      yourShopClose: false,
+      plan_warning: true,
+      warning_type: closeReason,
+      hours_remaining: state.hoursRemaining,
+      minutes_remaining: state.minutesRemaining,
+      message: `Your ${isTrial ? "trial period" : "plan"} has expired. Renew within 24 hours or your shop will close.`,
+      products: [],
+      offers: [],
+    };
+  }
+
+  if (state.phase === "closed") {
+    // Write: deactivate shop; also mark trial_ended for trial plans
+    const updatePayload = { status: false };
+    if (isTrial) updatePayload.trial_ended = true;
+
+    const t = await sequelize.transaction();
+    try {
+      await sellerPlanRecord.update(updatePayload, { transaction: t });
+      await t.commit();
+    } catch (err) {
+      await t.rollback();
+      throw err;
+    }
+    return {
+      ...base,
+      yourShopClose: true,
+      closeReason,
+      days_until_deletion: state.daysUntilDeletion,
+      message:
+        "Your shop is closed. Renew your plan or your data will be deleted.",
+    };
+  }
+
+  // phase === "deleted" — no write needed; admin cleanup handles actual deletion
+  return {
+    ...base,
+    yourShopClose: true,
+    closeReason: `${closeReason}_deleted`,
+    days_until_deletion: 0,
+    message: "Your plan has expired and the grace period has passed.",
+  };
+}
+
+/**
+ * Parse a red_line / red_lineAr field from the seller record.
+ * Returns { data: object|null, needsCleanup: boolean }.
+ */
+function parseRedLine(raw, now) {
+  if (!raw) return { data: null, needsCleanup: false };
+
+  const parsed = safeJsonParse(raw);
+  if (!parsed || typeof parsed !== "object" || !parsed.end_time) {
+    return { data: null, needsCleanup: true };
+  }
+
+  const endTime = new Date(parsed.end_time);
+  if (endTime < now) return { data: null, needsCleanup: true };
+
+  return { data: parsed, needsCleanup: false };
+}
+
+// ─── Route ────────────────────────────────────────────────────────────────────
 
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
   try {
     const { id } = req.user;
-    console.log(id);
+    const now = new Date();
 
-    // Get selected plan from query params (sent from frontend localStorage)
-    const selectedPlanFromClient = req.query.selectedPlan
-      ? JSON.parse(decodeURIComponent(req.query.selectedPlan))
-      : null;
+    // ── Validate & parse query params ─────────────────────────────────────────
+    const selectedPlan = parseSelectedPlan(req.query.selectedPlan);
+    const productLimit = Math.min(
+      Math.max(
+        parseInt(req.query.productLimit, 10) || DEFAULT_PRODUCT_LIMIT,
+        1,
+      ),
+      MAX_PRODUCT_LIMIT,
+    );
+    const productOffset = Math.max(
+      parseInt(req.query.productOffset, 10) || 0,
+      0,
+    );
 
+    // ── 1. Fetch seller (READ) ─────────────────────────────────────────────────
     const seller = await Seller.findByPk(id);
-
     if (!seller) {
       res.clearCookie("s_t", {
         httpOnly: true,
@@ -36,270 +238,116 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    const currentDate = new Date();
+    // ── 2. Fetch existing seller plan (READ) ───────────────────────────────────
     let sellerPlanRecord = await SellerPlan.findOne({
       where: { seller_id: id },
     });
 
-    // ========== PLAN LOGIC ==========
-
-    // 1. No plan exists - Check if user selected trial or give free plan
+    // ── 3. Create plan if missing (WRITE — isolated transaction) ──────────────
     if (!sellerPlanRecord) {
-      // Check if user selected trial plan from pricing page
-      if (selectedPlanFromClient && selectedPlanFromClient.name === "trial") {
-        // Give trial plan (plan_id: 9)
-        const trialPlan = await Plan.findByPk(9);
-        const trialDays = trialPlan ? trialPlan.duration_days : 3;
+      const wantsTrial = selectedPlan?.name === "trial";
+      let newPlanData;
 
-        sellerPlanRecord = await SellerPlan.create({
+      if (wantsTrial) {
+        // READ: fetch trial plan duration before opening transaction
+        const trialPlan = await Plan.findByPk(TRIAL_PLAN_ID);
+        const trialDays = trialPlan?.duration_days ?? 3;
+        newPlanData = {
           seller_id: id,
-          plan_id: 9, // Trial plan
-          start_date: new Date(),
-          end_date: new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000),
+          plan_id: TRIAL_PLAN_ID,
+          start_date: now,
+          end_date: new Date(now.getTime() + trialDays * 86_400_000),
           is_trial: true,
           trial_ended: false,
           status: true,
-        });
+        };
       } else {
-        // Give free plan (plan_id: 1) - user didn't select trial
-        sellerPlanRecord = await SellerPlan.create({
+        newPlanData = {
           seller_id: id,
-          plan_id: 1, // Free seller plan
-          start_date: new Date(),
-          end_date: new Date("2099-12-31"), // Free plan has no real expiry
+          plan_id: FREE_PLAN_ID,
+          start_date: now,
+          end_date: FREE_PLAN_END_DATE,
           is_trial: false,
           trial_ended: false,
           status: true,
+        };
+      }
+
+      const t = await sequelize.transaction();
+      try {
+        sellerPlanRecord = await SellerPlan.create(newPlanData, {
+          transaction: t,
         });
+        await t.commit();
+      } catch (err) {
+        await t.rollback();
+        throw err;
       }
     }
 
-    // Get current plan details
-    let sellerPlanRow = await Plan.findByPk(sellerPlanRecord.plan_id);
-    const planName = sellerPlanRow ? sellerPlanRow.name : "";
+    // ── 4. Fetch plan details (READ) ───────────────────────────────────────────
+    const planRow = await Plan.findByPk(sellerPlanRecord.plan_id);
+    const planName = planRow?.name ?? "Free";
 
-    // 2. Check if plan is trial_seller
-    const updatedPlanName = sellerPlanRow ? sellerPlanRow.name : "";
-    if (updatedPlanName === "trial_seller" || sellerPlanRecord.plan_id === 9) {
-      const endDate = new Date(sellerPlanRecord.end_date);
-      const timeDiff = currentDate - endDate;
-      const daysDiff = timeDiff / (1000 * 60 * 60 * 24);
-      const hoursDiff = timeDiff / (1000 * 60 * 60);
+    // ── 5. Plan type flags — derived exclusively from plan_id ─────────────────
+    const isTrial = sellerPlanRecord.plan_id === TRIAL_PLAN_ID;
+    const isFree = sellerPlanRecord.plan_id === FREE_PLAN_ID;
+    const isPaid = !isTrial && !isFree;
 
-      if (endDate < currentDate) {
-        // Trial ended
-        await sellerPlanRecord.update({
-          trial_ended: true,
-        });
-
-        if (hoursDiff < 24) {
-          // Less than 24 hours - show warning
-          const hoursRemaining = Math.floor(24 - hoursDiff);
-          const minutesRemaining = Math.floor(
-            (24 - hoursDiff - hoursRemaining) * 60,
-          );
-
-          return res.status(200).json({
-            success: true,
-            error: false,
-            logout: false,
-            yourShopClose: false,
-            plan_warning: true,
-            warning_type: "trial_expired",
-            hours_remaining: hoursRemaining,
-            minutes_remaining: minutesRemaining,
-            message:
-              "Your trial period has ended. Renew within 24 hours or your shop will close.",
-            seller_id: id,
-            seller_name: seller.name,
-            shop_name: seller.shop_name,
-            plan_id: sellerPlanRecord.plan_id,
-            sellerPlan: updatedPlanName,
-            plan_end_date: sellerPlanRecord.end_date,
-            products: [],
-            offers: [],
-          });
-        } else if (daysDiff <= 16) {
-          // 1 day to 16 days - shop is closed, show days until deletion
-          await sellerPlanRecord.update({ status: false });
-          const daysUntilDeletion = Math.floor(16 - daysDiff);
-
-          return res.status(200).json({
-            success: true,
-            error: false,
-            logout: false,
-            yourShopClose: true,
-            closeReason: "trial_expired",
-            days_until_deletion: daysUntilDeletion,
-            message:
-              "Your shop is closed. Renew your plan or your data will be deleted.",
-            seller_id: id,
-            seller_name: seller.name,
-            shop_name: seller.shop_name,
-            plan_id: sellerPlanRecord.plan_id,
-            sellerPlan: updatedPlanName,
-            plan_end_date: sellerPlanRecord.end_date,
-          });
-        } else {
-          // More than 16 days - data should be deleted (handled by admin cleanup)
-          return res.status(200).json({
-            success: true,
-            error: false,
-            logout: false,
-            yourShopClose: true,
-            closeReason: "trial_expired_deleted",
-            days_until_deletion: 0,
-            message: "Your trial has expired and grace period has passed.",
-            seller_id: id,
-            seller_name: seller.name,
-            shop_name: seller.shop_name,
-            plan_id: sellerPlanRecord.plan_id,
-            sellerPlan: updatedPlanName,
-            plan_end_date: sellerPlanRecord.end_date,
-          });
-        }
-      }
-      // Trial not ended yet - continue
+    // ── 6. Expiry checks (writes isolated inside handleExpiredPlan) ────────────
+    if (isTrial) {
+      const expiredResponse = await handleExpiredPlan(
+        seller,
+        sellerPlanRecord,
+        planName,
+        "trial_expired",
+        now,
+      );
+      if (expiredResponse) return res.status(200).json(expiredResponse);
     }
 
-    // 4. Check paid plans (not free_seller or trial_seller)
-    if (
-      updatedPlanName !== "free_seller" &&
-      updatedPlanName !== "Free" &&
-      updatedPlanName !== "trial_seller" &&
-      sellerPlanRecord.plan_id !== 1 &&
-      sellerPlanRecord.plan_id !== 9
-    ) {
-      const endDate = new Date(sellerPlanRecord.end_date);
-      const timeDiff = currentDate - endDate;
-      const daysDiff = timeDiff / (1000 * 60 * 60 * 24);
-      const hoursDiff = timeDiff / (1000 * 60 * 60);
-
-      if (endDate < currentDate) {
-        // Plan expired
-        if (hoursDiff < 24) {
-          // Less than 24 hours - show warning
-          const hoursRemaining = Math.floor(24 - hoursDiff);
-          const minutesRemaining = Math.floor(
-            (24 - hoursDiff - hoursRemaining) * 60,
-          );
-
-          return res.status(200).json({
-            success: true,
-            error: false,
-            logout: false,
-            yourShopClose: false,
-            plan_warning: true,
-            warning_type: "plan_expired",
-            hours_remaining: hoursRemaining,
-            minutes_remaining: minutesRemaining,
-            message:
-              "Your plan has expired. Renew within 24 hours or your shop will close.",
-            seller_id: id,
-            seller_name: seller.name,
-            shop_name: seller.shop_name,
-            plan_id: sellerPlanRecord.plan_id,
-            sellerPlan: updatedPlanName,
-            plan_end_date: sellerPlanRecord.end_date,
-            products: [],
-            offers: [],
-          });
-        } else if (daysDiff <= 16) {
-          // 1 day to 16 days - shop is closed, show days until deletion
-          await sellerPlanRecord.update({ status: false });
-          const daysUntilDeletion = Math.floor(16 - daysDiff);
-
-          return res.status(200).json({
-            success: true,
-            error: false,
-            logout: false,
-            yourShopClose: true,
-            closeReason: "plan_expired",
-            days_until_deletion: daysUntilDeletion,
-            message:
-              "Your shop is closed. Renew your plan or your data will be deleted.",
-            seller_id: id,
-            seller_name: seller.name,
-            shop_name: seller.shop_name,
-            plan_id: sellerPlanRecord.plan_id,
-            sellerPlan: updatedPlanName,
-            plan_end_date: sellerPlanRecord.end_date,
-          });
-        } else {
-          // More than 16 days - data should be deleted (handled by admin cleanup)
-          return res.status(200).json({
-            success: true,
-            error: false,
-            logout: false,
-            yourShopClose: true,
-            closeReason: "plan_expired_deleted",
-            days_until_deletion: 0,
-            message: "Your plan has expired and grace period has passed.",
-            seller_id: id,
-            seller_name: seller.name,
-            shop_name: seller.shop_name,
-            plan_id: sellerPlanRecord.plan_id,
-            sellerPlan: updatedPlanName,
-            plan_end_date: sellerPlanRecord.end_date,
-          });
-        }
-      }
+    if (isPaid) {
+      const expiredResponse = await handleExpiredPlan(
+        seller,
+        sellerPlanRecord,
+        planName,
+        "plan_expired",
+        now,
+      );
+      if (expiredResponse) return res.status(200).json(expiredResponse);
     }
 
-    // ========== END PLAN LOGIC ==========
-
-    // 🔹 Check product and offer limits
-    const maxProducts = sellerPlanRow ? sellerPlanRow.max_products : 0;
-    const maxOffers = sellerPlanRow ? sellerPlanRow.max_offers : 0;
-    const currentProductCount = await Product.count({
-      where: { seller_id: id },
-    });
-    const currentOfferCount = await SellerOffer.count({
-      where: { seller_id: id, is_active: true },
-    });
-
-    const product_limit_reached = currentProductCount >= maxProducts;
-    const offer_limit_reached = currentOfferCount >= maxOffers;
-
-    // Get all active offers
-    const allOffers = await SellerOffer.findAll({
-      where: { seller_id: id, is_active: true },
-      attributes: [
-        "id",
-        "titleKu",
-        "titleAr",
-        "cover_image",
-        "type_offer",
-        "start_date",
-        "end_date",
-        "language",
-        "discount_price_type",
-        "discount_price",
-        "discount_percent",
-        "discount_or_free_delivery",
-      ],
-    });
-
-    // Filter and delete expired offers
-    const offers = [];
-    for (const offer of allOffers) {
-      const endDate = new Date(offer.end_date);
-      if (endDate >= currentDate) {
-        offers.push(offer);
-      } else {
-        // Delete expired offer from database
-        await SellerOffer.destroy({
-          where: { id: offer.id },
-        });
-        console.log(`🗑️ Deleted expired offer ${offer.id}`);
-      }
-    }
-
-    const productLimit = Math.min(parseInt(req.query.productLimit) || 30, 100);
-    const productOffset = parseInt(req.query.productOffset) || 0;
-
-    const { count: totalProductsCount, rows: rawProducts } =
-      await Product.findAndCountAll({
+    // ── 7. Parallel reads: counts, offers, products ───────────────────────────
+    const [
+      currentProductCount,
+      currentOfferCount,
+      offers,
+      { count: totalProductsCount, rows: rawProducts },
+    ] = await Promise.all([
+      Product.count({ where: { seller_id: id } }),
+      SellerOffer.count({ where: { seller_id: id, is_active: true } }),
+      SellerOffer.findAll({
+        where: {
+          seller_id: id,
+          is_active: true,
+          end_date: { [Op.gte]: now },
+        },
+        attributes: [
+          "id",
+          "titleKu",
+          "titleAr",
+          "cover_image",
+          "type_offer",
+          "start_date",
+          "end_date",
+          "language",
+          "discount_price_type",
+          "discount_price",
+          "discount_percent",
+          "discount_or_free_delivery",
+        ],
+      }),
+      Product.findAndCountAll({
         where: { seller_id: id },
         attributes: [
           "id",
@@ -324,136 +372,76 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         limit: productLimit,
         offset: productOffset,
         order: [["id", "DESC"]],
-      });
+      }),
+    ]);
 
-    // Check and clean expired discounts and free delivery
-    let products = await checkAndCleanProductExpiration(rawProducts);
+    // ── 8. Expired offer cleanup (WRITE — fire-and-forget, non-blocking) ──────
+    SellerOffer.destroy({
+      where: { seller_id: id, end_date: { [Op.lt]: now } },
+    }).catch((err) =>
+      console.error("[dashboard] Failed to delete expired offers:", err),
+    );
+
+    // ── 9. Clean expired product discounts / free delivery ────────────────────
+    const products = await checkAndCleanProductExpiration(rawProducts);
     const hasMoreProducts = productOffset + productLimit < totalProductsCount;
 
-    // Check red_line (Kurdish) and red_lineAr (Arabic) expiration
-    let redLine = null;
-    let redLineKu = null;
-    let redLineAr = null;
-    let needsCleanup = { ku: false, ar: false };
+    // ── 10. Red line processing ───────────────────────────────────────────────
+    const ku = parseRedLine(seller.red_line, now);
+    const ar = parseRedLine(seller.red_lineAr, now);
 
-    // Process Kurdish red_line
-    if (seller.red_line) {
-      try {
-        const redLineData =
-          typeof seller.red_line === "string"
-            ? JSON.parse(seller.red_line)
-            : seller.red_line;
-
-        if (
-          redLineData &&
-          typeof redLineData === "object" &&
-          redLineData.end_time
-        ) {
-          const endTime = new Date(redLineData.end_time);
-
-          if (endTime < currentDate) {
-            needsCleanup.ku = true;
-          } else {
-            redLineKu = redLineData;
-          }
-        } else {
-          needsCleanup.ku = true;
-        }
-      } catch (error) {
-        console.error("Error parsing red_line for seller", id, ":", error);
-        needsCleanup.ku = true;
-      }
-    }
-
-    // Process Arabic red_lineAr
-    if (seller.red_lineAr) {
-      try {
-        const redLineData =
-          typeof seller.red_lineAr === "string"
-            ? JSON.parse(seller.red_lineAr)
-            : seller.red_lineAr;
-
-        if (
-          redLineData &&
-          typeof redLineData === "object" &&
-          redLineData.end_time
-        ) {
-          const endTime = new Date(redLineData.end_time);
-
-          if (endTime < currentDate) {
-            needsCleanup.ar = true;
-          } else {
-            redLineAr = redLineData;
-          }
-        } else {
-          needsCleanup.ar = true;
-        }
-      } catch (error) {
-        console.error("Error parsing red_lineAr for seller", id, ":", error);
-        needsCleanup.ar = true;
-      }
-    }
-
-    // Cleanup expired/invalid data
-    if (needsCleanup.ku || needsCleanup.ar) {
+    // WRITE: clean up expired/invalid red_line fields in one call (fire-and-forget)
+    if (ku.needsCleanup || ar.needsCleanup) {
       const updateObj = {};
-      if (needsCleanup.ku) updateObj.red_line = null;
-      if (needsCleanup.ar) updateObj.red_lineAr = null;
-      await Seller.update(updateObj, { where: { id: id } });
-      if (needsCleanup.ku)
-        console.log(`🗑️ Removed expired red_line (Kurdish) for seller ${id}`);
-      if (needsCleanup.ar)
-        console.log(`🗑️ Removed expired red_lineAr (Arabic) for seller ${id}`);
+      if (ku.needsCleanup) updateObj.red_line = null;
+      if (ar.needsCleanup) updateObj.red_lineAr = null;
+      Seller.update(updateObj, { where: { id } }).catch((err) =>
+        console.error("[dashboard] Failed to clean red_line fields:", err),
+      );
     }
 
-    // Build combined redLine response
-    if (redLineKu || redLineAr) {
-      let language = "both";
-      if (redLineKu && !redLineAr) language = "kurdish";
-      else if (!redLineKu && redLineAr) language = "arabic";
-
+    let redLine = null;
+    if (ku.data || ar.data) {
+      const language =
+        ku.data && ar.data ? "both" : ku.data ? "kurdish" : "arabic";
       redLine = {
-        textKu: redLineKu?.text || "",
-        textAr: redLineAr?.text || "",
+        textKu: ku.data?.text ?? "",
+        textAr: ar.data?.text ?? "",
         language,
-        start_time: redLineKu?.start_time || redLineAr?.start_time,
-        end_time: redLineKu?.end_time || redLineAr?.end_time,
+        start_time: ku.data?.start_time ?? ar.data?.start_time,
+        end_time: ku.data?.end_time ?? ar.data?.end_time,
       };
     }
 
-    res.status(200).json({
+    // ── 11. Success response ──────────────────────────────────────────────────
+    return res.status(200).json({
       success: true,
       error: false,
       logout: false,
+      message: "Dashboard loaded successfully",
+      ...sellerBase(seller, sellerPlanRecord, planName),
       yourShopClose: false,
-      seller_id: id,
-      seller_name: seller.name,
-      shop_name: seller.shop_name,
-      plan_id: sellerPlanRecord ? sellerPlanRecord.plan_id : null,
-      is_trial: sellerPlanRecord ? sellerPlanRecord.is_trial : false,
-      trial_ended: sellerPlanRecord ? sellerPlanRecord.trial_ended : false,
-      sellerPlan: sellerPlanRow ? sellerPlanRow.name : "Free",
-      plan_start_date: sellerPlanRecord ? sellerPlanRecord.start_date : null,
-      plan_end_date: sellerPlanRecord ? sellerPlanRecord.end_date : null,
-      // Show plan selection popup if user is on free plan
-      show_plan_selection: sellerPlanRecord?.plan_id === 1,
-      // Pass back selected plan info from client (if any) for the popup
-      selected_plan_info: selectedPlanFromClient || null,
-      brand_color: seller.brand_color || null,
+      is_trial: sellerPlanRecord.is_trial,
+      trial_ended: sellerPlanRecord.trial_ended,
+      plan_start_date: sellerPlanRecord.start_date,
+      show_plan_selection: sellerPlanRecord.plan_id === FREE_PLAN_ID,
+      selected_plan_info: selectedPlan,
+      brand_color: seller.brand_color ?? null,
       red_line: redLine,
       products,
       totalProducts: totalProductsCount,
       hasMoreProducts,
       offers,
-      product_limit_reached,
-      offer_limit_reached,
-      max_products: maxProducts,
-      max_offers: maxOffers,
+      product_limit_reached:
+        currentProductCount >= (planRow?.max_products ?? 0),
+      offer_limit_reached: currentOfferCount >= (planRow?.max_offers ?? 0),
+      max_products: planRow?.max_products ?? 0,
+      max_offers: planRow?.max_offers ?? 0,
       current_product_count: currentProductCount,
       current_offer_count: currentOfferCount,
     });
   } catch (error) {
-    console.error(error);
+    console.error("[dashboard] Unhandled error:", error);
     return res.status(500).json({
       success: false,
       error: true,
