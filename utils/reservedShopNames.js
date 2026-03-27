@@ -37,6 +37,7 @@ export const RESERVED_SHOP_NAMES = [
   "help",
   "blog",
   "news",
+  "null"
 ];
 
 /**
