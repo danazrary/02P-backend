@@ -16,6 +16,7 @@ import jwt from "jsonwebtoken";
 import "./utils/passportConfig.js";
 // Routers, Middleware, Utils
 import allRouters from "./routers/index.js";
+import sitemapRouter from "./routers/sitemap.js";
 import csrfMiddleware from "./middlewares/csrf.js";
 import { sanitizeHtmlMiddleware } from "./middlewares/sanitizeHtml.js";
 import { verifyCsrfToken } from "./utils/csrfProtection.js";
@@ -92,6 +93,9 @@ app.use(csrfMiddleware);
 
 // --- ROUTERS ---
 app.use("/api", allRouters);
+
+// Sitemap route - served at root level for SEO
+app.use("/", sitemapRouter);
 
 app.get("/profile", (req, res) => {
   const token = req.cookies.token || req.headers.authorization?.split(" ")[1];

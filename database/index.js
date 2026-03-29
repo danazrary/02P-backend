@@ -21,17 +21,19 @@ SellerPlan.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
 Plan.hasMany(SellerPlan, { foreignKey: "plan_id", as: "sellerPlans" });
 SellerPlan.belongsTo(Plan, { foreignKey: "plan_id", as: "plan" });
 
+Seller.hasMany(Product, { foreignKey: "seller_id" });
+Product.belongsTo(Seller, { foreignKey: "seller_id" });
+
+Seller.hasMany(SellerOffer, { foreignKey: "seller_id" });
+SellerOffer.belongsTo(Seller, { foreignKey: "seller_id" });
+
 /* Seller.hasMany(SellerPlan, { foreignKey: "seller_id" });
 SellerPlan.belongsTo(Seller, { foreignKey: "seller_id" });
 
 Plan.hasMany(SellerPlan, { foreignKey: "plan_id" });
 SellerPlan.belongsTo(Plan, { foreignKey: "plan_id" });
  */
-Seller.hasMany(Product, { foreignKey: "seller_id" });
-Product.belongsTo(Seller, { foreignKey: "seller_id" });
 
-Seller.hasMany(SellerOffer, { foreignKey: "seller_id" });
-SellerOffer.belongsTo(Seller, { foreignKey: "seller_id" });
 
 /* ============================
    EXPORT

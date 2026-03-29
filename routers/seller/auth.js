@@ -6,6 +6,7 @@ import Seller from "../../database/seller.js";
 import crypto from "crypto";
 import { sellerToken, shortSellerToken } from "../../utils/addingToken.js";
 import { checkMe } from "../../middlewares/jwtVerify.js";
+import { pingGoogleSitemap } from "../sitemap.js";
 import axios from "axios";
 const router = express.Router();
 function generateCodeVerifier() {
@@ -341,6 +342,15 @@ router.post("/successLogin", async (req, res) => {
       !seller.phone ||
       !seller.name ||
       !seller.shop_name;
+
+    // 📌 Ping Google sitemap if new seller created
+    if (newSeller) {
+      console.log("sitemap req ");
+
+      pingGoogleSitemap().catch((err) =>
+        console.warn("⚠️ Sitemap ping warning:", err.message),
+      );
+    }
 
     // 7) respond WITHOUT sending token
     res.json({
