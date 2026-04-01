@@ -9,7 +9,11 @@ import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
-import { processRedLineData, getRedLineStatus, toUTC } from "../../utils/timezoneHandler.js";
+import {
+  processRedLineData,
+  getRedLineStatus,
+  toUTC,
+} from "../../utils/timezoneHandler.js";
 
 const router = Router();
 
@@ -401,9 +405,13 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
     if (ku.data || ar.data) {
       const language =
         ku.data && ar.data ? "both" : ku.data ? "kurdish" : "arabic";
-      const kuStatus = ku.data ? getRedLineStatus(ku.data.start_time, ku.data.end_time) : null;
-      const arStatus = ar.data ? getRedLineStatus(ar.data.start_time, ar.data.end_time) : null;
-      
+      const kuStatus = ku.data
+        ? getRedLineStatus(ku.data.start_time, ku.data.end_time)
+        : null;
+      const arStatus = ar.data
+        ? getRedLineStatus(ar.data.start_time, ar.data.end_time)
+        : null;
+
       redLine = {
         textKu: ku.data?.text ?? "",
         textAr: ar.data?.text ?? "",
@@ -491,8 +499,10 @@ router.post("/activate-trial", jwtVerifySellerToken, async (req, res) => {
     // Activate trial plan (3 days)
     const trialDays = 3;
     const trialStartDate = toUTC(new Date());
-    const trialEndDate = toUTC(new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000));
-    
+    const trialEndDate = toUTC(
+      new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000),
+    );
+
     await sellerPlanRecord.update({
       plan_id: 9, // Trial plan ID
       start_date: trialStartDate,

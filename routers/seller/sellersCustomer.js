@@ -53,13 +53,13 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         message: "Seller shop not found",
       });
     }
-   console.log(
-     seller.red_line,
-     "red_line",
-     seller.red_lineAr,
-     "seller",
-     seller,
-   );
+    console.log(
+      seller.red_line,
+      "red_line",
+      seller.red_lineAr,
+      "seller",
+      seller,
+    );
     const sellerId = seller.id;
     const { utc: currentTimeUTC } = getCurrentTimeBaghdad();
 
@@ -115,7 +115,9 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     // Check if plan is trial_seller (use Baghdad timezone)
     if (planName === "trial_seller" || sellerPlanRecord.plan_id === 9) {
       const { baghdadFull: currentBaghdad } = getCurrentTimeBaghdad();
-      const endDateBaghdad = dayjs(sellerPlanRecord.end_date).tz("Asia/Baghdad");
+      const endDateBaghdad = dayjs(sellerPlanRecord.end_date).tz(
+        "Asia/Baghdad",
+      );
       const daysDiff = currentBaghdad.diff(endDateBaghdad, "day");
 
       // If trial ended more than 1 day ago, shop is closed
@@ -146,7 +148,9 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       sellerPlanRecord.plan_id !== 9
     ) {
       const { baghdadFull: currentBaghdad } = getCurrentTimeBaghdad();
-      const endDateBaghdad = dayjs(sellerPlanRecord.end_date).tz("Asia/Baghdad");
+      const endDateBaghdad = dayjs(sellerPlanRecord.end_date).tz(
+        "Asia/Baghdad",
+      );
       const daysDiff = currentBaghdad.diff(endDateBaghdad, "day");
 
       if (currentBaghdad.isAfter(endDateBaghdad) && daysDiff > 1) {
@@ -206,8 +210,10 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         });
         console.log(`🗑️ Deleted expired offer ${offer.id}`);
       } else if (
-        (currentBaghdad.isSame(startDateBaghdad) || currentBaghdad.isAfter(startDateBaghdad)) &&
-        (currentBaghdad.isSame(endDateBaghdad) || currentBaghdad.isBefore(endDateBaghdad))
+        (currentBaghdad.isSame(startDateBaghdad) ||
+          currentBaghdad.isAfter(startDateBaghdad)) &&
+        (currentBaghdad.isSame(endDateBaghdad) ||
+          currentBaghdad.isBefore(endDateBaghdad))
       ) {
         // Only show offers that have started and haven't ended
         offers.push(offer);
@@ -264,7 +270,9 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       needsCleanup.ku = kuResult.needsCleanup;
 
       if (kuResult.needsCleanup) {
-        console.log(`🗑️ Marked expired red_line (Kurdish) for seller ${sellerId}`);
+        console.log(
+          `🗑️ Marked expired red_line (Kurdish) for seller ${sellerId}`,
+        );
       }
     }
 
@@ -275,7 +283,9 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       needsCleanup.ar = arResult.needsCleanup;
 
       if (arResult.needsCleanup) {
-        console.log(`🗑️ Marked expired red_lineAr (Arabic) for seller ${sellerId}`);
+        console.log(
+          `🗑️ Marked expired red_lineAr (Arabic) for seller ${sellerId}`,
+        );
       }
     }
 
@@ -294,8 +304,12 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       if (redLineKu && !redLineAr) language = "kurdish";
       else if (!redLineKu && redLineAr) language = "arabic";
 
-      const kuStatus = redLineKu ? getRedLineStatus(redLineKu.start_time, redLineKu.end_time) : null;
-      const arStatus = redLineAr ? getRedLineStatus(redLineAr.start_time, redLineAr.end_time) : null;
+      const kuStatus = redLineKu
+        ? getRedLineStatus(redLineKu.start_time, redLineKu.end_time)
+        : null;
+      const arStatus = redLineAr
+        ? getRedLineStatus(redLineAr.start_time, redLineAr.end_time)
+        : null;
 
       redLine = {
         textKu: redLineKu?.text || "",

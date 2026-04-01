@@ -202,7 +202,6 @@ router.put(
         parsedRemoved.forEach((img) => deleteImage(img));
       }
 
-
       /* 🖼️ Keep existing images */
       let finalImages = existingImages ? JSON.parse(existingImages) : [];
 

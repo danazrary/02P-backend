@@ -230,7 +230,9 @@ router.post("/activate-trial", adminAuth, async (req, res) => {
     // 3️⃣ If seller has no plan, create a free trial
     if (!sellerPlan) {
       const startDate = toUTC(new Date());
-      const endDate = toUTC(new Date(new Date(startDate).getTime() + 7 * 24 * 60 * 60 * 1000));
+      const endDate = toUTC(
+        new Date(new Date(startDate).getTime() + 7 * 24 * 60 * 60 * 1000),
+      );
 
       sellerPlan = await SellerPlan.create({
         seller_id,

@@ -26,10 +26,10 @@ const IRAQ_TZ = "Asia/Baghdad";
 
 /**
  * Convert any date input to UTC ISO string for database storage
- * 
+ *
  * @param {string|Date|null} date - Date to convert
  * @returns {string|null} UTC ISO string (e.g. "2026-04-01T16:59:00.000Z") or null
- * 
+ *
  * USAGE:
  *   // For creating a new record:
  *   await Model.create({
@@ -215,7 +215,7 @@ export function isExpiredBaghdad(endTime) {
   const currentUTC = dayjs.utc();
   const currentTz = currentUTC.tz(IRAQ_TZ);
   const endTz = dayjs(endTimeParsed.utc).tz(IRAQ_TZ);
-  
+
   return currentTz.isAfter(endTz);
 }
 

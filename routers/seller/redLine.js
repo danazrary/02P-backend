@@ -96,7 +96,10 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
     // Check if plan has expired (use Baghdad timezone)
     const { dayjsObj: currentBaghdad } = getCurrentTimeBaghdad();
     const endDateParsed = parseDateToUTC(sellerPlan.end_date);
-    if (endDateParsed && currentBaghdad.isAfter(endDateParsed.dayjsObj.tz("Asia/Baghdad"))) {
+    if (
+      endDateParsed &&
+      currentBaghdad.isAfter(endDateParsed.dayjsObj.tz("Asia/Baghdad"))
+    ) {
       return res.status(403).json({
         success: false,
         error: true,

@@ -7,7 +7,11 @@ import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
-import { processRedLineData, getRedLineStatus, toUTC } from "../../utils/timezoneHandler.js";
+import {
+  processRedLineData,
+  getRedLineStatus,
+  toUTC,
+} from "../../utils/timezoneHandler.js";
 import { Op } from "sequelize";
 const router = Router();
 
@@ -154,8 +158,12 @@ router.get("/:shopName", async (req, res) => {
       if (kuResult.data && !arResult.data) language = "kurdish";
       else if (!kuResult.data && arResult.data) language = "arabic";
 
-      const kuStatus = kuResult.data ? getRedLineStatus(kuResult.data.start_time, kuResult.data.end_time) : null;
-      const arStatus = arResult.data ? getRedLineStatus(arResult.data.start_time, arResult.data.end_time) : null;
+      const kuStatus = kuResult.data
+        ? getRedLineStatus(kuResult.data.start_time, kuResult.data.end_time)
+        : null;
+      const arStatus = arResult.data
+        ? getRedLineStatus(arResult.data.start_time, arResult.data.end_time)
+        : null;
 
       redLine = {
         textKu: kuResult.data?.text || "",

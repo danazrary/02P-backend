@@ -12,7 +12,8 @@ import {
  */
 export async function cleanupExpiredData() {
   try {
-    const { utc: currentTimeUTC, baghdad: currentTimeBaghdad } = getCurrentTimeBaghdad();
+    const { utc: currentTimeUTC, baghdad: currentTimeBaghdad } =
+      getCurrentTimeBaghdad();
     console.log("🧹 Starting cleanup of expired data...");
     console.log("📅 Current UTC:", currentTimeUTC);
     console.log("📅 Current Baghdad:", currentTimeBaghdad);
