@@ -1,15 +1,21 @@
 import Seller from "../database/seller.js";
 import SellerOffer from "../database/sellerOffer.js";
 import { Op } from "sequelize";
+import {
+  processRedLineData,
+  getCurrentTimeBaghdad,
+} from "./timezoneHandler.js";
 
 /**
  * Clean up expired red lines and offers from the database
+ * Uses Baghdad timezone for all comparisons
  */
 export async function cleanupExpiredData() {
   try {
-    const currentDate = new Date();
+    const { utc: currentTimeUTC, baghdad: currentTimeBaghdad } = getCurrentTimeBaghdad();
     console.log("🧹 Starting cleanup of expired data...");
-    console.log("📅 Current date:", currentDate.toISOString());
+    console.log("📅 Current UTC:", currentTimeUTC);
+    console.log("📅 Current Baghdad:", currentTimeBaghdad);
 
     // 1️⃣ Clean up expired red lines (both Kurdish and Arabic)
     const sellers = await Seller.findAll({
@@ -24,30 +30,10 @@ export async function cleanupExpiredData() {
 
       // Check Kurdish red_line
       if (seller.red_line) {
-        try {
-          const redLineData =
-            typeof seller.red_line === "string"
-              ? JSON.parse(seller.red_line)
-              : seller.red_line;
-
-          if (
-            redLineData &&
-            typeof redLineData === "object" &&
-            redLineData.end_time
-          ) {
-            const endTime = new Date(redLineData.end_time);
-            console.log(
-              `🔍 Seller ${seller.id} (${seller.name}) Kurdish: end_time=${endTime.toISOString()}, expired=${endTime < currentDate}`,
-            );
-
-            if (endTime < currentDate) {
-              updateObj.red_line = null;
-            }
-          }
-        } catch (error) {
-          console.error(
-            `Error parsing red_line for seller ${seller.id}:`,
-            error,
+        const kuResult = processRedLineData(seller.red_line);
+        if (kuResult.needsCleanup) {
+          console.log(
+            `🔍 Seller ${seller.id} (${seller.name}) Kurdish: status=${kuResult.status}, marking for cleanup`,
           );
           updateObj.red_line = null;
         }
@@ -55,30 +41,10 @@ export async function cleanupExpiredData() {
 
       // Check Arabic red_lineAr
       if (seller.red_lineAr) {
-        try {
-          const redLineData =
-            typeof seller.red_lineAr === "string"
-              ? JSON.parse(seller.red_lineAr)
-              : seller.red_lineAr;
-
-          if (
-            redLineData &&
-            typeof redLineData === "object" &&
-            redLineData.end_time
-          ) {
-            const endTime = new Date(redLineData.end_time);
-            console.log(
-              `🔍 Seller ${seller.id} (${seller.name}) Arabic: end_time=${endTime.toISOString()}, expired=${endTime < currentDate}`,
-            );
-
-            if (endTime < currentDate) {
-              updateObj.red_lineAr = null;
-            }
-          }
-        } catch (error) {
-          console.error(
-            `Error parsing red_lineAr for seller ${seller.id}:`,
-            error,
+        const arResult = processRedLineData(seller.red_lineAr);
+        if (arResult.needsCleanup) {
+          console.log(
+            `🔍 Seller ${seller.id} (${seller.name}) Arabic: status=${arResult.status}, marking for cleanup`,
           );
           updateObj.red_lineAr = null;
         }
@@ -103,10 +69,11 @@ export async function cleanupExpiredData() {
     }
 
     // 2️⃣ Clean up expired offers (DELETE them from database)
+    // Use the UTC timestamp for database comparison
     const expiredOffers = await SellerOffer.destroy({
       where: {
         end_date: {
-          [Op.lt]: currentDate,
+          [Op.lt]: new Date(currentTimeUTC),
         },
       },
     });
@@ -117,7 +84,7 @@ export async function cleanupExpiredData() {
 
     return {
       redLinesRemoved,
-      offersDeactivated: expiredOffers[0],
+      offersDeactivated: expiredOffers,
     };
   } catch (error) {
     console.error("❌ Error during cleanup:", error);

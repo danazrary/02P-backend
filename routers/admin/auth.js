@@ -6,6 +6,7 @@ import Admin from "../../database/admin.js";
 import AdminDevice from "../../database/adminDevice.js";
 import { getDeviceHash } from "../../utils/device.js";
 import { comparePassword } from "../../utils/helper.js";
+import { toUTC } from "../../utils/timezoneHandler.js";
 const router = Router();
 router.post("/login", adminLimiter, async (req, res) => {
   try {
@@ -61,7 +62,7 @@ router.post("/login", adminLimiter, async (req, res) => {
           device_hash: deviceHash,
           user_agent: req.headers["user-agent"],
           ip_address: req.ip,
-          last_used: new Date(),
+          last_used: toUTC(new Date()),  // ← Store as UTC
           trusted: 1,
         });
       } else {
@@ -75,13 +76,13 @@ router.post("/login", adminLimiter, async (req, res) => {
         });
       }
     } else {
-      // Update last used time
-      await trustedDevice.update({ last_used: new Date() });
+      // Update last used time (store as UTC)
+      await trustedDevice.update({ last_used: toUTC(new Date()) });
     } */
     //FIX ME - For now, we will skip device trust check to unblock admin login. We can re-enable it later after testing.
 
-    // Update last login
-    await admin.update({ last_login: new Date() });
+    // Update last login (store as UTC)
+    await admin.update({ last_login: toUTC(new Date()) });
 
     // Create JWT
     const token = jwt.sign(

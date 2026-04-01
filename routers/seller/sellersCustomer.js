@@ -7,6 +7,17 @@ import SellerOffer from "../../database/sellerOffer.js";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import { Op } from "sequelize";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
+import {
+  processRedLineData,
+  getRedLineStatus,
+  getCurrentTimeBaghdad,
+} from "../../utils/timezoneHandler.js";
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc.js";
+import timezone from "dayjs/plugin/timezone.js";
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 const router = Router();
 
 router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
@@ -42,9 +53,15 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         message: "Seller shop not found",
       });
     }
-
+   console.log(
+     seller.red_line,
+     "red_line",
+     seller.red_lineAr,
+     "seller",
+     seller,
+   );
     const sellerId = seller.id;
-    const currentDate = new Date();
+    const { utc: currentTimeUTC } = getCurrentTimeBaghdad();
 
     // 3️⃣ Get seller plan
     let sellerPlanRecord = await SellerPlan.findOne({
@@ -95,14 +112,14 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       });
     }
 
-    // Check if plan is trial_seller
+    // Check if plan is trial_seller (use Baghdad timezone)
     if (planName === "trial_seller" || sellerPlanRecord.plan_id === 9) {
-      const endDate = new Date(sellerPlanRecord.end_date);
-      const timeDiff = currentDate - endDate;
-      const daysDiff = timeDiff / (1000 * 60 * 60 * 24);
+      const { baghdadFull: currentBaghdad } = getCurrentTimeBaghdad();
+      const endDateBaghdad = dayjs(sellerPlanRecord.end_date).tz("Asia/Baghdad");
+      const daysDiff = currentBaghdad.diff(endDateBaghdad, "day");
 
       // If trial ended more than 1 day ago, shop is closed
-      if (endDate < currentDate && daysDiff > 1) {
+      if (currentBaghdad.isAfter(endDateBaghdad) && daysDiff > 1) {
         return res.status(200).json({
           success: true,
           error: false,
@@ -120,7 +137,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       }
     }
 
-    // Check paid plans - if expired more than 1 day, shop is closed
+    // Check paid plans - if expired more than 1 day, shop is closed (use Baghdad timezone)
     if (
       planName !== "free_seller" &&
       planName !== "Free" &&
@@ -128,11 +145,11 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       sellerPlanRecord.plan_id !== 1 &&
       sellerPlanRecord.plan_id !== 9
     ) {
-      const endDate = new Date(sellerPlanRecord.end_date);
-      const timeDiff = currentDate - endDate;
-      const daysDiff = timeDiff / (1000 * 60 * 60 * 24);
+      const { baghdadFull: currentBaghdad } = getCurrentTimeBaghdad();
+      const endDateBaghdad = dayjs(sellerPlanRecord.end_date).tz("Asia/Baghdad");
+      const daysDiff = currentBaghdad.diff(endDateBaghdad, "day");
 
-      if (endDate < currentDate && daysDiff > 1) {
+      if (currentBaghdad.isAfter(endDateBaghdad) && daysDiff > 1) {
         return res.status(200).json({
           success: true,
           error: false,
@@ -175,19 +192,23 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       ],
     });
 
-    // Filter and delete expired or not-yet-started offers
+    // Filter and delete expired or not-yet-started offers (use Baghdad timezone)
+    const { baghdadFull: currentBaghdad } = getCurrentTimeBaghdad();
     const offers = [];
     for (const offer of allOffers) {
-      const startDate = new Date(offer.start_date);
-      const endDate = new Date(offer.end_date);
+      const startDateBaghdad = dayjs(offer.start_date).tz("Asia/Baghdad");
+      const endDateBaghdad = dayjs(offer.end_date).tz("Asia/Baghdad");
 
-      if (endDate < currentDate) {
+      if (currentBaghdad.isAfter(endDateBaghdad)) {
         // Delete expired offer from database
         await SellerOffer.destroy({
           where: { id: offer.id },
         });
         console.log(`🗑️ Deleted expired offer ${offer.id}`);
-      } else if (startDate <= currentDate && endDate >= currentDate) {
+      } else if (
+        (currentBaghdad.isSame(startDateBaghdad) || currentBaghdad.isAfter(startDateBaghdad)) &&
+        (currentBaghdad.isSame(endDateBaghdad) || currentBaghdad.isBefore(endDateBaghdad))
+      ) {
         // Only show offers that have started and haven't ended
         offers.push(offer);
       }
@@ -229,105 +250,52 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     let products = await checkAndCleanProductExpiration(rawProducts);
     const hasMoreProducts = productOffset + productLimit < totalProducts;
 
-    // Check red_line (Kurdish) and red_lineAr (Arabic) expiration and start time
-    let redLine = null;
+    // ────────────────────────────────────────────────────────────
+    // Check red_line (Kurdish) and red_lineAr (Arabic) - Baghdad TZ
+    // ────────────────────────────────────────────────────────────
     let redLineKu = null;
     let redLineAr = null;
     let needsCleanup = { ku: false, ar: false };
 
     // Process Kurdish red_line
     if (seller.red_line) {
-      try {
-        const redLineData =
-          typeof seller.red_line === "string"
-            ? JSON.parse(seller.red_line)
-            : seller.red_line;
+      const kuResult = processRedLineData(seller.red_line);
+      redLineKu = kuResult.data;
+      needsCleanup.ku = kuResult.needsCleanup;
 
-        if (
-          redLineData &&
-          typeof redLineData === "object" &&
-          redLineData.end_time &&
-          redLineData.start_time
-        ) {
-          const startTime = new Date(redLineData.start_time);
-          const endTime = new Date(redLineData.end_time);
-
-          if (endTime < currentDate) {
-            needsCleanup.ku = true;
-          } else if (startTime <= currentDate && endTime >= currentDate) {
-            redLineKu = redLineData;
-          }
-        } else {
-          needsCleanup.ku = true;
-        }
-      } catch (error) {
-        console.error(
-          "Error parsing red_line for seller",
-          sellerId,
-          ":",
-          error,
-        );
-        needsCleanup.ku = true;
+      if (kuResult.needsCleanup) {
+        console.log(`🗑️ Marked expired red_line (Kurdish) for seller ${sellerId}`);
       }
     }
 
     // Process Arabic red_lineAr
     if (seller.red_lineAr) {
-      try {
-        const redLineData =
-          typeof seller.red_lineAr === "string"
-            ? JSON.parse(seller.red_lineAr)
-            : seller.red_lineAr;
+      const arResult = processRedLineData(seller.red_lineAr);
+      redLineAr = arResult.data;
+      needsCleanup.ar = arResult.needsCleanup;
 
-        if (
-          redLineData &&
-          typeof redLineData === "object" &&
-          redLineData.end_time &&
-          redLineData.start_time
-        ) {
-          const startTime = new Date(redLineData.start_time);
-          const endTime = new Date(redLineData.end_time);
-
-          if (endTime < currentDate) {
-            needsCleanup.ar = true;
-          } else if (startTime <= currentDate && endTime >= currentDate) {
-            redLineAr = redLineData;
-          }
-        } else {
-          needsCleanup.ar = true;
-        }
-      } catch (error) {
-        console.error(
-          "Error parsing red_lineAr for seller",
-          sellerId,
-          ":",
-          error,
-        );
-        needsCleanup.ar = true;
+      if (arResult.needsCleanup) {
+        console.log(`🗑️ Marked expired red_lineAr (Arabic) for seller ${sellerId}`);
       }
     }
 
-    // Cleanup expired/invalid data
+    // Cleanup expired/invalid data from database
     if (needsCleanup.ku || needsCleanup.ar) {
       const updateObj = {};
       if (needsCleanup.ku) updateObj.red_line = null;
       if (needsCleanup.ar) updateObj.red_lineAr = null;
       await Seller.update(updateObj, { where: { id: sellerId } });
-      if (needsCleanup.ku)
-        console.log(
-          `🗑️ Removed expired red_line (Kurdish) for seller ${sellerId}`,
-        );
-      if (needsCleanup.ar)
-        console.log(
-          `🗑️ Removed expired red_lineAr (Arabic) for seller ${sellerId}`,
-        );
     }
 
-    // Build combined redLine response
+    // Build combined redLine response with status
+    let redLine = null;
     if (redLineKu || redLineAr) {
       let language = "both";
       if (redLineKu && !redLineAr) language = "kurdish";
       else if (!redLineKu && redLineAr) language = "arabic";
+
+      const kuStatus = redLineKu ? getRedLineStatus(redLineKu.start_time, redLineKu.end_time) : null;
+      const arStatus = redLineAr ? getRedLineStatus(redLineAr.start_time, redLineAr.end_time) : null;
 
       redLine = {
         textKu: redLineKu?.text || "",
@@ -335,6 +303,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         language,
         start_time: redLineKu?.start_time || redLineAr?.start_time,
         end_time: redLineKu?.end_time || redLineAr?.end_time,
+        status: kuStatus || arStatus, // "coming_soon" | "active" | "expired"
       };
     }
 

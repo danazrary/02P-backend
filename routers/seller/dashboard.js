@@ -9,6 +9,7 @@ import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
+import { processRedLineData, getRedLineStatus, toUTC } from "../../utils/timezoneHandler.js";
 
 const router = Router();
 
@@ -185,20 +186,16 @@ async function handleExpiredPlan(
 
 /**
  * Parse a red_line / red_lineAr field from the seller record.
- * Returns { data: object|null, needsCleanup: boolean }.
+ * Uses Baghdad timezone for comparisons.
+ * Returns { data: object|null, status: string|null, needsCleanup: boolean }.
  */
-function parseRedLine(raw, now) {
-  if (!raw) return { data: null, needsCleanup: false };
-
-  const parsed = safeJsonParse(raw);
-  if (!parsed || typeof parsed !== "object" || !parsed.end_time) {
-    return { data: null, needsCleanup: true };
-  }
-
-  const endTime = new Date(parsed.end_time);
-  if (endTime < now) return { data: null, needsCleanup: true };
-
-  return { data: parsed, needsCleanup: false };
+function parseRedLine(raw) {
+  const result = processRedLineData(raw);
+  return {
+    data: result.data,
+    status: result.status,
+    needsCleanup: result.needsCleanup,
+  };
 }
 
 // ─── Route ────────────────────────────────────────────────────────────────────
@@ -255,8 +252,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         newPlanData = {
           seller_id: id,
           plan_id: TRIAL_PLAN_ID,
-          start_date: now,
-          end_date: new Date(now.getTime() + trialDays * 86_400_000),
+          start_date: toUTC(now),
+          end_date: toUTC(new Date(now.getTime() + trialDays * 86_400_000)),
           is_trial: true,
           trial_ended: false,
           status: true,
@@ -265,8 +262,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         newPlanData = {
           seller_id: id,
           plan_id: FREE_PLAN_ID,
-          start_date: now,
-          end_date: FREE_PLAN_END_DATE,
+          start_date: toUTC(now),
+          end_date: toUTC(FREE_PLAN_END_DATE),
           is_trial: false,
           trial_ended: false,
           status: true,
@@ -386,9 +383,9 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
     const products = await checkAndCleanProductExpiration(rawProducts);
     const hasMoreProducts = productOffset + productLimit < totalProductsCount;
 
-    // ── 10. Red line processing ───────────────────────────────────────────────
-    const ku = parseRedLine(seller.red_line, now);
-    const ar = parseRedLine(seller.red_lineAr, now);
+    // ── 10. Red line processing (Baghdad timezone) ───────────────────────────
+    const ku = parseRedLine(seller.red_line);
+    const ar = parseRedLine(seller.red_lineAr);
 
     // WRITE: clean up expired/invalid red_line fields in one call (fire-and-forget)
     if (ku.needsCleanup || ar.needsCleanup) {
@@ -404,12 +401,16 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
     if (ku.data || ar.data) {
       const language =
         ku.data && ar.data ? "both" : ku.data ? "kurdish" : "arabic";
+      const kuStatus = ku.data ? getRedLineStatus(ku.data.start_time, ku.data.end_time) : null;
+      const arStatus = ar.data ? getRedLineStatus(ar.data.start_time, ar.data.end_time) : null;
+      
       redLine = {
         textKu: ku.data?.text ?? "",
         textAr: ar.data?.text ?? "",
         language,
         start_time: ku.data?.start_time ?? ar.data?.start_time,
         end_time: ku.data?.end_time ?? ar.data?.end_time,
+        status: kuStatus || arStatus, // "coming_soon" | "active" | "expired"
       };
     }
 
@@ -489,10 +490,13 @@ router.post("/activate-trial", jwtVerifySellerToken, async (req, res) => {
 
     // Activate trial plan (3 days)
     const trialDays = 3;
+    const trialStartDate = toUTC(new Date());
+    const trialEndDate = toUTC(new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000));
+    
     await sellerPlanRecord.update({
       plan_id: 9, // Trial plan ID
-      start_date: new Date(),
-      end_date: new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000),
+      start_date: trialStartDate,
+      end_date: trialEndDate,
       is_trial: true,
       status: true,
     });
@@ -505,7 +509,7 @@ router.post("/activate-trial", jwtVerifySellerToken, async (req, res) => {
       message: "Trial activated successfully",
       plan_id: 9,
       trial_days: trialDays,
-      end_date: new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000),
+      end_date: trialEndDate,
     });
   } catch (error) {
     console.error("Error activating trial:", error);

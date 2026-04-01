@@ -7,6 +7,7 @@ import Product from "../../database/products.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import Question from "../../database/questions.js";
 import { checkMe, adminAuth } from "../../middlewares/jwtVerify.js";
+import { toUTC } from "../../utils/timezoneHandler.js";
 const router = Router();
 
 router.get("/check-me", checkMe, async (req, res) => {
@@ -142,11 +143,13 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
         .json({ success: false, error: true, message: "Plan not found" });
     }
 
-    const startDate = new Date();
-    const endDate = new Date(startDate);
+    const startDate = toUTC(new Date());
+    const endDate = toUTC(new Date(startDate));
 
     if (plan.duration_days > 0) {
-      endDate.setDate(endDate.getDate() + plan.duration_days);
+      const parsedEndDate = new Date(endDate);
+      parsedEndDate.setDate(parsedEndDate.getDate() + plan.duration_days);
+      endDate = toUTC(parsedEndDate);
     }
 
     // 🔍 check if seller already has a plan record
@@ -157,7 +160,7 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
     let sellerPlan;
 
     if (existingPlan) {
-      // 🔁 UPDATE existing plan
+      // 🔁 UPDATE existing plan (store as UTC)
       sellerPlan = await existingPlan.update({
         plan_id,
         start_date: startDate,
@@ -166,7 +169,7 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
         status: true,
       });
     } else {
-      // ➕ CREATE new plan
+      // ➕ CREATE new plan (store as UTC)
       sellerPlan = await SellerPlan.create({
         seller_id,
         plan_id,
@@ -226,9 +229,8 @@ router.post("/activate-trial", adminAuth, async (req, res) => {
 
     // 3️⃣ If seller has no plan, create a free trial
     if (!sellerPlan) {
-      const startDate = new Date();
-      const endDate = new Date(startDate);
-      endDate.setDate(endDate.getDate() + 7); // trial 7 days
+      const startDate = toUTC(new Date());
+      const endDate = toUTC(new Date(new Date(startDate).getTime() + 7 * 24 * 60 * 60 * 1000));
 
       sellerPlan = await SellerPlan.create({
         seller_id,
@@ -339,9 +341,9 @@ router.post("/end-trial", adminAuth, async (req, res) => {
       });
     }
 
-    // Set end_date to now and mark trial as ended
+    // Set end_date to now (UTC) and mark trial as ended
     await sellerPlan.update({
-      end_date: new Date(),
+      end_date: toUTC(new Date()),
       is_trial: false,
       trial_ended: true,
       status: false,

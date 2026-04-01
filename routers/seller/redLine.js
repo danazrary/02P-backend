@@ -5,6 +5,12 @@ import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
+import {
+  parseDateToUTC,
+  getCurrentTimeBaghdad,
+  formatRedLineForStorage,
+  formatRedLineResponse,
+} from "../../utils/timezoneHandler.js";
 
 const router = Router();
 
@@ -87,9 +93,10 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // Check if plan has expired
-    const currentDate = new Date();
-    if (sellerPlan.end_date && new Date(sellerPlan.end_date) < currentDate) {
+    // Check if plan has expired (use Baghdad timezone)
+    const { dayjsObj: currentBaghdad } = getCurrentTimeBaghdad();
+    const endDateParsed = parseDateToUTC(sellerPlan.end_date);
+    if (endDateParsed && currentBaghdad.isAfter(endDateParsed.dayjsObj.tz("Asia/Baghdad"))) {
       return res.status(403).json({
         success: false,
         error: true,
@@ -98,54 +105,84 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
+    // Validate and parse start_time and end_time
+    const startParsed = parseDateToUTC(start_time);
+    const endParsed = parseDateToUTC(end_time);
+
+    if (!startParsed || !endParsed) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Invalid date format for start_time or end_time",
+      });
+    }
+
+    // Validate that start_time is before end_time
+    if (startParsed.dayjsObj.isAfter(endParsed.dayjsObj)) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "start_time must be before end_time",
+      });
+    }
+
     // Build update object based on language selection
+    // Store dates in UTC ISO format
     const updateData = {};
-    const responseData = {
-      language: lang,
-      start_time,
-      end_time,
-      created_at: new Date(),
-    };
+    const { utc: createdAt } = getCurrentTimeBaghdad();
 
     if (lang === "kurdish") {
       // Kurdish only - save to red_line, clear red_lineAr
       updateData.red_line = {
         text: textKu.trim(),
-        start_time,
-        end_time,
-        created_at: new Date(),
+        start_time: startParsed.utc,
+        end_time: endParsed.utc,
+        created_at: createdAt,
       };
       updateData.red_lineAr = null;
-      responseData.textKu = textKu.trim();
     } else if (lang === "arabic") {
       // Arabic only - save to red_lineAr, clear red_line
       updateData.red_lineAr = {
         text: textAr.trim(),
-        start_time,
-        end_time,
-        created_at: new Date(),
+        start_time: startParsed.utc,
+        end_time: endParsed.utc,
+        created_at: createdAt,
       };
       updateData.red_line = null;
-      responseData.textAr = textAr.trim();
     } else {
       // Both - save Kurdish to red_line, Arabic to red_lineAr
       updateData.red_line = {
         text: textKu.trim(),
-        start_time,
-        end_time,
-        created_at: new Date(),
+        start_time: startParsed.utc,
+        end_time: endParsed.utc,
+        created_at: createdAt,
       };
       updateData.red_lineAr = {
         text: textAr.trim(),
-        start_time,
-        end_time,
-        created_at: new Date(),
+        start_time: startParsed.utc,
+        end_time: endParsed.utc,
+        created_at: createdAt,
       };
-      responseData.textKu = textKu.trim();
-      responseData.textAr = textAr.trim();
     }
 
     await seller.update(updateData);
+
+    // Build response with formatted dates
+    const responseData = {
+      language: lang,
+      start_time_utc: startParsed.utc,
+      start_time_display: startParsed.baghdad,
+      end_time_utc: endParsed.utc,
+      end_time_display: endParsed.baghdad,
+      created_at: createdAt,
+    };
+
+    if (lang === "kurdish" || lang === "both") {
+      responseData.textKu = textKu.trim();
+    }
+    if (lang === "arabic" || lang === "both") {
+      responseData.textAr = textAr.trim();
+    }
 
     return res.status(200).json({
       success: true,
@@ -154,7 +191,7 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       data: responseData,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error adding red line:", error);
     return res.status(500).json({
       success: false,
       error: true,
@@ -191,7 +228,7 @@ router.delete("/delete-redline", jwtVerifySellerToken, async (req, res) => {
       logout: false,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error deleting red line:", error);
     return res.status(500).json({
       success: false,
       error: true,

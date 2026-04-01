@@ -9,6 +9,7 @@ import {
   getImageUrlPath,
   deleteImage,
 } from "../../utils/uploadHandler.js";
+import { toUTC } from "../../utils/timezoneHandler.js";
 
 const router = express.Router();
 
@@ -101,6 +102,10 @@ router.post(
 
       const isRealPricePost = hasRealPrice === "true" || hasRealPrice === true;
 
+      // ⚠️ IMPORTANT: Convert discount dates to UTC before storing in database
+      const utcDiscountStartDate = toUTC(discountStartDate);
+      const utcDiscountEndDate = toUTC(discountEndDate);
+
       const product = await Product.create({
         seller_id: id,
         language,
@@ -116,8 +121,8 @@ router.post(
         hasDiscount: hasDiscount === "true",
         discount_percent: discount_percent || null,
         discountType: discountType || null,
-        discountStartDate: discountStartDate || null,
-        discountEndDate: discountEndDate || null,
+        discountStartDate: utcDiscountStartDate || null,
+        discountEndDate: utcDiscountEndDate || null,
         variantPrices: variantPrices
           ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
           : [],
@@ -211,6 +216,10 @@ router.put(
 
       const isRealPrice = hasRealPrice === "true" || hasRealPrice === true;
 
+      // ⚠️ IMPORTANT: Convert discount dates to UTC before storing in database
+      const utcDiscountStartDate = toUTC(discountStartDate);
+      const utcDiscountEndDate = toUTC(discountEndDate);
+
       // Parse and filter out empty variant/custom rows
       const parsedVariantPrices = variantPrices
         ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
@@ -238,9 +247,9 @@ router.put(
         discount_percent: hasDiscount ? discount_percent : null,
         discountType: hasDiscount ? discountType : null,
         discountStartDate:
-          hasDiscount && discountType === "timer" ? discountStartDate : null,
+          hasDiscount && discountType === "timer" ? utcDiscountStartDate : null,
         discountEndDate:
-          hasDiscount && discountType === "timer" ? discountEndDate : null,
+          hasDiscount && discountType === "timer" ? utcDiscountEndDate : null,
         youtubeLinks: youtubeLinks ? JSON.parse(youtubeLinks) : [],
         variantPrices: parsedVariantPrices,
         variantPricesAr: parsedVariantPricesAr,
@@ -348,11 +357,20 @@ router.get("/products/shop/:shopName", async (req, res) => {
       offset,
     });
 
+    // Filter out products that have variantPrices or variantPricesAr but no realPrice
+    const filteredProducts = products.filter((p) => {
+      const hasVariants =
+        (p.variantPrices && p.variantPrices.length > 0) ||
+        (p.variantPricesAr && p.variantPricesAr.length > 0);
+      if (hasVariants && !p.realPrice) return false;
+      return true;
+    });
+
     res.status(200).json({
       success: true,
       error: false,
-      data: products,
-      total: count,
+      data: filteredProducts,
+      total: filteredProducts.length,
       hasMore: offset + limit < count,
       seller,
     });

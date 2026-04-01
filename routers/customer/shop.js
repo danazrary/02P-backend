@@ -7,6 +7,7 @@ import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
+import { processRedLineData, getRedLineStatus, toUTC } from "../../utils/timezoneHandler.js";
 import { Op } from "sequelize";
 const router = Router();
 
@@ -84,8 +85,8 @@ router.get("/:shopName", async (req, res) => {
       sellerPlanRecord = await SellerPlan.create({
         seller_id: sellerId,
         plan_id: 1,
-        start_date: new Date(),
-        end_date: new Date("2099-12-31"),
+        start_date: toUTC(new Date()),
+        end_date: toUTC(new Date("2099-12-31")),
         is_trial: false,
         trial_ended: false,
         status: true,
@@ -140,30 +141,29 @@ router.get("/:shopName", async (req, res) => {
     // Check and clean expired discounts and free delivery
     products = await checkAndCleanProductExpiration(products);
 
+    // ────────────────────────────────────────────────────────────
     // Build combined redLine from both Kurdish (red_line) and Arabic (red_lineAr)
+    // Use Baghdad timezone for status determination
+    // ────────────────────────────────────────────────────────────
     let redLine = null;
-    const redLineKu = seller.red_line
-      ? typeof seller.red_line === "string"
-        ? JSON.parse(seller.red_line)
-        : seller.red_line
-      : null;
-    const redLineAr = seller.red_lineAr
-      ? typeof seller.red_lineAr === "string"
-        ? JSON.parse(seller.red_lineAr)
-        : seller.red_lineAr
-      : null;
+    const kuResult = processRedLineData(seller.red_line);
+    const arResult = processRedLineData(seller.red_lineAr);
 
-    if (redLineKu || redLineAr) {
+    if (kuResult.data || arResult.data) {
       let language = "both";
-      if (redLineKu && !redLineAr) language = "kurdish";
-      else if (!redLineKu && redLineAr) language = "arabic";
+      if (kuResult.data && !arResult.data) language = "kurdish";
+      else if (!kuResult.data && arResult.data) language = "arabic";
+
+      const kuStatus = kuResult.data ? getRedLineStatus(kuResult.data.start_time, kuResult.data.end_time) : null;
+      const arStatus = arResult.data ? getRedLineStatus(arResult.data.start_time, arResult.data.end_time) : null;
 
       redLine = {
-        textKu: redLineKu?.text || "",
-        textAr: redLineAr?.text || "",
+        textKu: kuResult.data?.text || "",
+        textAr: arResult.data?.text || "",
         language,
-        start_time: redLineKu?.start_time || redLineAr?.start_time,
-        end_time: redLineKu?.end_time || redLineAr?.end_time,
+        start_time: kuResult.data?.start_time || arResult.data?.start_time,
+        end_time: kuResult.data?.end_time || arResult.data?.end_time,
+        status: kuStatus || arStatus, // "coming_soon" | "active" | "expired"
       };
     }
 

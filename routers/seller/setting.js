@@ -15,6 +15,7 @@ import { deleteFile } from "../../utils/deleteFile.js";
 import { uploadSellerImage } from "../../middlewares/uploadSellerImage.js";
 import { getImageUrlPath } from "../../utils/uploadHandler.js";
 import { isReservedShopName } from "../../utils/reservedShopNames.js";
+import { toUTC } from "../../utils/timezoneHandler.js";
 
 const router = Router();
 
@@ -205,7 +206,7 @@ router.post(
         shop_image: imageUrl,
         brand_color: brandColor || null,
         seller_number: sellerNumber || null,
-        terms_accepted_at: new Date(),
+        terms_accepted_at: toUTC(new Date()),
         // Only update email if it was null — never overwrite an existing email
         // Only update email if it was missing — never overwrite a real email
         ...(emailIsMissing(seller.email) && email ? { email } : {}),

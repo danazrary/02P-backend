@@ -3,6 +3,7 @@ import Product from "../../database/products.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { Op } from "sequelize";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
+import { toUTC } from "../../utils/timezoneHandler.js";
 
 const router = Router();
 
@@ -96,20 +97,24 @@ router.put("/products-discount/add", jwtVerifySellerToken, async (req, res) => {
       whereClause.id = { [Op.in]: productIds };
     }
 
+    // ⚠️ IMPORTANT: Convert dates to UTC before storing in database
+    const utcStartDate = toUTC(startDate);
+    const utcEndDate = toUTC(endDate);
+
     let updateData = {};
 
     if (actionType === "discount" || actionType === "both") {
       updateData.hasDiscount = true;
       updateData.discount_percent = discount_percent;
       updateData.discountType = discountType || "timer";
-      updateData.discountStartDate = startDate;
-      updateData.discountEndDate = endDate;
+      updateData.discountStartDate = utcStartDate;
+      updateData.discountEndDate = utcEndDate;
     }
 
     if (actionType === "free_delivery" || actionType === "both") {
       updateData.free_delivery = true;
-      updateData.freeDeliveryStartDate = startDate;
-      updateData.freeDeliveryEndDate = endDate;
+      updateData.freeDeliveryStartDate = utcStartDate;
+      updateData.freeDeliveryEndDate = utcEndDate;
     }
 
     const [updatedCount] = await Product.update(updateData, {

@@ -9,6 +9,7 @@ import {
   getImageUrlPath,
   deleteImage,
 } from "../../utils/uploadHandler.js";
+import { toUTC } from "../../utils/timezoneHandler.js";
 
 const router = express.Router();
 
@@ -97,6 +98,10 @@ router.post(
         ? getImageUrlPath("offers", req.file.filename)
         : null;
 
+      // ⚠️ IMPORTANT: Convert dates to UTC before storing in database
+      const utcStartDate = toUTC(start_date);
+      const utcEndDate = toUTC(end_date);
+
       const offer = await SellerOffer.create({
         seller_id: id,
         type_offer,
@@ -106,8 +111,8 @@ router.post(
         descriptionAr,
         descriptionKu,
         cover_image,
-        start_date,
-        end_date,
+        start_date: utcStartDate,
+        end_date: utcEndDate,
         discount_or_free_delivery: discount_or_free_delivery || null,
         discount_price_type:
           fixed_or_percentage === "percentage"
@@ -192,6 +197,10 @@ router.put(
         ? getImageUrlPath("offers", req.file.filename)
         : offer.cover_image;
 
+      // ⚠️ IMPORTANT: Convert dates to UTC before storing in database
+      const utcStartDate = toUTC(start_date);
+      const utcEndDate = toUTC(end_date);
+
       await offer.update({
         type_offer,
         language,
@@ -200,8 +209,8 @@ router.put(
         descriptionAr,
         descriptionKu,
         cover_image,
-        start_date,
-        end_date,
+        start_date: utcStartDate,
+        end_date: utcEndDate,
         discount_or_free_delivery: discount_or_free_delivery || null,
         discount_price_type: discount_price_type || null,
         discount_price: discount_price || null,
