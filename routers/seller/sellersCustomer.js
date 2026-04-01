@@ -53,13 +53,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         message: "Seller shop not found",
       });
     }
-    console.log(
-      seller.red_line,
-      "red_line",
-      seller.red_lineAr,
-      "seller",
-      seller,
-    );
+   
     const sellerId = seller.id;
     const { utc: currentTimeUTC } = getCurrentTimeBaghdad();
 
@@ -208,7 +202,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         await SellerOffer.destroy({
           where: { id: offer.id },
         });
-        console.log(`🗑️ Deleted expired offer ${offer.id}`);
+     
       } else if (
         (currentBaghdad.isSame(startDateBaghdad) ||
           currentBaghdad.isAfter(startDateBaghdad)) &&
