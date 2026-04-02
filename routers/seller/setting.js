@@ -239,12 +239,14 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
         .status(404)
         .json({ error: true, success: false, message: "Seller not found" });
     }
+    console.log("sss", seller);
+
     return res.status(200).json({
       success: true,
       error: false,
       email: seller.email || "",
       sellerName: seller.name,
-      sellerNumber: seller.seller_number || "",
+      sellerNumber: seller.phone || "",
       shopName: seller.shop_name,
       shopImage: seller.shop_image,
       phone: seller.phone,

@@ -22,7 +22,23 @@ const Seller = sequelize.define(
     email: {
       type: DataTypes.STRING,
       unique: true,
-      allowNull: true, // must have email
+      allowNull: true, // allow null for OAuth users until added
+    },
+    password_hash: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    email_verified: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    verification_code: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    code_expires: {
+      type: DataTypes.DATE,
+      allowNull: true,
     },
     needsManualEmail: {
       type: DataTypes.BOOLEAN,
@@ -74,6 +90,11 @@ const Seller = sequelize.define(
       type: DataTypes.DATE,
       allowNull: true,
       defaultValue: null, // null means terms not yet accepted
+    },
+    deletion_requested_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      defaultValue: null, // null means no deletion requested, timestamp means account scheduled for deletion after 30 days
     },
   },
   {

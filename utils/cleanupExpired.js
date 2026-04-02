@@ -5,6 +5,7 @@ import {
   processRedLineData,
   getCurrentTimeBaghdad,
 } from "./timezoneHandler.js";
+import { permanentlyDeleteSellerAccount } from "../routers/seller/deleteAccount.js";
 
 /**
  * Clean up expired red lines and offers from the database
@@ -12,11 +13,46 @@ import {
  */
 export async function cleanupExpiredData() {
   try {
-    const { utc: currentTimeUTC, baghdad: currentTimeBaghdad } =
-      getCurrentTimeBaghdad();
+    const {
+      utc: currentTimeUTC,
+      baghdad: currentTimeBaghdad,
+      baghdadFull,
+    } = getCurrentTimeBaghdad();
     console.log("🧹 Starting cleanup of expired data...");
     console.log("📅 Current UTC:", currentTimeUTC);
     console.log("📅 Current Baghdad:", currentTimeBaghdad);
+
+    // 0️⃣ Clean up accounts scheduled for deletion (30 days passed)
+    // Use Baghdad timezone for consistent 30-day calculation
+    const thirtyDaysAgoBaghdad = baghdadFull.subtract(30, "day").toDate();
+    const sellersToDelete = await Seller.findAll({
+      where: {
+        deletion_requested_at: {
+          [Op.lte]: thirtyDaysAgoBaghdad, // deletion was requested 30+ days ago (Baghdad time)
+        },
+      },
+      attributes: ["id", "name", "email"],
+    });
+
+    console.log(
+      `🗑️ Found ${sellersToDelete.length} accounts scheduled for permanent deletion`,
+    );
+
+    let accountsDeleted = 0;
+    for (const seller of sellersToDelete) {
+      console.log(
+        `🗑️ Deleting seller account: ${seller.id} (${seller.email || seller.name})`,
+      );
+      const result = await permanentlyDeleteSellerAccount(seller.id);
+      if (result.success) {
+        accountsDeleted++;
+        console.log(`✅ Deleted seller ${seller.id}`);
+      } else {
+        console.error(
+          `❌ Failed to delete seller ${seller.id}: ${result.message}`,
+        );
+      }
+    }
 
     // 1️⃣ Clean up expired red lines (both Kurdish and Arabic)
     const sellers = await Seller.findAll({
@@ -80,10 +116,12 @@ export async function cleanupExpiredData() {
     });
 
     console.log(`✅ Cleanup complete:`);
+    console.log(`   - Seller accounts deleted: ${accountsDeleted}`);
     console.log(`   - Red lines removed: ${redLinesRemoved}`);
     console.log(`   - Offers deleted: ${expiredOffers}`);
 
     return {
+      accountsDeleted,
       redLinesRemoved,
       offersDeactivated: expiredOffers,
     };

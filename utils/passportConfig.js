@@ -41,11 +41,13 @@ passport.use(
     {
       clientID: process.env.FB_CLIENT_ID,
       clientSecret: process.env.FB_CLIENT_SECRET,
-      callbackURL: `${process.env.BACKEND_URL || "http://localhost:3001"}/api/seller/auth/facebook/callback`,
+      callbackURL: `${process.env.BACKEND_URL}/api/seller/auth/facebook/callback`,
       profileFields: ["id", "displayName"], // removed "emails"
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
+        console.log("ssss", process.env.BACKEND_URL);
+        
         const facebookId = profile.id;
         const name = profile.displayName;
 

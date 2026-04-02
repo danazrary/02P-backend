@@ -4,11 +4,66 @@ import jwt from "jsonwebtoken";
 import "../../utils/passportConfig.js";
 import Seller from "../../database/seller.js";
 import crypto from "crypto";
+import bcrypt from "bcrypt";
+import { Resend } from "resend";
 import { sellerToken, shortSellerToken } from "../../utils/addingToken.js";
 import { checkMe } from "../../middlewares/jwtVerify.js";
 import { pingGoogleSitemap } from "../sitemap.js";
 import axios from "axios";
 const router = express.Router();
+
+const resendClient = new Resend(process.env.RESEND_API_KEY || "");
+
+function generate6DigitCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function getPasswordValidationErrors(password) {
+  const errors = [];
+  if (password.length < 8)
+    errors.push("Password must be at least 8 characters");
+  if (!/[A-Z]/.test(password))
+    errors.push("Password must include an uppercase letter");
+  if (!/[a-z]/.test(password))
+    errors.push("Password must include a lowercase letter");
+  if (!/[0-9]/.test(password)) errors.push("Password must include a number");
+  if (!/[!@#$%^&*(),.?\"{}|<>]/.test(password))
+    errors.push("Password must include a special character");
+  return errors;
+}
+
+function getEmailBodyTemplate(code, language) {
+  const codeText = String(code);
+  if (language === "ar") {
+    return {
+      subject: "رمز التحقق الخاص بك",
+      html: `<div style="font-family: Arial, sans-serif;line-height:1.5;color:#1a1a1a;"><h2 style="color:#5D5FEF;">رمز التحقق</h2><p>رمز التحقق الخاص بك هو:</p><p style="font-size:2rem;font-weight:bold;color:#5D5FEF;">${codeText}</p><p>سيتم انتهاء هذا الرمز خلال 10 دقائق.</p></div>`,
+    };
+  }
+
+  if (language === "ku") {
+    return {
+      subject: "کۆدی پشتڕاستکردنەوە",
+      html: `<div style="font-family: Arial, sans-serif;line-height:1.5;color:#1a1a1a;"><h2 style="color:#5D5FEF;">کۆدی پشتڕاستکردنەوە</h2><p>کۆدی پشتڕاستکردنەوەی تۆ ئەمەیە:</p><p style="font-size:2rem;font-weight:bold;color:#5D5FEF;">${codeText}</p><p>ئەم کۆدە دەبێ تەنها 10 خولەک بەکارببرێ.</p></div>`,
+    };
+  }
+
+  return {
+    subject: "Your verification code",
+    html: `<div style="font-family: Arial, sans-serif;line-height:1.5;color:#1a1a1a;"><h2 style="color:#5D5FEF;">Verification Code</h2><p>Your verification code is:</p><p style="font-size:2rem;font-weight:bold;color:#5D5FEF;">${codeText}</p><p>This code expires in 10 minutes.</p></div>`,
+  };
+}
+
+async function sendVerificationEmail(email, code, language = "en") {
+  const { subject, html } = getEmailBodyTemplate(code, language);
+  await resendClient.emails.send({
+    from: "Dwkanlink <no-reply@dwkanlink.com>",
+    to: [email],
+    subject,
+    html,
+  });
+}
+
 function generateCodeVerifier() {
   return crypto.randomBytes(32).toString("base64url");
 }
@@ -19,6 +74,323 @@ function generateCodeChallenge(verifier) {
 
 // Temporary in-memory store (use Redis in production)
 const pkceStore = {};
+
+// --- 1) REGISTER ---
+router.post("/register", async (req, res) => {
+  try {
+    const { email, password, confirmPassword, lang = "en" } = req.body;
+
+    if (!email || !password || !confirmPassword) {
+      return res
+        .status(400)
+        .json({ success: false, message: "All fields are required" });
+    }
+
+    if (password !== confirmPassword) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Passwords do not match" });
+    }
+
+    const passwordErrors = getPasswordValidationErrors(password);
+    if (passwordErrors.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: passwordErrors.join(", ") });
+    }
+
+    const existing = await Seller.findOne({ where: { email } });
+    if (existing) {
+      return res
+        .status(409)
+        .json({ success: false, message: "Email already registered" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const code = generate6DigitCode();
+    const expires = new Date(Date.now() + 10 * 60 * 1000);
+
+    const seller = await Seller.create({
+      email,
+      password_hash: hashedPassword,
+      email_verified: false,
+      verification_code: code,
+      code_expires: expires,
+      name: email.split("@")[0],
+      shop_name: null,
+    });
+
+    await sendVerificationEmail(email, code, lang);
+
+    return res.json({
+      success: true,
+      message: "Verification code sent",
+      data: { email: seller.email },
+    });
+  } catch (err) {
+    console.error("/register error", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// --- 2) LOGIN ---
+router.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email and password are required" });
+    }
+
+    const seller = await Seller.findOne({ where: { email } });
+    if (!seller || !seller.password_hash) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid email or password" });
+    }
+
+    const match = await bcrypt.compare(password, seller.password_hash);
+    if (!match) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid email or password" });
+    }
+
+    if (!seller.email_verified) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Email not verified" });
+    }
+
+    // Cancel any pending deletion if seller logs back in
+    if (seller.deletion_requested_at) {
+      await seller.update({ deletion_requested_at: null });
+    }
+
+    const token = jwt.sign(
+      { id: seller.id, email: seller.email, isSeller: true },
+      process.env.JWT_SECRET,
+      { expiresIn: "24h" },
+    );
+
+    sellerToken(seller.id, seller.email, seller.shop_name, res);
+
+    return res.json({ success: true, token, message: "Login successful" });
+  } catch (err) {
+    console.error("/login error", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// --- 3) FORGOT PASSWORD ---
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const { email, lang = "en" } = req.body;
+
+    if (!email) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email required" });
+    }
+
+    const seller = await Seller.findOne({ where: { email } });
+    if (!seller) {
+      return res
+        .status(200)
+        .json({ success: true, message: "If account exists, code was sent" });
+    }
+
+    const code = generate6DigitCode();
+    const expires = new Date(Date.now() + 10 * 60 * 1000);
+
+    await seller.update({ verification_code: code, code_expires: expires });
+    await sendVerificationEmail(email, code, lang);
+
+    return res.json({ success: true, message: "Verification code sent" });
+  } catch (err) {
+    console.error("/forgot-password error", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// --- 4) VERIFY CODE ---
+router.post("/verify-code", async (req, res) => {
+  try {
+    const { email, code, purpose = "register" } = req.body;
+
+    if (!email || !code) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email and code required" });
+    }
+
+    const seller = await Seller.findOne({ where: { email } });
+    if (!seller || !seller.verification_code || !seller.code_expires) {
+      return res.status(400).json({ success: false, message: "Invalid code" });
+    }
+
+    if (seller.verification_code !== String(code).trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid verification code" });
+    }
+
+    if (new Date() > new Date(seller.code_expires)) {
+      return res.status(400).json({ success: false, message: "Code expired" });
+    }
+
+    const updates = { verification_code: null, code_expires: null };
+
+    if (purpose === "register") {
+      updates.email_verified = true;
+      // Cancel any pending deletion if seller verifies email
+      if (seller.deletion_requested_at) {
+        updates.deletion_requested_at = null;
+      }
+    }
+
+    await seller.update(updates);
+
+    if (purpose === "register") {
+      const token = jwt.sign(
+        { id: seller.id, email: seller.email, isSeller: true },
+        process.env.JWT_SECRET,
+        { expiresIn: "24h" },
+      );
+      sellerToken(seller.id, seller.email, seller.shop_name, res);
+      return res.json({ success: true, message: "Email verified", token });
+    }
+
+    if (purpose === "forgot-password") {
+      // secure token for password reset 
+      const resetToken = jwt.sign(
+        { id: seller.id, email: seller.email, purpose: "reset-password" },
+        process.env.JWT_SECRET,
+        { expiresIn: "15m" },
+      );
+      return res.json({ success: true, message: "Code verified", resetToken });
+    }
+
+    return res.json({ success: true, message: "Code verified" });
+  } catch (err) {
+    console.error("/verify-code error", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// --- 5) RESET PASSWORD ---
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { email, code, newPassword, confirmPassword } = req.body;
+
+    if (!email || !code || !newPassword || !confirmPassword) {
+      return res
+        .status(400)
+        .json({ success: false, message: "All fields are required" });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Passwords do not match" });
+    }
+
+    const passwordErrors = getPasswordValidationErrors(newPassword);
+    if (passwordErrors.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: passwordErrors.join(", ") });
+    }
+
+    const seller = await Seller.findOne({ where: { email } });
+    if (!seller || !seller.verification_code || !seller.code_expires) {
+      return res.status(400).json({ success: false, message: "Invalid code" });
+    }
+
+    if (seller.verification_code !== String(code).trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid verification code" });
+    }
+
+    if (new Date() > new Date(seller.code_expires)) {
+      return res.status(400).json({ success: false, message: "Code expired" });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await seller.update({
+      password_hash: hashedPassword,
+      verification_code: null,
+      code_expires: null,
+      email_verified: true,
+    });
+
+    return res.json({ success: true, message: "Password reset successful" });
+  } catch (err) {
+    console.error("/reset-password error", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// --- 6) CHANGE PASSWORD (settings) ---
+router.post("/change-password", checkMe, async (req, res) => {
+  try {
+    const { oldPassword, newPassword, confirmPassword } = req.body;
+
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      return res
+        .status(400)
+        .json({ success: false, message: "All fields are required" });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Passwords do not match" });
+    }
+
+    const passwordErrors = getPasswordValidationErrors(newPassword);
+    if (passwordErrors.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: passwordErrors.join(", ") });
+    }
+
+    const sellerId = req.user?.data?.id;
+    if (!sellerId) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Not authenticated" });
+    }
+
+    const seller = await Seller.findByPk(sellerId);
+    if (!seller) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Seller not found" });
+    }
+
+    const match = await bcrypt.compare(oldPassword, seller.password_hash || "");
+    if (!match) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Old password is incorrect" });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await seller.update({ password_hash: hashedPassword });
+
+    return res.json({
+      success: true,
+      message: "Password changed successfully",
+    });
+  } catch (err) {
+    console.error("/change-password error", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 router.get("/check-me", checkMe, async (req, res) => {
   const { user } = req;
@@ -329,6 +701,11 @@ router.post("/successLogin", async (req, res) => {
 
     if (!seller) {
       return res.status(404).json({ error: "Seller not found" });
+    }
+
+    // Cancel any pending deletion if seller logs back in via OAuth
+    if (seller.deletion_requested_at) {
+      await seller.update({ deletion_requested_at: null });
     }
 
     // 5) create FINAL token → saved as httpOnly cookie (s_t)
