@@ -121,34 +121,13 @@ router.get("/sitemap.xml", async (req, res) => {
  *
  * @returns {Promise<void>}
  */
+/**
+ * Google deprecated the /ping?sitemap= endpoint (returns 404 since mid-2023).
+ * Sitemap discovery now relies on Google Search Console and regular crawling.
+ * This function is kept as a no-op so existing call sites don't break.
+ */
 export async function pingGoogleSitemap() {
-  const sitemapUrl = "https://dwkanlink.com/sitemap.xml";
-  const pingUrl = `https://www.google.com/ping?sitemap=${encodeURIComponent(
-    sitemapUrl,
-  )}`;
-
-  try {
-    const response = await fetch(pingUrl, {
-      method: "GET",
-      timeout: 5000,
-    });
-
-    if (response.ok) {
-      console.log(
-        `✅ Successfully pinged Google Sitemap. Status: ${response.status}`,
-      );
-    } else {
-      console.warn(
-        `⚠️ Warning: Google returned status ${response.status}. Sitemap might take longer to update.`,
-      );
-    }
-  } catch (error) {
-    console.warn(
-      `⚠️ Warning: Failed to ping Google Sitemap. This is not critical.`,
-      error.message,
-    );
-    // Don't throw - just log warning since it's not critical to the main operation
-  }
+  // No-op: Google ping endpoint is deprecated
 }
 
 export default router;

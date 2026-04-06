@@ -24,6 +24,7 @@ import { apiLimiter, corsOptions } from "./utils/helper.js";
 import { adminToken, adminRefreshToken } from "./utils/addingToken.js";
 import { sequelize } from "./database/index.js";
 import { scheduleCleanup } from "./utils/cleanupExpired.js";
+import seoPrerender from "./middlewares/seoPrerender.js";
 
 // Load environment variables based on mode
 // Check if --env=https argument is passed
@@ -90,6 +91,10 @@ if (typeof sanitizeHtmlMiddleware === "function")
   app.use(sanitizeHtmlMiddleware);
 app.use(cookieParser(process.env.COOKIE_SECRET_PARSER || ""));
 app.use(csrfMiddleware);
+
+// --- SEO PRE-RENDER FOR BOTS ---
+// Must be BEFORE routers so crawlers get HTML with meta tags
+app.use(seoPrerender);
 
 // --- ROUTERS ---
 app.use("/api", allRouters);
