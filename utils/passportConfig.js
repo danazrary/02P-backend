@@ -24,6 +24,7 @@ passport.use(
             googleId,
             name,
             email,
+            password_hash: null,
           });
         }
 
@@ -58,6 +59,7 @@ passport.use(
             facebookId,
             name,
             email: null,
+            password_hash: null,
             needsManualEmail: true,
           });
         }

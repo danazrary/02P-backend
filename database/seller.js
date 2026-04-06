@@ -27,6 +27,7 @@ const Seller = sequelize.define(
     password_hash: {
       type: DataTypes.STRING,
       allowNull: true,
+      defaultValue: null,
     },
     email_verified: {
       type: DataTypes.BOOLEAN,

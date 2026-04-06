@@ -658,6 +658,7 @@ router.get("/tiktok/callback", async (req, res) => {
         tiktokId: tiktokUser.open_id,
         name: tiktokUser.display_name || "TikTok User",
         email: null,
+        password_hash: null,
         needsManualEmail: true,
       });
     }
