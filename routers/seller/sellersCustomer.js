@@ -53,7 +53,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         message: "Seller shop not found",
       });
     }
-   
+
     const sellerId = seller.id;
     const { utc: currentTimeUTC } = getCurrentTimeBaghdad();
 
@@ -202,7 +202,6 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         await SellerOffer.destroy({
           where: { id: offer.id },
         });
-     
       } else if (
         (currentBaghdad.isSame(startDateBaghdad) ||
           currentBaghdad.isAfter(startDateBaghdad)) &&
@@ -240,6 +239,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
           "free_delivery",
           "variantPrices",
           "variantPricesAr",
+          "category",
         ],
         limit: productLimit,
         offset: productOffset,
@@ -326,9 +326,12 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         name: seller.name,
         shop_name: seller.shop_name,
         shop_image: seller.shop_image,
+        bio: seller.bio || null,
+        shop_location: seller.shop_location || null,
       },
       sellerPlan: plan ? plan.name : "Free",
       brand_color: seller.brand_color || null,
+      categories: seller.categories || [],
       products,
       totalProducts,
       hasMoreProducts,
@@ -377,6 +380,7 @@ router.get("/more-products/:sellerId", async (req, res) => {
         "free_delivery",
         "variantPrices",
         "variantPricesAr",
+        "category",
       ],
       limit,
       offset,
@@ -393,6 +397,68 @@ router.get("/more-products/:sellerId", async (req, res) => {
     });
   } catch (error) {
     console.error("Error loading more products:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+});
+
+/**
+ * GET /products-by-category/:sellerId
+ * Fetch products filtered by category for a seller's shop
+ * Query params: category, limit, offset
+ */
+router.get("/products-by-category/:sellerId", async (req, res) => {
+  try {
+    const { sellerId } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const offset = parseInt(req.query.offset) || 0;
+    const { category } = req.query;
+
+    const whereClause = { seller_id: sellerId };
+    if (category) {
+      whereClause.category = category;
+    }
+
+    const { count: total, rows: rawProducts } = await Product.findAndCountAll({
+      where: whereClause,
+      attributes: [
+        "id",
+        "hasRealPrice",
+        "language",
+        "titleKu",
+        "titleAr",
+        "images",
+        "realPrice",
+        "priceType",
+        "hasDiscount",
+        "discount_percent",
+        "discountType",
+        "discountStartDate",
+        "discountEndDate",
+        "freeDeliveryStartDate",
+        "freeDeliveryEndDate",
+        "free_delivery",
+        "variantPrices",
+        "variantPricesAr",
+        "category",
+      ],
+      limit,
+      offset,
+      order: [["id", "DESC"]],
+    });
+
+    const products = await checkAndCleanProductExpiration(rawProducts);
+
+    return res.status(200).json({
+      success: true,
+      products,
+      total,
+      hasMore: offset + limit < total,
+    });
+  } catch (error) {
+    console.error("Error loading products by category:", error);
     return res.status(500).json({
       success: false,
       message: "Server error",

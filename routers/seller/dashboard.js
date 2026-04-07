@@ -436,6 +436,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       show_plan_selection: sellerPlanRecord.plan_id === FREE_PLAN_ID,
       selected_plan_info: selectedPlan,
       brand_color: seller.brand_color ?? null,
+      categories: seller.categories || [],
       red_line: redLine,
       products,
       totalProducts: totalProductsCount,

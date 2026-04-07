@@ -19,6 +19,8 @@ router.get("/:shopName/profile", async (req, res) => {
         "brand_color",
         "social_links",
         "phone",
+        "bio",
+        "shop_location",
         "createdAt",
       ],
     });
@@ -49,6 +51,8 @@ router.get("/:shopName/profile", async (req, res) => {
         threads: sellerData.social_links?.threads || null,
         telegram: sellerData.social_links?.telegram || null,
       },
+      bio: sellerData.bio || null,
+      shopLocation: sellerData.shop_location || null,
       joinedDate: sellerData.createdAt,
     };
 

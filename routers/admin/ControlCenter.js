@@ -122,6 +122,7 @@ router.post("/cleanup-expired-sellers", adminAuth, async (req, res) => {
 router.post("/add-seller-plan", adminAuth, async (req, res) => {
   try {
     const { seller_id, plan_id, is_trial = false } = req.body;
+   
 
     if (!seller_id || !plan_id) {
       return res
@@ -130,6 +131,7 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
     }
 
     const seller = await Seller.findByPk(seller_id);
+   
     if (!seller) {
       return res
         .status(404)
@@ -137,6 +139,7 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
     }
 
     const plan = await Plan.findByPk(plan_id);
+    
     if (!plan) {
       return res
         .status(404)
@@ -144,7 +147,7 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
     }
 
     const startDate = toUTC(new Date());
-    const endDate = toUTC(new Date(startDate));
+    let endDate = toUTC(new Date(startDate));
 
     if (plan.duration_days > 0) {
       const parsedEndDate = new Date(endDate);
@@ -156,7 +159,7 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
     const existingPlan = await SellerPlan.findOne({
       where: { seller_id },
     });
-
+   
     let sellerPlan;
 
     if (existingPlan) {
@@ -196,6 +199,7 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
       },
     });
   } catch (error) {
+    
     console.error("add-seller-plan error:", error);
     res.status(500).json({ success: false });
   }

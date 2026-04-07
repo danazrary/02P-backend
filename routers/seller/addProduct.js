@@ -8,6 +8,7 @@ import {
   uploadProducts,
   getImageUrlPath,
   deleteImage,
+  convertToWebp,
 } from "../../utils/uploadHandler.js";
 import { toUTC } from "../../utils/timezoneHandler.js";
 
@@ -23,6 +24,7 @@ router.post(
   "/add-product",
   jwtVerifySellerToken,
   upload.array("images", 5),
+  convertToWebp(),
   async (req, res) => {
     try {
       const { id } = req.user;
@@ -91,6 +93,7 @@ router.post(
         variantPricesAr,
         customInputs,
         customInputsAr,
+        category,
       } = req.body;
 
       //  const { id } = req.user;
@@ -135,6 +138,7 @@ router.post(
         customInputsAr: customInputsAr
           ? JSON.parse(customInputsAr).filter((c) => c.name && c.name !== "")
           : [],
+        category: category || null,
       });
 
       res.status(201).json({
@@ -158,6 +162,7 @@ router.put(
   "/edit-product/:productId",
   jwtVerifySellerToken,
   upload.array("images", 5),
+  convertToWebp(),
   async (req, res) => {
     try {
       const sellerId = req.user.id;
@@ -194,6 +199,7 @@ router.put(
         customInputsAr,
         existingImages,
         removedImages,
+        category,
       } = req.body;
 
       /* 🗑️ Delete removed images from disk */
@@ -255,6 +261,7 @@ router.put(
         customInputs: parsedCustomInputs,
         customInputsAr: parsedCustomInputsAr,
         images: finalImages,
+        category: category || null,
       });
 
       res.status(200).json({
@@ -350,6 +357,7 @@ router.get("/products/shop/:shopName", async (req, res) => {
         "language",
         "variantPrices",
         "variantPricesAr",
+        "category",
       ],
       order: [["createdAt", "DESC"]],
       limit,

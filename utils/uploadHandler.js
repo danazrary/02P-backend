@@ -1,4 +1,5 @@
 import multer from "multer";
+import sharp from "sharp";
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
@@ -130,6 +131,51 @@ export function deleteImage(relativePath) {
  */
 export function setupUploadHandler() {
   return createUploadMiddleware("");
+}
+
+/**
+ * Convert uploaded image(s) to WebP format
+ * Works as Express middleware after multer - processes req.file or req.files
+ * @param {Object} options - Conversion options
+ * @param {number} options.quality - WebP quality 1-100 (default: 82)
+ * @returns {Function} Express middleware
+ */
+export function convertToWebp(options = {}) {
+  const { quality = 82 } = options;
+
+  return async (req, res, next) => {
+    try {
+      const files = [];
+      if (req.file) files.push(req.file);
+      if (req.files && Array.isArray(req.files)) files.push(...req.files);
+
+      if (files.length === 0) return next();
+
+      for (const file of files) {
+        const originalPath = file.path;
+        const webpFilename = file.filename.replace(/\.[^/.]+$/, "") + ".webp";
+        const webpPath = path.join(path.dirname(originalPath), webpFilename);
+
+        await sharp(originalPath).webp({ quality }).toFile(webpPath);
+
+        // Remove original file
+        if (fs.existsSync(originalPath)) {
+          fs.unlinkSync(originalPath);
+        }
+
+        // Update file info to reflect the new WebP file
+        file.filename = webpFilename;
+        file.path = webpPath;
+        file.mimetype = "image/webp";
+      }
+
+      next();
+    } catch (err) {
+      console.error("WebP conversion error:", err);
+      // Continue even if conversion fails - original files still exist
+      next();
+    }
+  };
 }
 
 // Pre-configured upload middlewares for common use cases

@@ -13,7 +13,7 @@ import { sellerToken, shortSellerToken } from "../../utils/addingToken.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { deleteFile } from "../../utils/deleteFile.js";
 import { uploadSellerImage } from "../../middlewares/uploadSellerImage.js";
-import { getImageUrlPath } from "../../utils/uploadHandler.js";
+import { getImageUrlPath, convertToWebp } from "../../utils/uploadHandler.js";
 import { isReservedShopName } from "../../utils/reservedShopNames.js";
 import { toUTC } from "../../utils/timezoneHandler.js";
 
@@ -71,6 +71,7 @@ router.post(
   "/complete-profile",
   jwtVerifySellerToken,
   uploadSellerImage.single("shopImage"),
+  convertToWebp(),
   async (req, res) => {
     try {
       const { id } = req.user;
@@ -82,6 +83,7 @@ router.post(
         brandColor,
         termsAccepted,
         email,
+        bio,
       } = req.body;
 
       if (!shopName || !sellerName || !whatsappNumber) {
@@ -207,6 +209,7 @@ router.post(
         brand_color: brandColor || null,
         seller_number: sellerNumber || null,
         terms_accepted_at: toUTC(new Date()),
+        bio: bio || null,
         // Only update email if it was null — never overwrite an existing email
         // Only update email if it was missing — never overwrite a real email
         ...(emailIsMissing(seller.email) && email ? { email } : {}),
@@ -252,6 +255,9 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
       phone: seller.phone,
       brandColor: seller.brand_color || null,
       socialLinks: seller.social_links || {},
+      bio: seller.bio || "",
+      shopLocation: seller.shop_location || "",
+      categories: seller.categories || [],
     });
   } catch (err) {
     return res
@@ -264,6 +270,7 @@ router.post(
   "/seller-info-update",
   jwtVerifySellerToken,
   uploadSellerImage.single("shop_image"), // must match FormData
+  convertToWebp(),
   async (req, res) => {
     try {
       const { id } = req.user;
@@ -274,6 +281,8 @@ router.post(
         whatsappNumber,
         socialLinks,
         brandColor,
+        bio,
+        shopLocation,
       } = req.body;
 
       // Validate sellerName length if provided
@@ -378,7 +387,21 @@ router.post(
         }
         updateData.shop_image = getImageUrlPath("sellers", req.file.filename);
       }
+      // Handle bio update
+      if (bio !== undefined) {
+        const newBio = bio === "" ? null : bio;
+        if (newBio !== seller.bio) {
+          updateData.bio = newBio;
+        }
+      }
 
+      // Handle shop location update
+      if (shopLocation !== undefined) {
+        const newLocation = shopLocation === "" ? null : shopLocation;
+        if (newLocation !== seller.shop_location) {
+          updateData.shop_location = newLocation;
+        }
+      }
       // 🟡 No changes detected
       if (Object.keys(updateData).length === 0) {
         return res.status(200).json({

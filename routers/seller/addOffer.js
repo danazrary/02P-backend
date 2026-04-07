@@ -8,6 +8,7 @@ import {
   uploadOffers,
   getImageUrlPath,
   deleteImage,
+  convertToWebp,
 } from "../../utils/uploadHandler.js";
 import { toUTC } from "../../utils/timezoneHandler.js";
 
@@ -23,6 +24,7 @@ router.post(
   "/add-offer",
   jwtVerifySellerToken,
   upload.single("coverImage"),
+  convertToWebp(),
   async (req, res) => {
     try {
       const { id } = req.user;
@@ -153,6 +155,7 @@ router.put(
   "/edit-offer/:offerId",
   jwtVerifySellerToken,
   upload.single("coverImage"),
+  convertToWebp(),
   async (req, res) => {
     try {
       const sellerId = req.user.id;

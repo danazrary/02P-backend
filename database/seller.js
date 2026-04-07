@@ -97,6 +97,21 @@ const Seller = sequelize.define(
       allowNull: true,
       defaultValue: null, // null means no deletion requested, timestamp means account scheduled for deletion after 30 days
     },
+    bio: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      defaultValue: null,
+    },
+    shop_location: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      defaultValue: null,
+    },
+    categories: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: null, // Array of category strings, e.g. ["phones", "home decor"]
+    },
   },
   {
     timestamps: true,
