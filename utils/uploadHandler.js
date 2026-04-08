@@ -181,7 +181,7 @@ export function convertToWebp(options = {}) {
 // Pre-configured upload middlewares for common use cases
 export const uploadProducts = createUploadMiddleware("products", {
   filenamePrefix: "product",
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB per file (nginx is the real gatekeeper)
 });
 
 export const uploadOffers = createUploadMiddleware("offers", {
