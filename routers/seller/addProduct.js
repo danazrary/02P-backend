@@ -27,6 +27,8 @@ router.post(
   convertToWebp(),
   async (req, res) => {
     try {
+      console.log("started");
+      
       const { id } = req.user;
 
       // Check seller plan and product limit

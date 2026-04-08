@@ -96,7 +96,7 @@ function productHtml(product, seller) {
       `${product.titleKu || product.titleAr || ""} - ${seller.shop_name}`,
   );
   const frontend = process.env.FRONTEND_ORIGIN || "https://dwkanlink.com";
-  const url = `${frontend}/${seller.shop_name}/product-details/${product.id}`;
+  const url = `${frontend}/${seller.shop_name}/p/${product.id}`;
   const images = product.images;
   const image =
     Array.isArray(images) && images.length
@@ -112,8 +112,7 @@ function productHtml(product, seller) {
     "@context": "https://schema.org/",
     "@type": "Product",
     name: product.titleKu || product.titleAr || "",
-    description:
-      product.descriptionKu || product.descriptionAr || "",
+    description: product.descriptionKu || product.descriptionAr || "",
     image,
     brand: { "@type": "Brand", name: seller.shop_name },
     offers: {
@@ -159,7 +158,10 @@ ${price ? `<p>${price} ${currency}</p>` : ""}
 }
 
 export default function seoPrerender(req, res, next) {
-  if (req.method !== "GET" || !BOT_AGENTS.test(req.headers["user-agent"] || "")) {
+  if (
+    req.method !== "GET" ||
+    !BOT_AGENTS.test(req.headers["user-agent"] || "")
+  ) {
     return next();
   }
 
@@ -193,8 +195,8 @@ export default function seoPrerender(req, res, next) {
       .catch(() => next());
   }
 
-  // /:shopName/product-details/:id
-  if (parts.length === 3 && parts[1] === "product-details") {
+  // /:shopName/p/:id
+  if (parts.length === 3 && parts[1] === "p") {
     const name = parts[0];
     const productId = parts[2];
     if (RESERVED.has(name.toLowerCase())) return next();

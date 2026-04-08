@@ -53,12 +53,12 @@ async function generateSitemap() {
       }
     });
 
-    // Add product URLs: https://dwkanlink.com/:shop_name/product-details/:product_id
+    // Add product URLs: https://dwkanlink.com/:shop_name/p/:product_id
     products.forEach((product) => {
       // Access seller info through the included Seller object
       if (product.Seller && product.Seller.shop_name && product.id) {
         xmlContent += `  <url>
-    <loc>https://dwkanlink.com/${product.Seller.shop_name}/product-details/${product.id}</loc>
+    <loc>https://dwkanlink.com/${product.Seller.shop_name}/p/${product.id}</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
