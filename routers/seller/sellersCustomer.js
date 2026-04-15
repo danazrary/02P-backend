@@ -23,20 +23,23 @@ const router = Router();
 router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
   try {
     const { shopName } = req.params;
-
+    let role = false; // default role
+    let sellerShop;
     // 1️⃣ Check if requester is a seller
     if (req.isSeller && req.seller) {
       const findSeller = await Seller.findByPk(req.seller.id, {
         attributes: ["shop_name"],
       });
 
-      return res.status(200).json({
+      role = true; // update role if seller
+      sellerShop = findSeller ? findSeller.shop_name : null;
+      /* return res.status(200).json({
         success: true,
         error: false,
         isSeller: true,
         shopName: findSeller ? findSeller.shop_name : null,
         message: "You are a seller. Redirect to seller dashboard.",
-      });
+      }); */
     }
 
     // 2️⃣ Find seller by shop_name
@@ -48,8 +51,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       return res.status(404).json({
         success: false,
         error: true,
-        isSeller: false,
-        shopName: shopName || null,
+        isSeller: role, // return true if requester is a seller, false otherwise
+        shopName: sellerShop || null,
         message: "Seller shop not found",
       });
     }
@@ -67,7 +70,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       return res.status(200).json({
         success: true,
         error: false,
-        isSeller: false,
+        isSeller: role,
+        shopName: sellerShop || null,
         yourShopClose: true,
         closeReason: "no_plan",
         message: "This shop is currently closed",
@@ -93,7 +97,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       return res.status(200).json({
         success: true,
         error: false,
-        isSeller: false,
+        isSeller: role,
+        shopName: sellerShop || null,
         yourShopClose: true,
         closeReason: "free_plan",
         message: "This shop is currently closed",
@@ -119,7 +124,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         return res.status(200).json({
           success: true,
           error: false,
-          isSeller: false,
+          isSeller: role,
+          shopName: sellerShop || null,
           yourShopClose: true,
           closeReason: "trial_expired",
           message: "This shop is currently closed",
@@ -151,7 +157,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         return res.status(200).json({
           success: true,
           error: false,
-          isSeller: false,
+          isSeller: role,
+          shopName: sellerShop || null,
           yourShopClose: true,
           closeReason: "plan_expired",
           message: "This shop is currently closed",
@@ -319,7 +326,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     res.status(200).json({
       success: true,
       error: false,
-      isSeller: false,
+      isSeller: role,
+      shopName: sellerShop || null,
       yourShopClose: false,
       seller: {
         id: seller.id,
@@ -343,7 +351,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     return res.status(500).json({
       success: false,
       error: true,
-      isSeller: false,
+      isSeller: role,
+      shopName: sellerShop || null,
       message: "Server error",
     });
   }

@@ -7,6 +7,7 @@ import {
   SellerPlan,
 } from "../../database/index.js";
 import { deleteFile } from "../../utils/deleteFile.js";
+import { clearCookieOpts } from "../../utils/addingToken.js";
 
 const router = Router();
 
@@ -28,12 +29,7 @@ router.delete("/delete-account", jwtVerifySellerToken, async (req, res) => {
     await seller.update({ deletion_requested_at: new Date() });
 
     // Clear the session cookie
-    res.clearCookie("s_t", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      path: "/",
-    });
+    res.clearCookie("s_t", clearCookieOpts());
 
     return res.json({
       success: true,

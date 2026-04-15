@@ -72,12 +72,16 @@ router.get("/:shopName", async (req, res) => {
       }
 
       // 🍪 Save/update cookie
-      res.cookie(visitCookieName, Date.now(), {
+      const visitCookieOpts = {
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: true,
         sameSite: "lax",
-        path: "/", // 🔥 IMPORTANT
-      });
+        path: "/",
+      };
+      if (process.env.NODE_ENV === "production") {
+        visitCookieOpts.domain = `.${process.env.BASE_DOMAIN || "dwkanlink.com"}`;
+      }
+      res.cookie(visitCookieName, Date.now(), visitCookieOpts);
     }
 
     // 🔹 SELLER PLAN

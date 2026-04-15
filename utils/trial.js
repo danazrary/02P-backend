@@ -8,7 +8,7 @@ export async function giveTrialToSeller(sellerId) {
 
   const startsAt = new Date();
   const expiresAt = new Date();
-  expiresAt.setDate(startsAt.getDate() + 3); // 🔥 3-day trial
+  expiresAt.setDate(startsAt.getDate() + 7); // 🔥 7-day trial
 
   await SellerPlan.create({
     seller_id: sellerId,

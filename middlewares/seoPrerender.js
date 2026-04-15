@@ -44,7 +44,8 @@ function imgUrl(image, type) {
 function shopHtml(seller) {
   const name = esc(seller.shop_name || seller.name || "");
   const frontend = process.env.FRONTEND_ORIGIN || "https://dwkanlink.com";
-  const url = `${frontend}/${seller.shop_name}`;
+  const baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com";
+  const url = `https://${seller.shop_name}.${baseDomain}`;
   const image = imgUrl(seller.shop_image, "sellers");
   const desc = esc(
     `کڕینی کاڵاکان لە ${seller.shop_name} بە باشترین نرخ و کوالیتی | تسوق من ${seller.shop_name} واحصل على أفضل الأسعار`,
@@ -96,7 +97,8 @@ function productHtml(product, seller) {
       `${product.titleKu || product.titleAr || ""} - ${seller.shop_name}`,
   );
   const frontend = process.env.FRONTEND_ORIGIN || "https://dwkanlink.com";
-  const url = `${frontend}/${seller.shop_name}/p/${product.id}`;
+  const baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com";
+  const url = `https://${seller.shop_name}.${baseDomain}/p/${product.id}`;
   const images = product.images;
   const image =
     Array.isArray(images) && images.length
@@ -167,6 +169,55 @@ export default function seoPrerender(req, res, next) {
 
   const parts = req.path.split("/").filter(Boolean);
 
+  // --- Subdomain-based routes (new format) ---
+  // shopName is extracted from req.shopName (set by subdomain middleware)
+  if (req.shopName) {
+    const shopNameFromSub = req.shopName;
+
+    // / (shop home on subdomain)
+    if (parts.length === 0) {
+      return Seller.findOne({ where: { shop_name: shopNameFromSub } })
+        .then((s) => {
+          if (!s) return next();
+          res.set("Content-Type", "text/html; charset=utf-8");
+          res.send(shopHtml(s));
+        })
+        .catch(() => next());
+    }
+
+    // /profile (on subdomain)
+    if (parts.length === 1 && parts[0] === "profile") {
+      return Seller.findOne({ where: { shop_name: shopNameFromSub } })
+        .then((s) => {
+          if (!s) return next();
+          res.set("Content-Type", "text/html; charset=utf-8");
+          res.send(shopHtml(s));
+        })
+        .catch(() => next());
+    }
+
+    // /p/:id (on subdomain)
+    if (parts.length === 2 && parts[0] === "p") {
+      const productId = parts[1];
+      return Promise.all([
+        Seller.findOne({ where: { shop_name: shopNameFromSub } }),
+        Product.findByPk(productId),
+      ])
+        .then(([s, p]) => {
+          if (!s || !p) return next();
+          // Validate product belongs to this shop
+          if (p.seller_id !== s.id) return next();
+          res.set("Content-Type", "text/html; charset=utf-8");
+          res.send(productHtml(p, s));
+        })
+        .catch(() => next());
+    }
+
+    return next();
+  }
+
+  // --- Legacy path-based routes (old format, for bots that still use old URLs) ---
+
   // /:shopName
   if (parts.length === 1) {
     const name = parts[0];
@@ -207,6 +258,8 @@ export default function seoPrerender(req, res, next) {
     ])
       .then(([s, p]) => {
         if (!s || !p) return next();
+        // Validate product belongs to this shop
+        if (p.seller_id !== s.id) return next();
         res.set("Content-Type", "text/html; charset=utf-8");
         res.send(productHtml(p, s));
       })

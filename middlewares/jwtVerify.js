@@ -1,5 +1,6 @@
 //jwtVerifySellerToken --- detectSeller
 import jwt from "jsonwebtoken";
+import { clearCookieOpts } from "../utils/addingToken.js";
 
 //.
 //.
@@ -20,12 +21,7 @@ export const jwtVerifySellerToken = (req, res, next) => {
   jwt.verify(s_t, process.env.JWT_SECRET, (err, user) => {
     if (err) {
       // 🔥 MATCH COOKIE OPTIONS EXACTLY
-      res.clearCookie("s_t", {
-        httpOnly: true,
-        secure: process.env.ENVIRONMENT === "product",
-        sameSite: "strict",
-        path: "/",
-      });
+      res.clearCookie("s_t", clearCookieOpts());
 
       if (err.name === "TokenExpiredError") {
         return res.status(401).json({
@@ -92,11 +88,7 @@ export const checkMe = (req, res, next) => {
       (err, decoded) => {
         if (err || !decoded) {
           // ❌ invalid / expired → remove cookie
-          res.clearCookie("admin_token", {
-            httpOnly: true,
-            sameSite: "strict",
-            secure: process.env.NODE_ENV === "production",
-          });
+          res.clearCookie("admin_token", clearCookieOpts());
           return next();
         }
 
@@ -116,11 +108,7 @@ export const checkMe = (req, res, next) => {
     return jwt.verify(s_t, process.env.JWT_SECRET, (err, decoded) => {
       if (err || !decoded) {
         // ❌ invalid / expired → remove cookie
-        res.clearCookie("s_t", {
-          httpOnly: true,
-          sameSite: "strict",
-          secure: process.env.NODE_ENV === "production",
-        });
+        res.clearCookie("s_t", clearCookieOpts());
         return next();
       }
 
@@ -157,7 +145,7 @@ export const adminAuth = (req, res, next) => {
     const decoded = jwt.verify(token, process.env.ADMIN_JWT_SECRET);
 
     if (decoded.role !== "admin" && decoded.role !== "super_admin") {
-      res.clearCookie("admin_token");
+      res.clearCookie("admin_token", clearCookieOpts());
       return res.status(403).json({
         error: true,
         success: false,
@@ -168,7 +156,7 @@ export const adminAuth = (req, res, next) => {
     req.admin = decoded;
     next();
   } catch {
-    res.clearCookie("admin_token");
+    res.clearCookie("admin_token", clearCookieOpts());
     return res.status(401).json({
       error: true,
       success: false,

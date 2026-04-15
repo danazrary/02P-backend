@@ -30,11 +30,38 @@ const prodOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
   : [];
 
-export const corsOptions = {
-  origin:
+/**
+ * Dynamic CORS origin checker that supports wildcard subdomains.
+ * Allows: *.dwkanlink.com in production, plus dev origins in development.
+ */
+function corsOriginCheck(origin, callback) {
+  // Allow requests with no origin (mobile apps, server-to-server, etc.)
+  if (!origin) return callback(null, true);
+
+  const allAllowed =
     process.env.NODE_ENV === "production"
       ? prodOrigins
-      : [...devOrigins, ...prodOrigins],
+      : [...devOrigins, ...prodOrigins];
+
+  // Check exact match first
+  if (allAllowed.includes(origin)) {
+    return callback(null, true);
+  }
+
+  // Check wildcard subdomain match: https://*.dwkanlink.com
+  const baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com";
+  const subdomainPattern = new RegExp(
+    `^https?://[a-zA-Z0-9_-]+\\.${baseDomain.replace(/\./g, "\\.")}$`,
+  );
+  if (subdomainPattern.test(origin)) {
+    return callback(null, true);
+  }
+
+  callback(new Error("Not allowed by CORS"));
+}
+
+export const corsOptions = {
+  origin: corsOriginCheck,
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],

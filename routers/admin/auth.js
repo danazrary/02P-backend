@@ -91,11 +91,16 @@ router.post("/login", adminLimiter, async (req, res) => {
       { expiresIn: "15m" },
     );
 
-    res.cookie("admin_token", token, {
+    const cookieOpts = {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    });
+      sameSite: "lax",
+      path: "/",
+    };
+    if (process.env.NODE_ENV === "production") {
+      cookieOpts.domain = `.${process.env.BASE_DOMAIN || "dwkanlink.com"}`;
+    }
+    res.cookie("admin_token", token, cookieOpts);
 
     res.json({
       success: true,

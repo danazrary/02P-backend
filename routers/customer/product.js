@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import Product from "../../database/products.js";
+import Seller from "../../database/seller.js";
 import Report from "../../database/report.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import Feedback from "../../database/feedback.js";
@@ -91,18 +92,35 @@ router.post("/cart-products", async (req, res) => {
 
 // Multer setup to save images in /uploads folder
 
-// Route to create product
+// Route to get product details
 router.get("/product/:id", detectSeller, async (req, res) => {
   try {
     const { id } = req.params;
+    const { shopName } = req.query;
 
-    let product = await Product.findByPk(id);
+    let product = await Product.findByPk(id, {
+      include: [
+        {
+          model: Seller,
+          attributes: ["id", "shop_name"],
+        },
+      ],
+    });
 
     if (!product) {
       return res.status(404).json({
         success: false,
         error: true,
         message: "Product not found",
+      });
+    }
+
+    // Validate product belongs to the requested shop (prevents cross-shop leakage)
+    if (shopName && product.Seller && product.Seller.shop_name !== shopName) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "Product not found in this shop",
       });
     }
 

@@ -8,6 +8,7 @@ import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
+import { clearCookieOpts } from "../../utils/addingToken.js";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
 import {
   processRedLineData,
@@ -226,11 +227,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
     // ── 1. Fetch seller (READ) ─────────────────────────────────────────────────
     const seller = await Seller.findByPk(id);
     if (!seller) {
-      res.clearCookie("s_t", {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
-      });
+      res.clearCookie("s_t", clearCookieOpts());
       return res.status(404).json({
         success: false,
         error: true,
@@ -252,7 +249,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       if (wantsTrial) {
         // READ: fetch trial plan duration before opening transaction
         const trialPlan = await Plan.findByPk(TRIAL_PLAN_ID);
-        const trialDays = trialPlan?.duration_days ?? 3;
+        const trialDays = trialPlan?.duration_days ?? 7;
         newPlanData = {
           seller_id: id,
           plan_id: TRIAL_PLAN_ID,
@@ -497,8 +494,8 @@ router.post("/activate-trial", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // Activate trial plan (3 days)
-    const trialDays = 3;
+    // Activate trial plan (7 days)
+    const trialDays = 7;
     const trialStartDate = toUTC(new Date());
     const trialEndDate = toUTC(
       new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000),

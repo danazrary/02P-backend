@@ -3,77 +3,71 @@ import Seller from "../database/seller.js";
 import Product from "../database/products.js";
 
 const router = Router();
+const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
+
+function encodeShopName(name) {
+  return encodeURIComponent(name).replace(/%20/g, "+");
+}
 
 /**
- * Generates the XML sitemap dynamically
- * Queries the database for all sellers and products
- * Uses Sequelize include to get seller info for each product
+ * Generates the XML sitemap dynamically.
+ * All URLs use subdomain format: https://shopName.dwkanlink.com
+ *
+ * Structure is kept flat for now but can be split into:
+ *   /sitemap-index.xml → /sitemap-sellers.xml + /sitemap-products.xml
  */
 async function generateSitemap() {
-  try {
-    // Fetch all sellers and products from the database
-    const [sellers, products] = await Promise.all([
-      Seller.findAll({ attributes: ["id", "shop_name"], raw: true }),
-      Product.findAll({
-        attributes: ["id"],
-        include: [
-          {
-            model: Seller,
-            attributes: ["shop_name"],
-            required: true, // Only include products with valid sellers
-          },
-        ],
-        raw: true,
-        nest: true, // Needed for proper nesting with include
-      }),
-    ]);
+  const [sellers, products] = await Promise.all([
+    Seller.findAll({ attributes: ["id", "shop_name"], raw: true }),
+    Product.findAll({
+      attributes: ["id"],
+      include: [
+        {
+          model: Seller,
+          attributes: ["shop_name"],
+          required: true,
+        },
+      ],
+    }),
+  ]);
 
-    // Build the sitemap XML
-    let xmlContent = `<?xml version="1.0" encoding="UTF-8"?>
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 `;
 
-    // Add seller URLs: https://dwkanlink.com/:shop_name
-    sellers.forEach((seller) => {
-      if (seller.shop_name) {
-        xmlContent += `  <url>
-    <loc>https://dwkanlink.com/${seller.shop_name}</loc>
+  // Seller URLs
+  for (const seller of sellers) {
+    if (!seller.shop_name) continue;
+    const encoded = encodeShopName(seller.shop_name);
+
+    xml += `  <url>
+    <loc>https://${encoded}.${BASE_DOMAIN}</loc>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
-`;
-
-        // Profile page
-        xmlContent += `  <url>
-    <loc>https://dwkanlink.com/${seller.shop_name}/profile</loc>
+  <url>
+    <loc>https://${encoded}.${BASE_DOMAIN}/profile</loc>
     <changefreq>weekly</changefreq>
     <priority>0.6</priority>
   </url>
 `;
-      }
-    });
+  }
 
-    // Add product URLs: https://dwkanlink.com/:shop_name/p/:product_id
-    products.forEach((product) => {
-      // Access seller info through the included Seller object
-      if (product.Seller && product.Seller.shop_name && product.id) {
-        xmlContent += `  <url>
-    <loc>https://dwkanlink.com/${product.Seller.shop_name}/p/${product.id}</loc>
+  // Product URLs
+  for (const product of products) {
+    const shopName = product.Seller?.shop_name;
+    if (!shopName || !product.id) continue;
+
+    xml += `  <url>
+    <loc>https://${encodeShopName(shopName)}.${BASE_DOMAIN}/p/${product.id}</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
 `;
-      }
-    });
-
-    // Close the XML
-    xmlContent += `</urlset>`;
-
-    return xmlContent;
-  } catch (error) {
-    console.error("❌ Error generating sitemap:", error);
-    throw error;
   }
+
+  xml += `</urlset>`;
+  return xml;
 }
 
 /**

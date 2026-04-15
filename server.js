@@ -92,6 +92,94 @@ if (typeof sanitizeHtmlMiddleware === "function")
 app.use(cookieParser(process.env.COOKIE_SECRET_PARSER || ""));
 app.use(csrfMiddleware);
 
+// --- SUBDOMAIN DETECTION ---
+// Extract shopName from subdomain (e.g. easy_store.dwkanlink.com → shopName = "easy_store")
+const RESERVED_SUBDOMAINS = new Set([
+  "www",
+  "api",
+  "admin",
+  "static",
+  "assets",
+  "uploads",
+  "mail",
+  "ftp",
+  "smtp",
+  "support",
+  "help",
+  "blog",
+  "news",
+]);
+
+app.use((req, res, next) => {
+  const host = req.headers.host || "";
+  const hostname = host.split(":")[0]; // remove port
+  const parts = hostname.split(".");
+
+  if (parts.length > 2 && !RESERVED_SUBDOMAINS.has(parts[0].toLowerCase())) {
+    req.shopName = parts[0];
+  } else {
+    req.shopName = null;
+  }
+
+  next();
+});
+
+// --- OLD URL → SUBDOMAIN REDIRECT ---
+// Redirect path-based shop URLs to subdomain format (301 permanent)
+import { RESERVED_SHOP_NAMES } from "./utils/reservedShopNames.js";
+const RESERVED_PATHS = new Set([
+  ...RESERVED_SHOP_NAMES.map((n) => n.toLowerCase()),
+  "api",
+  "uploads",
+  "static",
+  "assets",
+  "sitemap.xml",
+  "robots.txt",
+  "manifest.json",
+  "favicon.ico",
+  "sw.js",
+  "health",
+  "test",
+  "csrf-token",
+  "protected",
+  "profile",
+  "secure-control-panel",
+]);
+
+app.use((req, res, next) => {
+  // Only redirect on the main domain (no subdomain present)
+  if (req.shopName) return next();
+
+  // Only redirect GET requests (not API calls)
+  if (req.method !== "GET") return next();
+
+  const host = req.headers.host || "";
+  const hostname = host.split(":")[0];
+
+  // Only apply on production domain
+  if (!hostname.includes("dwkanlink.com")) return next();
+
+  const pathParts = req.path.split("/").filter(Boolean);
+  if (pathParts.length === 0) return next();
+
+  const firstSegment = pathParts[0];
+
+  // Don't redirect reserved paths
+  if (RESERVED_PATHS.has(firstSegment.toLowerCase())) return next();
+
+  // Don't redirect paths with file extensions (static assets)
+  if (firstSegment.includes(".")) return next();
+
+  // Redirect: /shopName/... → https://shopName.dwkanlink.com/...
+  const remainingPath = pathParts.slice(1).join("/");
+  const queryString = req.originalUrl.includes("?")
+    ? req.originalUrl.substring(req.originalUrl.indexOf("?"))
+    : "";
+  const newUrl = `https://${firstSegment}.dwkanlink.com/${remainingPath}${queryString}`;
+
+  return res.redirect(301, newUrl);
+});
+
 // --- SEO PRE-RENDER FOR BOTS ---
 // Must be BEFORE routers so crawlers get HTML with meta tags
 app.use(seoPrerender);
