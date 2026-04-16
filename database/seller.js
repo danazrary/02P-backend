@@ -112,6 +112,11 @@ const Seller = sequelize.define(
       allowNull: true,
       defaultValue: null, // Array of category strings, e.g. ["phones", "home decor"]
     },
+    default_shop_lang: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      defaultValue: "ku", // "ku" = Kurdish, "ar" = Arabic
+    },
   },
   {
     timestamps: true,

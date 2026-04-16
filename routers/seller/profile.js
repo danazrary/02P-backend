@@ -21,6 +21,7 @@ router.get("/:shopName/profile", async (req, res) => {
         "phone",
         "bio",
         "shop_location",
+        "default_shop_lang",
         "createdAt",
       ],
     });
@@ -53,6 +54,7 @@ router.get("/:shopName/profile", async (req, res) => {
       },
       bio: sellerData.bio || null,
       shopLocation: sellerData.shop_location || null,
+      defaultShopLang: sellerData.default_shop_lang || "ku",
       joinedDate: sellerData.createdAt,
     };
 

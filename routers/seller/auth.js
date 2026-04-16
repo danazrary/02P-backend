@@ -6,7 +6,11 @@ import Seller from "../../database/seller.js";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
 import { Resend } from "resend";
-import { sellerToken, shortSellerToken } from "../../utils/addingToken.js";
+import {
+  sellerToken,
+  shortSellerToken,
+  clearCookieOpts,
+} from "../../utils/addingToken.js";
 import { checkMe } from "../../middlewares/jwtVerify.js";
 import { pingGoogleSitemap } from "../sitemap.js";
 import axios from "axios";
@@ -752,11 +756,7 @@ router.post("/successLogin", async (req, res) => {
 router.post("/logout", (req, res) => {
   try {
     // Clear auth cookies
-    res.clearCookie("s_t", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    });
+    res.clearCookie("s_t", clearCookieOpts());
 
     return res.status(200).json({
       success: true,

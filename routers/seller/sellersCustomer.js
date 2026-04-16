@@ -337,6 +337,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         bio: seller.bio || null,
         shop_location: seller.shop_location || null,
       },
+      default_shop_lang: seller.default_shop_lang || "ku",
       sellerPlan: plan ? plan.name : "Free",
       brand_color: seller.brand_color || null,
       categories: seller.categories || [],

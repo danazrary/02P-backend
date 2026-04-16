@@ -446,6 +446,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       max_offers: planRow?.max_offers ?? 0,
       current_product_count: currentProductCount,
       current_offer_count: currentOfferCount,
+      default_shop_lang: seller.default_shop_lang || "ku",
     });
   } catch (error) {
     console.error("[dashboard] Unhandled error:", error);

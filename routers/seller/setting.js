@@ -258,6 +258,7 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
       bio: seller.bio || "",
       shopLocation: seller.shop_location || "",
       categories: seller.categories || [],
+      defaultShopLang: seller.default_shop_lang || "ku",
     });
   } catch (err) {
     return res
@@ -283,6 +284,7 @@ router.post(
         brandColor,
         bio,
         shopLocation,
+        defaultShopLang,
       } = req.body;
 
       // Validate sellerName length if provided
@@ -400,6 +402,16 @@ router.post(
         const newLocation = shopLocation === "" ? null : shopLocation;
         if (newLocation !== seller.shop_location) {
           updateData.shop_location = newLocation;
+        }
+      }
+      // Handle default shop language update
+      if (defaultShopLang !== undefined) {
+        const validLangs = ["ku", "ar"];
+        const newLang = validLangs.includes(defaultShopLang)
+          ? defaultShopLang
+          : "ku";
+        if (newLang !== seller.default_shop_lang) {
+          updateData.default_shop_lang = newLang;
         }
       }
       // 🟡 No changes detected
