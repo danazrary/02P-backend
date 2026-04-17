@@ -74,7 +74,14 @@ const uploadsPath =
   process.env.NODE_ENV === "production"
     ? process.env.VPS_UPLOAD_PATH || "/var/www/uploads"
     : path.join(process.cwd(), "uploads");
-app.use("/uploads", express.static(uploadsPath));
+app.use(
+  "/uploads",
+  express.static(uploadsPath, {
+    maxAge: "30d",
+    immutable: true,
+    etag: true,
+  }),
+);
 
 app.use("/", apiLimiter); // Apply to all routes
 app.use("/api", apiLimiter); // Extra protection for API routes
