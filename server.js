@@ -248,6 +248,35 @@ app.post("/test", async (req, res) => {
 app.get("/test", (req, res) => res.send("Check your console for cookies."));
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
+// --- FRONTEND STATIC FILES + SPA FALLBACK ---
+// Serve the built React app so the VPS works without a separate Nginx static config.
+// In production the frontend dist lives one level up: ../frontend/dist
+const frontendDistPath =
+  process.env.FRONTEND_DIST_PATH ||
+  path.join(process.cwd(), "..", "frontend", "dist");
+
+if (fs.existsSync(frontendDistPath)) {
+  // Serve hashed assets (CSS, JS, images) with long-term caching
+  app.use(
+    express.static(frontendDistPath, {
+      maxAge: "1y",
+      immutable: true,
+      index: false, // let the SPA fallback handle directory requests
+    }),
+  );
+
+  // SPA fallback: any GET that didn't match a real file → serve index.html
+  // Exclude /api routes so API 404s still return JSON
+  app.get("/*path", (req, res) => {
+    if (req.path.startsWith("/api/")) {
+      return res
+        .status(404)
+        .json({ error: "API route not found", path: req.path });
+    }
+    res.sendFile(path.join(frontendDistPath, "index.html"));
+  });
+}
+
 // --- ERROR HANDLERS ---
 // 404 handler - must be after all routes
 app.use((req, res) => {
