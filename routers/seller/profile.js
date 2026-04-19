@@ -1,6 +1,14 @@
 import { Router } from "express";
 import Seller from "../../database/seller.js";
+import SellerPlan from "../../database/sellerPlan.js";
 const router = Router();
+
+function isShopOpen(planRecord) {
+  if (!planRecord) return false;
+  if (planRecord.plan_id === 1) return false;
+  const gracePeriodMs = 24 * 60 * 60 * 1000;
+  return Date.now() <= new Date(planRecord.end_date).getTime() + gracePeriodMs;
+}
 
 router.get("/:shopName/profile", async (req, res) => {
   try {
@@ -30,6 +38,26 @@ router.get("/:shopName/profile", async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Seller not found",
+      });
+    }
+
+    // Check seller plan — close shop if free or expired
+    const planRecord = await SellerPlan.findOne({
+      where: { seller_id: sellerData.id },
+      attributes: ["plan_id", "end_date"],
+    });
+
+    if (!isShopOpen(planRecord)) {
+      return res.status(200).json({
+        success: true,
+        yourShopClose: true,
+        seller: {
+          id: sellerData.id,
+          name: sellerData.name,
+          shop_name: sellerData.shop_name,
+          shop_image: sellerData.shop_image,
+          brand_color: sellerData.brand_color,
+        },
       });
     }
 
