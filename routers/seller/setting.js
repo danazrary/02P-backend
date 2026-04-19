@@ -144,6 +144,27 @@ router.post(
         });
       }
 
+      // Only allow lowercase letters, numbers, and hyphens in new shop names
+      if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(shopName)) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: [
+            "Shop name can only contain lowercase letters, numbers, and hyphens (no leading/trailing/double hyphens).",
+          ],
+        });
+      }
+
+      if (shopName.length < 3 || shopName.length > 25) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: [
+            "Shop name must be between 3 and 25 characters.",
+          ],
+        });
+      }
+
       const seller = await Seller.findByPk(id);
 
       if (!seller) {
@@ -351,6 +372,22 @@ router.post(
       }
 
       if (shopName && shopName !== seller.shop_name) {
+        // Only allow lowercase letters, numbers, and hyphens in new shop names
+        if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(shopName)) {
+          return res.status(400).json({
+            success: false,
+            error: true,
+            message:
+              "Shop name can only contain lowercase letters, numbers, and hyphens (no leading/trailing/double hyphens).",
+          });
+        }
+        if (shopName.length < 3 || shopName.length > 25) {
+          return res.status(400).json({
+            success: false,
+            error: true,
+            message: "Shop name must be between 3 and 25 characters.",
+          });
+        }
         updateData.shop_name = shopName;
       }
 
