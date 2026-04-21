@@ -40,7 +40,7 @@ export function clearCookieOpts() {
 //.
 //seller token
 export function sellerToken(id, email, shop_name, res) {
-  const expiresInHours = 24;
+  const expiresInHours = 24 * 7;
 
   const payload = {
     id,
