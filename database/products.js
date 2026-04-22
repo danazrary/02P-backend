@@ -117,6 +117,21 @@ const Product = sequelize.define(
       allowNull: true,
       defaultValue: null,
     },
+    tiktokUrl: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: null,
+    },
+    tiktokUsername: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: null,
+    },
+    tiktokVideoId: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: null,
+    },
   },
   {
     timestamps: true,

@@ -10,6 +10,10 @@ import {
   deleteImage,
   convertToWebp,
 } from "../../utils/uploadHandler.js";
+import {
+  normalizeTikTokUrl,
+  extractTikTokMeta,
+} from "../../utils/tiktokHandler.js";
 
 const router = express.Router();
 
@@ -90,9 +94,17 @@ router.post(
         customInputs,
         customInputsAr,
         category,
+        tiktokUrl: rawTiktokUrl,
       } = req.body;
 
       //  const { id } = req.user;
+
+      // Normalize TikTok URL: resolve short links and strip tracking params
+      const tiktokUrl = rawTiktokUrl
+        ? await normalizeTikTokUrl(rawTiktokUrl)
+        : null;
+      const { username: tiktokUsername, videoId: tiktokVideoId } =
+        tiktokUrl ? extractTikTokMeta(tiktokUrl) : { username: null, videoId: null };
 
       // Save uploaded images paths using environment-aware path
       const images = req.files
@@ -126,6 +138,9 @@ router.post(
           ? JSON.parse(customInputsAr).filter((c) => c.name && c.name !== "")
           : [],
         category: category || null,
+        tiktokUrl: tiktokUrl || null,
+        tiktokUsername: tiktokUsername || null,
+        tiktokVideoId: tiktokVideoId || null,
       });
 
       res.status(201).json({
@@ -182,7 +197,15 @@ router.put(
         existingImages,
         removedImages,
         category,
+        tiktokUrl: rawTiktokUrl,
       } = req.body;
+
+      // Normalize TikTok URL: resolve short links and strip tracking params
+      const tiktokUrl = rawTiktokUrl
+        ? await normalizeTikTokUrl(rawTiktokUrl)
+        : null;
+      const { username: tiktokUsername, videoId: tiktokVideoId } =
+        tiktokUrl ? extractTikTokMeta(tiktokUrl) : { username: null, videoId: null };
 
       /* 🗑️ Delete removed images from disk */
       if (removedImages) {
@@ -233,6 +256,9 @@ router.put(
         customInputsAr: parsedCustomInputsAr,
         images: finalImages,
         category: category || null,
+        tiktokUrl: tiktokUrl || null,
+        tiktokUsername: tiktokUsername || null,
+        tiktokVideoId: tiktokVideoId || null,
       });
 
       res.status(200).json({
