@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { Op } from "sequelize";
 import Product from "../../database/products.js";
+import ProductImage from "../../database/productImages.js";
 import Seller from "../../database/seller.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
@@ -108,6 +109,13 @@ router.get("/data", jwtVerifySellerToken, async (req, res) => {
       order: [["views", "DESC"]],
       limit: 10,
       attributes: ["id", "views", "titleAr", "titleKu", "images"],
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "is_main"],
+        },
+      ],
     });
 
     const formattedTopProducts = topProducts.map((p) => ({
@@ -116,6 +124,7 @@ router.get("/data", jwtVerifySellerToken, async (req, res) => {
       titleAr: p.titleAr,
       titleKu: p.titleKu,
       image: Array.isArray(p.images) ? p.images[0] : null,
+      productImages: p.productImages || [],
     }));
 
     /* -------------------- Response -------------------- */

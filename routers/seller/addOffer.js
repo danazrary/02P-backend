@@ -1,30 +1,31 @@
 import express from "express";
+import { v4 as uuidv4 } from "uuid";
 import SellerOffer from "../../database/sellerOffer.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import Product from "../../database/products.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
-import {
-  uploadOffers,
-  getImageUrlPath,
-  deleteImage,
-  convertToWebp,
-} from "../../utils/uploadHandler.js";
 import { toUTC } from "../../utils/timezoneHandler.js";
+import {
+  r2Multer,
+  buildR2Key,
+  uploadToR2,
+  deleteFromR2,
+} from "../../utils/r2.js";
+import {
+  checkStorageLimit,
+  incrementSellerStorage,
+  decrementSellerStorage,
+} from "../../middlewares/checkStorageLimit.js";
 
 const router = express.Router();
-
-// Use centralized upload middleware that handles environment-based storage
-// In development (NODE_ENV=development): saves to backend/uploads/offers
-// In production (NODE_ENV=production): saves to VPS_UPLOAD_PATH/offers
-const upload = uploadOffers;
 
 // Route to create offer
 router.post(
   "/add-offer",
   jwtVerifySellerToken,
-  upload.single("coverImage"),
-  convertToWebp(),
+  r2Multer.single("coverImage"),
+  checkStorageLimit,
   async (req, res) => {
     try {
       const { id } = req.user;
@@ -95,10 +96,15 @@ router.post(
 
       // const { id } = req.user;
 
-      // Save uploaded cover image path using environment-aware path
-      const cover_image = req.file
-        ? getImageUrlPath("offers", req.file.filename)
-        : null;
+      // Upload cover image to R2
+      let cover_image = null;
+      let coverImageBytes = 0;
+      if (req.file) {
+        const offerKey = `shops/${id}/offers/${uuidv4()}/cover.webp`;
+        const { sizeBytes } = await uploadToR2(req.file.buffer, offerKey);
+        cover_image = offerKey;
+        coverImageBytes = sizeBytes;
+      }
 
       // ⚠️ IMPORTANT: Convert dates to UTC before storing in database
       const utcStartDate = toUTC(start_date);
@@ -113,6 +119,7 @@ router.post(
         descriptionAr,
         descriptionKu,
         cover_image,
+        cover_image_size_bytes: coverImageBytes,
         start_date: utcStartDate,
         end_date: utcEndDate,
         discount_or_free_delivery: discount_or_free_delivery || null,
@@ -132,6 +139,10 @@ router.post(
           ? JSON.parse(get_product_id_quantity)
           : null,
       });
+
+      if (coverImageBytes > 0) {
+        await incrementSellerStorage(id, coverImageBytes);
+      }
 
       res.status(201).json({
         success: true,
@@ -154,8 +165,8 @@ router.post(
 router.put(
   "/edit-offer/:offerId",
   jwtVerifySellerToken,
-  upload.single("coverImage"),
-  convertToWebp(),
+  r2Multer.single("coverImage"),
+  checkStorageLimit,
   async (req, res) => {
     try {
       const sellerId = req.user.id;
@@ -191,14 +202,23 @@ router.put(
         apply_to,
       } = req.body;
 
-      // Delete old cover image if new one is uploaded
-      if (req.file && offer.cover_image) {
-        deleteImage(offer.cover_image);
+      // Delete old R2 cover image and upload new one
+      let cover_image = offer.cover_image;
+      let newCoverImageBytes = offer.cover_image_size_bytes || 0;
+      if (req.file) {
+        if (offer.cover_image) {
+          await deleteFromR2(offer.cover_image);
+          await decrementSellerStorage(
+            sellerId,
+            offer.cover_image_size_bytes || 0,
+          );
+        }
+        const offerKey = `shops/${sellerId}/offers/${uuidv4()}/cover.webp`;
+        const { sizeBytes } = await uploadToR2(req.file.buffer, offerKey);
+        cover_image = offerKey;
+        newCoverImageBytes = sizeBytes;
+        await incrementSellerStorage(sellerId, sizeBytes);
       }
-
-      const cover_image = req.file
-        ? getImageUrlPath("offers", req.file.filename)
-        : offer.cover_image;
 
       // ⚠️ IMPORTANT: Convert dates to UTC before storing in database
       const utcStartDate = toUTC(start_date);
@@ -212,6 +232,7 @@ router.put(
         descriptionAr,
         descriptionKu,
         cover_image,
+        cover_image_size_bytes: newCoverImageBytes,
         start_date: utcStartDate,
         end_date: utcEndDate,
         discount_or_free_delivery: discount_or_free_delivery || null,
@@ -265,9 +286,13 @@ router.delete(
         });
       }
 
-      // Delete cover image from disk
+      // Delete cover image from R2 and decrement storage
       if (offer.cover_image) {
-        deleteImage(offer.cover_image);
+        await deleteFromR2(offer.cover_image);
+        await decrementSellerStorage(
+          sellerId,
+          offer.cover_image_size_bytes || 0,
+        );
       }
 
       await offer.destroy();

@@ -112,6 +112,16 @@ const Seller = sequelize.define(
       allowNull: true,
       defaultValue: null, // Array of category strings, e.g. ["phones", "home decor"]
     },
+    subcategories_map: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: null, // Map of category → subcategory[], e.g. {"phones": ["Samsung", "iPhone"]}
+    },
+    category_images: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: null, // Map of category → R2 image key, e.g. {"phones": "shops/1/categories/uuid.webp"}
+    },
     default_shop_lang: {
       type: DataTypes.STRING,
       allowNull: false,

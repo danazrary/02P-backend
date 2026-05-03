@@ -1,7 +1,8 @@
 import { Router } from "express";
-
+import { detectSeller } from "../../middlewares/jwtVerify.js";
 import Product from "../../database/products.js";
 import Seller from "../../database/seller.js";
+import ProductImage from "../../database/productImages.js";
 import Report from "../../database/report.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
@@ -27,7 +28,7 @@ function canCountAgain(lastVisit) {
   return Date.now() - lastVisit >= ONE_HOUR;
 }
 
-router.get("/:shopName", async (req, res) => {
+router.get("/:shopName", detectSeller, async (req, res) => {
   try {
     const { shopName } = req.params;
 
@@ -49,10 +50,12 @@ router.get("/:shopName", async (req, res) => {
 
     let shouldIncrease = false;
 
-    if (!lastVisit) {
-      shouldIncrease = true;
-    } else if (isNewDay(Number(lastVisit))) {
-      shouldIncrease = true;
+    if (!req.isSeller) {
+      if (!lastVisit) {
+        shouldIncrease = true;
+      } else if (isNewDay(Number(lastVisit))) {
+        shouldIncrease = true;
+      }
     }
 
     if (shouldIncrease) {
@@ -143,6 +146,8 @@ router.get("/:shopName", async (req, res) => {
         "free_delivery",
         "variantPrices",
         "variantPricesAr",
+        "colors",
+        "sizes",
       ],
     });
 
@@ -267,6 +272,15 @@ router.get("/:shopName/search", async (req, res) => {
         "free_delivery",
         "variantPrices",
         "variantPricesAr",
+        "colors",
+        "sizes",
+      ],
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "is_main"],
+        },
       ],
       limit: 50,
     });

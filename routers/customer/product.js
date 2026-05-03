@@ -2,6 +2,7 @@ import { Router } from "express";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import Product from "../../database/products.js";
 import Seller from "../../database/seller.js";
+import ProductImage from "../../database/productImages.js";
 import Report from "../../database/report.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import Feedback from "../../database/feedback.js";
@@ -31,6 +32,13 @@ router.post("/cart-products", async (req, res) => {
     // Get full product data
     let products = await Product.findAll({
       where: { id: { [Op.in]: limitedIds } },
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "is_main"],
+        },
+      ],
     });
 
     // Check and clean expired discounts and free delivery
@@ -104,6 +112,11 @@ router.get("/product/:id", detectSeller, async (req, res) => {
           model: Seller,
           attributes: ["id", "shop_name"],
         },
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "is_main"],
+        },
       ],
     });
 
@@ -127,25 +140,27 @@ router.get("/product/:id", detectSeller, async (req, res) => {
     // Check and clean expired discounts and free delivery
     product = await checkAndCleanSingleProduct(product);
 
-    // 👀 increase product views
-    await product.increment("views", { by: 1 });
+    // 👀 increase product views (skip if viewer is a seller)
+    if (!req.isSeller) {
+      await product.increment("views", { by: 1 });
 
-    // 📊 REPORT LOGIC
-    const today = new Date().toISOString().split("T")[0];
+      // 📊 REPORT LOGIC
+      const today = new Date().toISOString().split("T")[0];
 
-    const [report, created] = await Report.findOrCreate({
-      where: {
-        seller_id: product.seller_id,
-        report_date: today,
-      },
-      defaults: {
-        productViews: 1,
-      },
-    });
+      const [report, created] = await Report.findOrCreate({
+        where: {
+          seller_id: product.seller_id,
+          report_date: today,
+        },
+        defaults: {
+          productViews: 1,
+        },
+      });
 
-    // if report already exists → increment
-    if (!created) {
-      await report.increment("productViews", { by: 1 });
+      // if report already exists → increment
+      if (!created) {
+        await report.increment("productViews", { by: 1 });
+      }
     }
 
     res.status(200).json({

@@ -159,19 +159,21 @@ router.post(
         return res.status(400).json({
           success: false,
           error: true,
-          message: [
-            "Shop name must be between 3 and 25 characters.",
-          ],
+          message: ["Shop name must be between 3 and 25 characters."],
         });
       }
 
       // Check if shop name is already taken by another seller
-      const existingShop = await Seller.findOne({ where: { shop_name: shopName } });
+      const existingShop = await Seller.findOne({
+        where: { shop_name: shopName },
+      });
       if (existingShop && existingShop.id !== id) {
         return res.status(400).json({
           success: false,
           error: true,
-          message: ["This shop name is already taken. Please choose a different name."],
+          message: [
+            "This shop name is already taken. Please choose a different name.",
+          ],
         });
       }
 
@@ -399,12 +401,15 @@ router.post(
           });
         }
         // Check if shop name is already taken by another seller
-        const takenShop = await Seller.findOne({ where: { shop_name: shopName } });
+        const takenShop = await Seller.findOne({
+          where: { shop_name: shopName },
+        });
         if (takenShop && takenShop.id !== id) {
           return res.status(400).json({
             success: false,
             error: true,
-            message: "This shop name is already taken. Please choose a different name.",
+            message:
+              "This shop name is already taken. Please choose a different name.",
           });
         }
         updateData.shop_name = shopName;

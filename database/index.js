@@ -11,6 +11,8 @@ import Feedback from "./feedback.js";
 import Offer from "./offer.js";
 import Question from "./questions.js";
 import Report from "./report.js";
+import SellerUsage from "./sellerUsage.js";
+import ProductImage from "./productImages.js";
 
 /* ============================
    ASSOCIATIONS
@@ -27,13 +29,23 @@ Product.belongsTo(Seller, { foreignKey: "seller_id" });
 Seller.hasMany(SellerOffer, { foreignKey: "seller_id" });
 SellerOffer.belongsTo(Seller, { foreignKey: "seller_id" });
 
+// SellerUsage: one row per seller
+Seller.hasOne(SellerUsage, { foreignKey: "seller_id", as: "usage" });
+SellerUsage.belongsTo(Seller, { foreignKey: "seller_id" });
+
+// ProductImages: one product has many image records
+Product.hasMany(ProductImage, {
+  foreignKey: "product_id",
+  as: "productImages",
+});
+ProductImage.belongsTo(Product, { foreignKey: "product_id" });
+
 /* Seller.hasMany(SellerPlan, { foreignKey: "seller_id" });
 SellerPlan.belongsTo(Seller, { foreignKey: "seller_id" });
 
 Plan.hasMany(SellerPlan, { foreignKey: "plan_id" });
 SellerPlan.belongsTo(Plan, { foreignKey: "plan_id" });
  */
-
 
 /* ============================
    EXPORT
@@ -52,6 +64,8 @@ export {
   Offer,
   Question,
   Report,
+  SellerUsage,
+  ProductImage,
 };
 
 /* import { Sequelize } from "sequelize";

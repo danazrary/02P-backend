@@ -1,38 +1,68 @@
 import express from "express";
+import { v4 as uuidv4 } from "uuid";
 import Product from "../../database/products.js";
+import ProductImage from "../../database/productImages.js";
 import Seller from "../../database/seller.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
+import { uploadRateLimiter } from "../../middlewares/rateLimitReq.js";
 import {
-  uploadProducts,
-  getImageUrlPath,
-  deleteImage,
-  convertToWebp,
-} from "../../utils/uploadHandler.js";
+  checkStorageLimit,
+  incrementSellerStorage,
+  decrementSellerStorage,
+} from "../../middlewares/checkStorageLimit.js";
 import {
-  normalizeTikTokUrl,
-  extractTikTokMeta,
-} from "../../utils/tiktokHandler.js";
+  r2Multer,
+  buildR2Key,
+  uploadToR2,
+  uploadToR2WithThumb,
+  deleteFromR2,
+  deleteMultipleFromR2,
+  isLocalEnv,
+} from "../../utils/r2.js";
 
 const router = express.Router();
 
-// Use centralized upload middleware that handles environment-based storage
-// In development (NODE_ENV=development): saves to backend/uploads/products
-// In production (NODE_ENV=production): saves to VPS_UPLOAD_PATH/products
-const upload = uploadProducts;
+/** Accept product images + up to 5 per-color images. */
+const productUpload = r2Multer.fields([
+  { name: "images", maxCount: 5 },
+  { name: "colorImage_0", maxCount: 1 },
+  { name: "colorImage_1", maxCount: 1 },
+  { name: "colorImage_2", maxCount: 1 },
+  { name: "colorImage_3", maxCount: 1 },
+  { name: "colorImage_4", maxCount: 1 },
+]);
+
+/**
+ * Build variantPricesAr by replacing Kurdish color names with Arabic ones.
+ * Falls back to original value if no mapping found.
+ */
+function deriveVariantPricesAr(variantPrices, colors) {
+  const kuToAr = {};
+  (colors || []).forEach((c) => {
+    if (c.nameKu && c.nameAr) kuToAr[c.nameKu] = c.nameAr;
+    if (c.nameAr) kuToAr[c.nameAr] = c.nameAr; // identity for arabic-only products
+  });
+  return variantPrices.map((v) => ({
+    ...v,
+    color: kuToAr[v.color] ?? v.color,
+  }));
+}
 
 // Route to create product
 router.post(
   "/add-product",
   jwtVerifySellerToken,
-  upload.array("images", 5),
-  convertToWebp(),
+  uploadRateLimiter,
+  productUpload,
+  checkStorageLimit,
   async (req, res) => {
     try {
-      console.log("started");
-
       const { id } = req.user;
+      console.log(
+        `🛒 Add-product — seller ${id} — env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
+      );
 
       // Check seller plan and product limit
       const sellerPlan = await SellerPlan.findOne({
@@ -90,29 +120,36 @@ router.post(
         realPrice,
         priceType,
         variantPrices,
-        variantPricesAr,
         customInputs,
         customInputsAr,
         category,
-        tiktokUrl: rawTiktokUrl,
+        colors: colorsBody,
+        sizes: sizesBody,
+        coverIndex: coverIndexRaw,
       } = req.body;
 
-      //  const { id } = req.user;
-
-      // Normalize TikTok URL: resolve short links and strip tracking params
-      const tiktokUrl = rawTiktokUrl
-        ? await normalizeTikTokUrl(rawTiktokUrl)
-        : null;
-      const { username: tiktokUsername, videoId: tiktokVideoId } =
-        tiktokUrl ? extractTikTokMeta(tiktokUrl) : { username: null, videoId: null };
-
-      // Save uploaded images paths using environment-aware path
-      const images = req.files
-        ? req.files.map((file) => getImageUrlPath("products", file.filename))
-        : [];
+      const coverIndex = Math.max(0, parseInt(coverIndexRaw, 10) || 0);
 
       const isRealPricePost = hasRealPrice === "true" || hasRealPrice === true;
 
+      // Parse colors [{nameKu, nameAr}] and sizes [string]
+      const rawColors = colorsBody ? JSON.parse(colorsBody) : [];
+      const parsedSizes = sizesBody
+        ? JSON.parse(sizesBody).filter((s) => s && s.trim())
+        : [];
+
+      // Parse variant price combinations
+      const parsedVariantPrices = variantPrices
+        ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
+        : [];
+
+      // Auto-derive Arabic variant prices from colors mapping
+      const derivedVariantPricesAr = deriveVariantPricesAr(
+        parsedVariantPrices,
+        rawColors,
+      );
+
+      // Create product first so we have its ID for R2 key paths
       const product = await Product.create({
         seller_id: id,
         language,
@@ -121,16 +158,14 @@ router.post(
         titleAr,
         descriptionKu,
         descriptionAr,
-        images,
+        images: [],
         youtubeLinks: youtubeLinks ? JSON.parse(youtubeLinks) : [],
         realPrice: isRealPricePost && realPrice !== "" ? realPrice : null,
         priceType,
-        variantPrices: variantPrices
-          ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
-          : [],
-        variantPricesAr: variantPricesAr
-          ? JSON.parse(variantPricesAr).filter((v) => v.price && v.price !== "")
-          : [],
+        variantPrices: parsedVariantPrices,
+        variantPricesAr: derivedVariantPricesAr,
+        colors: rawColors.length > 0 ? rawColors : null,
+        sizes: parsedSizes.length > 0 ? parsedSizes : null,
         customInputs: customInputs
           ? JSON.parse(customInputs).filter((c) => c.name && c.name !== "")
           : [],
@@ -138,10 +173,52 @@ router.post(
           ? JSON.parse(customInputsAr).filter((c) => c.name && c.name !== "")
           : [],
         category: category || null,
-        tiktokUrl: tiktokUrl || null,
-        tiktokUsername: tiktokUsername || null,
-        tiktokVideoId: tiktokVideoId || null,
       });
+
+      // Upload product images to R2 (main 1280px + thumbnail 300px)
+      let totalUploadedBytes = 0;
+      const imageRecords = [];
+      const imageFiles = req.files?.images || [];
+
+      for (let i = 0; i < imageFiles.length; i++) {
+        const file = imageFiles[i];
+        const basePath = `shops/${id}/products/${product.id}`;
+        const { mainKey, thumbKey, sizeBytes } = await uploadToR2WithThumb(
+          file.buffer,
+          basePath,
+        );
+        totalUploadedBytes += sizeBytes;
+        imageRecords.push({
+          product_id: product.id,
+          image_key: mainKey,
+          thumb_key: thumbKey,
+          is_main: i === coverIndex,
+          size_bytes: sizeBytes,
+        });
+      }
+      if (imageRecords.length > 0) await ProductImage.bulkCreate(imageRecords);
+
+      // Upload per-color images and attach imageKey to each color
+      const finalColors = rawColors.map((c) => ({ ...c }));
+      for (let i = 0; i < finalColors.length; i++) {
+        const colorFile = req.files?.[`colorImage_${i}`]?.[0];
+        if (colorFile) {
+          const filename = `${uuidv4()}.webp`;
+          const key = `shops/${id}/products/${product.id}/colors/${filename}`;
+          const { sizeBytes } = await uploadToR2(colorFile.buffer, key);
+          totalUploadedBytes += sizeBytes;
+          finalColors[i].imageKey = key;
+          finalColors[i].imageSizeBytes = sizeBytes;
+        } else {
+          finalColors[i].imageKey = null;
+        }
+      }
+      if (finalColors.length > 0) {
+        await product.update({ colors: finalColors });
+      }
+
+      if (totalUploadedBytes > 0)
+        await incrementSellerStorage(id, totalUploadedBytes);
 
       res.status(201).json({
         success: true,
@@ -163,12 +240,16 @@ router.post(
 router.put(
   "/edit-product/:productId",
   jwtVerifySellerToken,
-  upload.array("images", 5),
-  convertToWebp(),
+  uploadRateLimiter,
+  productUpload,
+  checkStorageLimit,
   async (req, res) => {
     try {
       const sellerId = req.user.id;
       const { productId } = req.params;
+      console.log(
+        `✏️  Edit-product ${productId} — seller ${sellerId} — env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
+      );
 
       const product = await Product.findOne({
         where: { id: productId, seller_id: sellerId },
@@ -191,48 +272,158 @@ router.put(
         priceType,
         youtubeLinks,
         variantPrices,
-        variantPricesAr,
         customInputs,
         customInputsAr,
-        existingImages,
-        removedImages,
+        removedImageKeys,
+        removedColorImageKeys,
         category,
-        tiktokUrl: rawTiktokUrl,
+        colors: colorsBody,
+        sizes: sizesBody,
+        coverImageKey,
+        newCoverIndex: newCoverIndexRaw,
       } = req.body;
 
-      // Normalize TikTok URL: resolve short links and strip tracking params
-      const tiktokUrl = rawTiktokUrl
-        ? await normalizeTikTokUrl(rawTiktokUrl)
-        : null;
-      const { username: tiktokUsername, videoId: tiktokVideoId } =
-        tiktokUrl ? extractTikTokMeta(tiktokUrl) : { username: null, videoId: null };
-
-      /* 🗑️ Delete removed images from disk */
-      if (removedImages) {
-        const parsedRemoved = JSON.parse(removedImages);
-        parsedRemoved.forEach((img) => deleteImage(img));
+      // Delete removed product images (main + thumb) and update storage
+      if (removedImageKeys) {
+        const keys = JSON.parse(removedImageKeys);
+        if (keys.length > 0) {
+          const records = await ProductImage.findAll({
+            where: { product_id: productId, image_key: keys },
+          });
+          const removedBytes = records.reduce(
+            (sum, r) => sum + (r.size_bytes || 0),
+            0,
+          );
+          // Delete both the main key and its thumbnail from R2
+          const allR2Keys = records.flatMap((r) =>
+            [r.image_key, r.thumb_key].filter(Boolean),
+          );
+          await deleteMultipleFromR2(allR2Keys);
+          await ProductImage.destroy({
+            where: { product_id: productId, image_key: keys },
+          });
+          await decrementSellerStorage(sellerId, removedBytes);
+        }
       }
 
-      /* 🖼️ Keep existing images */
-      let finalImages = existingImages ? JSON.parse(existingImages) : [];
+      // Delete removed color images from R2 and decrement storage
+      if (removedColorImageKeys) {
+        const keys = JSON.parse(removedColorImageKeys).filter(Boolean);
+        if (keys.length > 0) {
+          const existingColors = product.colors || [];
+          const removedColorBytes = existingColors
+            .filter((c) => keys.includes(c.imageKey))
+            .reduce((sum, c) => sum + (c.imageSizeBytes || 0), 0);
+          await deleteMultipleFromR2(keys);
+          if (removedColorBytes > 0)
+            await decrementSellerStorage(sellerId, removedColorBytes);
+        }
+      }
 
-      /* ➕ Add new uploaded images */
-      if (req.files && req.files.length > 0) {
-        const newImages = req.files.map((file) =>
-          getImageUrlPath("products", file.filename),
+      // Upload new product images to R2 (main 1280px + thumbnail 300px)
+      let totalUploadedBytes = 0;
+      const imageFiles = req.files?.images || [];
+      if (imageFiles.length > 0) {
+        const existingCount = await ProductImage.count({
+          where: { product_id: productId },
+        });
+        for (let i = 0; i < imageFiles.length; i++) {
+          const file = imageFiles[i];
+          const basePath = `shops/${sellerId}/products/${productId}`;
+          const { mainKey, thumbKey, sizeBytes } = await uploadToR2WithThumb(
+            file.buffer,
+            basePath,
+          );
+          totalUploadedBytes += sizeBytes;
+          await ProductImage.create({
+            product_id: productId,
+            image_key: mainKey,
+            thumb_key: thumbKey,
+            is_main: existingCount === 0 && i === 0,
+            size_bytes: sizeBytes,
+          });
+        }
+      }
+
+      // Parse colors and upload new color images
+      const rawColors = colorsBody ? JSON.parse(colorsBody) : [];
+      const parsedSizes = sizesBody
+        ? JSON.parse(sizesBody).filter((s) => s && s.trim())
+        : [];
+
+      const finalColors = rawColors.map((c) => ({ ...c }));
+      for (let i = 0; i < finalColors.length; i++) {
+        const colorFile = req.files?.[`colorImage_${i}`]?.[0];
+        if (colorFile) {
+          // Decrement storage for the old color image being replaced
+          if (finalColors[i].imageKey) {
+            const oldColor = (product.colors || []).find(
+              (c) => c.imageKey === finalColors[i].imageKey,
+            );
+            if (oldColor?.imageSizeBytes)
+              await decrementSellerStorage(sellerId, oldColor.imageSizeBytes);
+            await deleteFromR2(finalColors[i].imageKey);
+          }
+          const filename = `${uuidv4()}.webp`;
+          const key = `shops/${sellerId}/products/${productId}/colors/${filename}`;
+          const { sizeBytes } = await uploadToR2(colorFile.buffer, key);
+          totalUploadedBytes += sizeBytes;
+          finalColors[i].imageKey = key;
+          finalColors[i].imageSizeBytes = sizeBytes;
+        }
+        // If no new file, keep existing imageKey (and imageSizeBytes) as-is
+      }
+
+      if (totalUploadedBytes > 0)
+        await incrementSellerStorage(sellerId, totalUploadedBytes);
+
+      // Update is_main based on cover selection sent by frontend
+      if (coverImageKey) {
+        // Existing image selected as cover
+        await ProductImage.update(
+          { is_main: false },
+          { where: { product_id: productId } },
         );
-        finalImages = [...finalImages, ...newImages];
+        await ProductImage.update(
+          { is_main: true },
+          { where: { product_id: productId, image_key: coverImageKey } },
+        );
+      } else if (
+        newCoverIndexRaw !== undefined &&
+        newCoverIndexRaw !== null &&
+        newCoverIndexRaw !== ""
+      ) {
+        // New image selected as cover — newCoverIndex is position among newly uploaded files
+        const newCoverIndex = Math.max(0, parseInt(newCoverIndexRaw, 10) || 0);
+        const newImageRecords = await ProductImage.findAll({
+          where: { product_id: productId },
+          order: [["id", "DESC"]],
+          limit: imageFiles.length,
+        });
+        // Records are newest first, so reverse to match upload order
+        newImageRecords.reverse();
+        if (newImageRecords[newCoverIndex]) {
+          await ProductImage.update(
+            { is_main: false },
+            { where: { product_id: productId } },
+          );
+          await ProductImage.update(
+            { is_main: true },
+            { where: { id: newImageRecords[newCoverIndex].id } },
+          );
+        }
       }
 
       const isRealPrice = hasRealPrice === "true" || hasRealPrice === true;
 
-      // Parse and filter out empty variant/custom rows
       const parsedVariantPrices = variantPrices
         ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
         : [];
-      const parsedVariantPricesAr = variantPricesAr
-        ? JSON.parse(variantPricesAr).filter((v) => v.price && v.price !== "")
-        : [];
+      const derivedVariantPricesAr = deriveVariantPricesAr(
+        parsedVariantPrices,
+        finalColors,
+      );
+
       const parsedCustomInputs = customInputs
         ? JSON.parse(customInputs).filter((c) => c.name && c.name !== "")
         : [];
@@ -251,14 +442,12 @@ router.put(
         priceType,
         youtubeLinks: youtubeLinks ? JSON.parse(youtubeLinks) : [],
         variantPrices: parsedVariantPrices,
-        variantPricesAr: parsedVariantPricesAr,
+        variantPricesAr: derivedVariantPricesAr,
+        colors: finalColors.length > 0 ? finalColors : null,
+        sizes: parsedSizes.length > 0 ? parsedSizes : null,
         customInputs: parsedCustomInputs,
         customInputsAr: parsedCustomInputsAr,
-        images: finalImages,
         category: category || null,
-        tiktokUrl: tiktokUrl || null,
-        tiktokUsername: tiktokUsername || null,
-        tiktokVideoId: tiktokVideoId || null,
       });
 
       res.status(200).json({
@@ -296,9 +485,33 @@ router.delete(
           .json({ success: false, error: true, message: "Product not found" });
       }
 
-      /* 🧹 Delete all images from disk */
-      if (product.images && product.images.length > 0) {
-        product.images.forEach((img) => deleteImage(img));
+      // Delete all R2 images for this product and update storage
+      const imageRecords = await ProductImage.findAll({
+        where: { product_id: productId },
+      });
+
+      if (imageRecords.length > 0) {
+        const keys = imageRecords.map((r) => r.image_key);
+        const thumbKeys = imageRecords.map((r) => r.thumb_key).filter(Boolean);
+        const totalBytes = imageRecords.reduce(
+          (sum, r) => sum + (r.size_bytes || 0),
+          0,
+        );
+        await deleteMultipleFromR2([...keys, ...thumbKeys]);
+        await ProductImage.destroy({ where: { product_id: productId } });
+        await decrementSellerStorage(sellerId, totalBytes);
+      }
+
+      // Delete color images from R2 and decrement their storage
+      const colorImages = (product.colors || []).filter((c) => c.imageKey);
+      if (colorImages.length > 0) {
+        const colorKeys = colorImages.map((c) => c.imageKey);
+        const colorBytes = colorImages.reduce(
+          (sum, c) => sum + (c.imageSizeBytes || 0),
+          0,
+        );
+        await deleteMultipleFromR2(colorKeys);
+        if (colorBytes > 0) await decrementSellerStorage(sellerId, colorBytes);
       }
 
       await product.destroy();
@@ -355,6 +568,14 @@ router.get("/products/shop/:shopName", async (req, res) => {
         "variantPrices",
         "variantPricesAr",
         "category",
+      ],
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "is_main"],
+          required: false,
+        },
       ],
       order: [["createdAt", "DESC"]],
       limit,

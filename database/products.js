@@ -88,6 +88,16 @@ const Product = sequelize.define(
       type: DataTypes.BOOLEAN,
       defaultValue: true,
     },
+    colors: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      comment: "Array of unique color strings derived from variantPrices",
+    },
+    sizes: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      comment: "Array of unique size strings derived from variantPrices",
+    },
     variantPrices: {
       type: DataTypes.JSON,
       allowNull: true,
@@ -117,17 +127,7 @@ const Product = sequelize.define(
       allowNull: true,
       defaultValue: null,
     },
-    tiktokUrl: {
-      type: DataTypes.STRING,
-      allowNull: true,
-      defaultValue: null,
-    },
-    tiktokUsername: {
-      type: DataTypes.STRING,
-      allowNull: true,
-      defaultValue: null,
-    },
-    tiktokVideoId: {
+    subcategory: {
       type: DataTypes.STRING,
       allowNull: true,
       defaultValue: null,

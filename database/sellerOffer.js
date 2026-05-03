@@ -54,6 +54,12 @@ const SellerOffer = sequelize.define(
       allowNull: true,
     },
 
+    cover_image_size_bytes: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
+
     start_date: {
       type: DataTypes.DATE,
       allowNull: false,

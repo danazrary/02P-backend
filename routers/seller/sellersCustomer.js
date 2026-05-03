@@ -1,6 +1,7 @@
 import { Router } from "express";
 import Product from "../../database/products.js";
 import Seller from "../../database/seller.js";
+import ProductImage from "../../database/productImages.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
@@ -246,7 +247,16 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
           "free_delivery",
           "variantPrices",
           "variantPricesAr",
+          "colors",
           "category",
+          "subcategory",
+        ],
+        include: [
+          {
+            model: ProductImage,
+            as: "productImages",
+            attributes: ["image_key", "is_main"],
+          },
         ],
         limit: productLimit,
         offset: productOffset,
@@ -341,6 +351,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       sellerPlan: plan ? plan.name : "Free",
       brand_color: seller.brand_color || null,
       categories: seller.categories || [],
+      subcategories_map: seller.subcategories_map || {},
+      category_images: seller.category_images || {},
       products,
       totalProducts,
       hasMoreProducts,
@@ -390,7 +402,15 @@ router.get("/more-products/:sellerId", async (req, res) => {
         "free_delivery",
         "variantPrices",
         "variantPricesAr",
+        "colors",
         "category",
+      ],
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "is_main"],
+        },
       ],
       limit,
       offset,
@@ -452,7 +472,15 @@ router.get("/products-by-category/:sellerId", async (req, res) => {
         "free_delivery",
         "variantPrices",
         "variantPricesAr",
+        "colors",
         "category",
+      ],
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "is_main"],
+        },
       ],
       limit,
       offset,

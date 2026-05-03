@@ -28,6 +28,12 @@ const Plan = sequelize.define(
       type: DataTypes.INTEGER,
       allowNull: false,
     },
+    storage_limit_mb: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: false,
+      defaultValue: 500, // 500 MB default
+      comment: "Maximum R2 storage allowed for this plan in megabytes",
+    },
   },
   {
     tableName: "plans",

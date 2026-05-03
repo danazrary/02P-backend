@@ -25,3 +25,22 @@ export const sellerAuthLimiter = rateLimit({
     errorMsg: "کیشەێک ڕوویدا تکایە دواتر هەوڵبدەوە",
   },
 });
+
+/**
+ * Upload-specific rate limiter: 10 upload requests per minute per user.
+ * Keyed on JWT user ID (set by jwtVerifySellerToken) with IP as fallback.
+ * Must be applied AFTER the JWT middleware.
+ */
+export const uploadRateLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 4,
+  keyGenerator: (req) => (req.user?.id ? String(req.user.id) : req.ip),
+  message: {
+    success: false,
+    error: true,
+    errorMsg:
+      "Too many upload requests. Please wait a minute before trying again.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
