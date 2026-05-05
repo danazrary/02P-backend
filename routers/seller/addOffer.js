@@ -1,5 +1,6 @@
 import express from "express";
 import { v4 as uuidv4 } from "uuid";
+import sharp from "sharp";
 import SellerOffer from "../../database/sellerOffer.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import Product from "../../database/products.js";
@@ -19,6 +20,29 @@ import {
 } from "../../middlewares/checkStorageLimit.js";
 
 const router = express.Router();
+const MAX_OFFER_IMAGE_BYTES = 25 * 1024 * 1024;
+
+async function validateOfferCoverImage(file) {
+  if (!file) return null;
+
+  if (file.size > MAX_OFFER_IMAGE_BYTES) {
+    return "Offer cover image must be 25MB or smaller.";
+  }
+
+  try {
+    const metadata = await sharp(file.buffer).metadata();
+    const width = metadata.width || 0;
+    const height = metadata.height || 0;
+
+    if (!width || !height) {
+      return "Offer cover image is invalid. Please choose another image.";
+    }
+  } catch (err) {
+    return "Offer cover image is invalid. Please choose another image.";
+  }
+
+  return null;
+}
 
 // Route to create offer
 router.post(
@@ -94,14 +118,31 @@ router.post(
         apply_to,
       } = req.body;
 
+      const imageValidationError = await validateOfferCoverImage(req.file);
+      if (imageValidationError) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: imageValidationError,
+        });
+      }
+
       // const { id } = req.user;
 
       // Upload cover image to R2
       let cover_image = null;
       let coverImageBytes = 0;
       if (req.file) {
-        const offerKey = `shops/${id}/offers/${uuidv4()}/cover.webp`;
-        const { sizeBytes } = await uploadToR2(req.file.buffer, offerKey);
+        const offerKey = buildR2Key("offers", id, uuidv4(), "cover.webp");
+        const { sizeBytes } = await uploadToR2(req.file.buffer, offerKey, {
+          width: 1920,
+          height: 1080,
+          fit: "contain",
+          background: { r: 255, g: 255, b: 255, alpha: 1 },
+          qualities: [90, 86, 82, 78],
+          maxOutputBytes: 3 * 1024 * 1024,
+          withoutEnlargement: false,
+        });
         cover_image = offerKey;
         coverImageBytes = sizeBytes;
       }
@@ -202,6 +243,15 @@ router.put(
         apply_to,
       } = req.body;
 
+      const imageValidationError = await validateOfferCoverImage(req.file);
+      if (imageValidationError) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: imageValidationError,
+        });
+      }
+
       // Delete old R2 cover image and upload new one
       let cover_image = offer.cover_image;
       let newCoverImageBytes = offer.cover_image_size_bytes || 0;
@@ -213,8 +263,16 @@ router.put(
             offer.cover_image_size_bytes || 0,
           );
         }
-        const offerKey = `shops/${sellerId}/offers/${uuidv4()}/cover.webp`;
-        const { sizeBytes } = await uploadToR2(req.file.buffer, offerKey);
+        const offerKey = buildR2Key("offers", sellerId, uuidv4(), "cover.webp");
+        const { sizeBytes } = await uploadToR2(req.file.buffer, offerKey, {
+          width: 1920,
+          height: 1080,
+          fit: "contain",
+          background: { r: 255, g: 255, b: 255, alpha: 1 },
+          qualities: [90, 86, 82, 78],
+          maxOutputBytes: 3 * 1024 * 1024,
+          withoutEnlargement: false,
+        });
         cover_image = offerKey;
         newCoverImageBytes = sizeBytes;
         await incrementSellerStorage(sellerId, sizeBytes);

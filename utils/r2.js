@@ -72,6 +72,17 @@ const BUCKET = process.env.R2_BUCKET_NAME;
 const MAX_INPUT_BYTES = 25 * 1024 * 1024; // 25 MB raw upload ceiling
 const MAX_OUTPUT_BYTES = 1 * 1024 * 1024; // 1 MB post-compression ceiling
 
+const DEFAULT_UPLOAD_OPTIONS = {
+  width: 1280,
+  height: 1280,
+  fit: "inside",
+  withoutEnlargement: true,
+  background: undefined,
+  qualities: [80, 75, 70],
+  maxOutputBytes: MAX_OUTPUT_BYTES,
+  webpEffort: 6,
+};
+
 /**
  * Build a structured R2 key for an image.
  * @param {"products"|"offers"|"branding"} type
@@ -94,32 +105,42 @@ export function buildR2Key(type, sellerId, resourceId, filename) {
  * Throws if even quality-70 exceeds the limit.
  *
  * @param {Buffer} buffer
+ * @param {Object} options
  * @returns {Promise<Buffer>} WebP buffer
  */
-async function _compressImage(buffer) {
-  const qualities = [80, 75, 70];
+async function _compressImage(buffer, options = {}) {
+  const config = { ...DEFAULT_UPLOAD_OPTIONS, ...options };
+  const qualities = Array.isArray(config.qualities)
+    ? config.qualities
+    : DEFAULT_UPLOAD_OPTIONS.qualities;
+
   for (const quality of qualities) {
+    const resizeOptions = {
+      width: config.width,
+      height: config.height,
+      fit: config.fit,
+      withoutEnlargement: config.withoutEnlargement,
+    };
+    if (config.background) {
+      resizeOptions.background = config.background;
+    }
+
     const result = await sharp(buffer)
-      .resize({
-        width: 1280,
-        height: 1280,
-        fit: "inside",
-        withoutEnlargement: true,
-      })
-      .webp({ quality, effort: 6 })
+      .resize(resizeOptions)
+      .webp({ quality, effort: config.webpEffort })
       .toBuffer();
 
-    if (result.length <= MAX_OUTPUT_BYTES) {
+    if (result.length <= config.maxOutputBytes) {
       return result;
     }
 
-    if (quality === 70) {
+    if (quality === qualities[qualities.length - 1]) {
       throw new Error(
-        `Image cannot be compressed below 1 MB (size at q=70: ${(result.length / 1024 / 1024).toFixed(2)} MB). Use a smaller source image.`,
+        `Image cannot be compressed below ${(config.maxOutputBytes / 1024 / 1024).toFixed(0)} MB (size at quality=${quality}: ${(result.length / 1024 / 1024).toFixed(2)} MB). Use a smaller source image.`,
       );
     }
     console.warn(
-      `⚠️  R2 compress q=${quality}: ${(result.length / 1024).toFixed(0)} KB > 1 MB — retrying lower quality`,
+      `⚠️  R2 compress q=${quality}: ${(result.length / 1024).toFixed(0)} KB > ${(config.maxOutputBytes / 1024).toFixed(0)} KB — retrying lower quality`,
     );
   }
 }
@@ -165,16 +186,17 @@ async function _putToR2(buffer, key) {
  *
  * @param {Buffer} buffer - Raw file buffer from multer memoryStorage
  * @param {string} key    - Full R2 object key
+ * @param {Object} options
  * @returns {Promise<{key: string, sizeBytes: number}>}
  */
-export async function uploadToR2(buffer, key) {
+export async function uploadToR2(buffer, key, options = {}) {
   // ── Defensive buffer validation ──────────────────────────────────────────
   if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
     throw new Error("uploadToR2: invalid or empty buffer");
   }
   if (buffer.length > MAX_INPUT_BYTES) {
     throw new Error(
-      `uploadToR2: file (${(buffer.length / 1024 / 1024).toFixed(2)} MB) exceeds 5 MB raw upload limit`,
+      `uploadToR2: file (${(buffer.length / 1024 / 1024).toFixed(2)} MB) exceeds 25 MB raw upload limit`,
     );
   }
 
@@ -184,7 +206,7 @@ export async function uploadToR2(buffer, key) {
   await _acquireSharp();
   let webpBuffer;
   try {
-    webpBuffer = await _compressImage(buffer);
+    webpBuffer = await _compressImage(buffer, options);
   } finally {
     _releaseSharp();
   }
@@ -224,7 +246,7 @@ export async function uploadToR2WithThumb(buffer, basePath) {
   }
   if (buffer.length > MAX_INPUT_BYTES) {
     throw new Error(
-      `uploadToR2WithThumb: file (${(buffer.length / 1024 / 1024).toFixed(2)} MB) exceeds 5 MB raw upload limit`,
+      `uploadToR2WithThumb: file (${(buffer.length / 1024 / 1024).toFixed(2)} MB) exceeds 25 MB raw upload limit`,
     );
   }
 
@@ -329,7 +351,7 @@ export const r2Multer = multer({
     cb(null, true);
   },
   limits: {
-    fileSize: MAX_INPUT_BYTES, // 5 MB per file (raw)
+    fileSize: MAX_INPUT_BYTES, // 25 MB per file (raw)
     files: 20, // max 20 files per request
   },
 });

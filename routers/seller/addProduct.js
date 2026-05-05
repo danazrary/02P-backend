@@ -125,10 +125,7 @@ router.post(
         category,
         colors: colorsBody,
         sizes: sizesBody,
-        coverIndex: coverIndexRaw,
       } = req.body;
-
-      const coverIndex = Math.max(0, parseInt(coverIndexRaw, 10) || 0);
 
       const isRealPricePost = hasRealPrice === "true" || hasRealPrice === true;
 
@@ -192,7 +189,7 @@ router.post(
           product_id: product.id,
           image_key: mainKey,
           thumb_key: thumbKey,
-          is_main: i === coverIndex,
+          is_main: i === 0,
           size_bytes: sizeBytes,
         });
       }
@@ -279,8 +276,6 @@ router.put(
         category,
         colors: colorsBody,
         sizes: sizesBody,
-        coverImageKey,
-        newCoverIndex: newCoverIndexRaw,
       } = req.body;
 
       // Delete removed product images (main + thumb) and update storage
@@ -376,43 +371,6 @@ router.put(
 
       if (totalUploadedBytes > 0)
         await incrementSellerStorage(sellerId, totalUploadedBytes);
-
-      // Update is_main based on cover selection sent by frontend
-      if (coverImageKey) {
-        // Existing image selected as cover
-        await ProductImage.update(
-          { is_main: false },
-          { where: { product_id: productId } },
-        );
-        await ProductImage.update(
-          { is_main: true },
-          { where: { product_id: productId, image_key: coverImageKey } },
-        );
-      } else if (
-        newCoverIndexRaw !== undefined &&
-        newCoverIndexRaw !== null &&
-        newCoverIndexRaw !== ""
-      ) {
-        // New image selected as cover — newCoverIndex is position among newly uploaded files
-        const newCoverIndex = Math.max(0, parseInt(newCoverIndexRaw, 10) || 0);
-        const newImageRecords = await ProductImage.findAll({
-          where: { product_id: productId },
-          order: [["id", "DESC"]],
-          limit: imageFiles.length,
-        });
-        // Records are newest first, so reverse to match upload order
-        newImageRecords.reverse();
-        if (newImageRecords[newCoverIndex]) {
-          await ProductImage.update(
-            { is_main: false },
-            { where: { product_id: productId } },
-          );
-          await ProductImage.update(
-            { is_main: true },
-            { where: { id: newImageRecords[newCoverIndex].id } },
-          );
-        }
-      }
 
       const isRealPrice = hasRealPrice === "true" || hasRealPrice === true;
 

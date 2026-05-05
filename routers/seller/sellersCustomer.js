@@ -504,4 +504,150 @@ router.get("/products-by-category/:sellerId", async (req, res) => {
   }
 });
 
+/**
+ * GET /shop-discounts/:shopName
+ * Public endpoint to fetch products with discounts or free delivery for a shop.
+ * Categorizes into: expiringSoon (<24h), both, discountOnly, freeDeliveryOnly
+ * Query params:
+ *   type: "all" | "expiring_soon" | "both" | "discount_only" | "free_delivery_only"
+ *   limit: number (default 5, max 50)
+ *   offset: number (default 0) — used when type != "all"
+ */
+router.get("/shop-discounts/:shopName", async (req, res) => {
+  try {
+    const { shopName } = req.params;
+    const type = req.query.type || "all";
+    const limit = Math.min(parseInt(req.query.limit, 10) || 5, 50);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+    const seller = await Seller.findOne({
+      where: { shop_name: shopName },
+      attributes: ["id"],
+    });
+
+    if (!seller) {
+      return res
+        .status(404)
+        .json({ success: false, error: true, message: "Shop not found" });
+    }
+
+    const PRODUCT_ATTRS = [
+      "id",
+      "hasRealPrice",
+      "language",
+      "titleKu",
+      "titleAr",
+      "images",
+      "realPrice",
+      "priceType",
+      "hasDiscount",
+      "discount_percent",
+      "discountType",
+      "discountStartDate",
+      "discountEndDate",
+      "freeDeliveryStartDate",
+      "freeDeliveryEndDate",
+      "free_delivery",
+      "variantPrices",
+      "variantPricesAr",
+      "colors",
+      "sizes",
+      "category",
+      "subcategory",
+    ];
+
+    // Fetch all products that have any discount or free delivery active
+    const rawProducts = await Product.findAll({
+      where: {
+        seller_id: seller.id,
+        [Op.or]: [{ hasDiscount: true }, { free_delivery: true }],
+      },
+      attributes: PRODUCT_ATTRS,
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "is_main"],
+        },
+      ],
+      order: [["id", "DESC"]],
+    });
+
+    // Clean expired discounts / free delivery
+    const products = await checkAndCleanProductExpiration(rawProducts);
+
+    const now = new Date();
+    const in24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+    const isExpiringSoon = (p) => {
+      const discountExpiring =
+        p.hasDiscount &&
+        p.discountType === "timer" &&
+        p.discountEndDate &&
+        new Date(p.discountEndDate) >= now &&
+        new Date(p.discountEndDate) <= in24Hours;
+      const deliveryExpiring =
+        p.free_delivery &&
+        p.freeDeliveryEndDate &&
+        new Date(p.freeDeliveryEndDate) >= now &&
+        new Date(p.freeDeliveryEndDate) <= in24Hours;
+      return discountExpiring || deliveryExpiring;
+    };
+
+    const expiringSoon = [];
+    const both = [];
+    const discountOnly = [];
+    const freeDeliveryOnly = [];
+
+    for (const p of products) {
+      if (!p.hasDiscount && !p.free_delivery) continue; // cleaned-up product
+      if (isExpiringSoon(p)) {
+        expiringSoon.push(p);
+      } else if (p.hasDiscount && p.free_delivery) {
+        both.push(p);
+      } else if (p.hasDiscount) {
+        discountOnly.push(p);
+      } else if (p.free_delivery) {
+        freeDeliveryOnly.push(p);
+      }
+    }
+
+    if (type === "all") {
+      return res.status(200).json({
+        success: true,
+        expiringSoon: expiringSoon.slice(0, limit),
+        expiringSoonTotal: expiringSoon.length,
+        both: both.slice(0, limit),
+        bothTotal: both.length,
+        discountOnly: discountOnly.slice(0, limit),
+        discountOnlyTotal: discountOnly.length,
+        freeDeliveryOnly: freeDeliveryOnly.slice(0, limit),
+        freeDeliveryOnlyTotal: freeDeliveryOnly.length,
+      });
+    }
+
+    // Single-type paginated response
+    const listMap = {
+      expiring_soon: expiringSoon,
+      both,
+      discount_only: discountOnly,
+      free_delivery_only: freeDeliveryOnly,
+    };
+    const list = listMap[type] || [];
+    const paginated = list.slice(offset, offset + limit);
+
+    return res.status(200).json({
+      success: true,
+      products: paginated,
+      total: list.length,
+      hasMore: offset + limit < list.length,
+    });
+  } catch (err) {
+    console.error("[shop-discounts]", err);
+    return res
+      .status(500)
+      .json({ success: false, error: true, message: "Server error" });
+  }
+});
+
 export default router;
