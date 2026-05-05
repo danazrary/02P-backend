@@ -1,5 +1,6 @@
 import { Router } from "express";
 import Product from "../../database/products.js";
+import ProductImage from "../../database/productImages.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { Op } from "sequelize";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
@@ -12,7 +13,7 @@ router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
   try {
     const { id } = req.user;
     const { filterType } = req.query; // 'discount', 'free_delivery', 'both', 'none'
-    const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+    const limit = Math.min(parseInt(req.query.limit) || 15, 100);
     const offset = parseInt(req.query.offset) || 0;
 
     let whereClause = { seller_id: id };
@@ -52,9 +53,18 @@ router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
         "freeDeliveryEndDate",
         "free_delivery",
       ],
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "thumb_key", "is_main"],
+          required: false,
+        },
+      ],
       limit,
       offset,
       order: [["id", "DESC"]],
+      distinct: true,
     });
 
     // Check and clean expired discounts and free delivery

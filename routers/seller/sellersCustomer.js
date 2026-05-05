@@ -234,7 +234,6 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
           "language",
           "titleKu",
           "titleAr",
-          "images",
           "realPrice",
           "priceType",
           "hasDiscount",
@@ -246,8 +245,6 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
           "freeDeliveryEndDate",
           "free_delivery",
           "variantPrices",
-          "variantPricesAr",
-          "colors",
           "category",
           "subcategory",
         ],
@@ -255,7 +252,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
           {
             model: ProductImage,
             as: "productImages",
-            attributes: ["image_key", "is_main"],
+            attributes: ["image_key", "thumb_key", "is_main"],
           },
         ],
         limit: productLimit,
@@ -389,7 +386,6 @@ router.get("/more-products/:sellerId", async (req, res) => {
         "language",
         "titleKu",
         "titleAr",
-        "images",
         "realPrice",
         "priceType",
         "hasDiscount",
@@ -401,15 +397,13 @@ router.get("/more-products/:sellerId", async (req, res) => {
         "freeDeliveryEndDate",
         "free_delivery",
         "variantPrices",
-        "variantPricesAr",
-        "colors",
         "category",
       ],
       include: [
         {
           model: ProductImage,
           as: "productImages",
-          attributes: ["image_key", "is_main"],
+          attributes: ["image_key", "thumb_key", "is_main"],
         },
       ],
       limit,
@@ -459,7 +453,6 @@ router.get("/products-by-category/:sellerId", async (req, res) => {
         "language",
         "titleKu",
         "titleAr",
-        "images",
         "realPrice",
         "priceType",
         "hasDiscount",
@@ -471,15 +464,13 @@ router.get("/products-by-category/:sellerId", async (req, res) => {
         "freeDeliveryEndDate",
         "free_delivery",
         "variantPrices",
-        "variantPricesAr",
-        "colors",
         "category",
       ],
       include: [
         {
           model: ProductImage,
           as: "productImages",
-          attributes: ["image_key", "is_main"],
+          attributes: ["image_key", "thumb_key", "is_main"],
         },
       ],
       limit,
@@ -501,6 +492,65 @@ router.get("/products-by-category/:sellerId", async (req, res) => {
       success: false,
       message: "Server error",
     });
+  }
+});
+
+/**
+ * GET /product-for-cart/:productId
+ * Public endpoint to fetch full product data needed by the Add to Cart modal.
+ * Returns all fields: variants, colors (with imageKey), sizes, images.
+ */
+router.get("/product-for-cart/:productId", async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const id = parseInt(productId, 10);
+    if (!id || isNaN(id)) {
+      return res.status(400).json({ success: false, message: "Invalid product ID" });
+    }
+
+    const product = await Product.findByPk(id, {
+      attributes: [
+        "id",
+        "seller_id",
+        "hasRealPrice",
+        "language",
+        "titleKu",
+        "titleAr",
+        "realPrice",
+        "priceType",
+        "hasDiscount",
+        "discount_percent",
+        "discountType",
+        "discountStartDate",
+        "discountEndDate",
+        "freeDeliveryStartDate",
+        "freeDeliveryEndDate",
+        "free_delivery",
+        "variantPrices",
+        "variantPricesAr",
+        "colors",
+        "sizes",
+        "customInputs",
+        "customInputsAr",
+        "images",
+      ],
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "thumb_key", "is_main"],
+        },
+      ],
+    });
+
+    if (!product) {
+      return res.status(404).json({ success: false, message: "Product not found" });
+    }
+
+    return res.status(200).json({ success: true, product });
+  } catch (error) {
+    console.error("Error fetching product for cart:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
@@ -567,7 +617,7 @@ router.get("/shop-discounts/:shopName", async (req, res) => {
         {
           model: ProductImage,
           as: "productImages",
-          attributes: ["image_key", "is_main"],
+          attributes: ["image_key", "thumb_key", "is_main"],
         },
       ],
       order: [["id", "DESC"]],

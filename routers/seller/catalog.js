@@ -10,15 +10,28 @@ const router = Router();
 
 /**
  * GET /catalog/products
- * Returns a lightweight list of all seller products for catalog management.
- * Includes: id, title (ku/ar), realPrice, priceType, category, subcategory, thumbnail
+ * Returns a paginated lightweight list of seller products for catalog management.
+ * Query params: limit, offset, search (titleKu/titleAr), category
  */
 router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
   try {
     const sellerId = req.user.id;
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 100);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+    const search = req.query.search?.trim() || "";
+    const category = req.query.category?.trim() || "";
 
-    const products = await Product.findAll({
-      where: { seller_id: sellerId },
+    const where = { seller_id: sellerId };
+    if (category) where.category = category;
+    if (search) {
+      where[Op.or] = [
+        { titleKu: { [Op.like]: `%${search}%` } },
+        { titleAr: { [Op.like]: `%${search}%` } },
+      ];
+    }
+
+    const { count, rows } = await Product.findAndCountAll({
+      where,
       attributes: [
         "id",
         "titleKu",
@@ -36,14 +49,18 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
           as: "productImages",
           attributes: ["image_key", "thumb_key", "is_main"],
           required: false,
-          where: { is_main: true },
         },
       ],
       order: [["createdAt", "DESC"]],
+      limit,
+      offset,
+      distinct: true,
+      subQuery: false,
     });
 
-    const data = products.map((p) => {
-      const mainImg = p.productImages?.[0];
+    const data = rows.map((p) => {
+      // Prefer is_main image, fall back to first image
+      const mainImg = p.productImages?.find((img) => img.is_main) || p.productImages?.[0];
       return {
         id: p.id,
         titleKu: p.titleKu,
@@ -57,9 +74,13 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
       };
     });
 
-    return res
-      .status(200)
-      .json({ success: true, error: false, products: data });
+    return res.status(200).json({
+      success: true,
+      error: false,
+      products: data,
+      total: count,
+      hasMore: offset + data.length < count,
+    });
   } catch (error) {
     console.error("Error fetching catalog products:", error);
     return res
