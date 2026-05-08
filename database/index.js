@@ -13,6 +13,7 @@ import Question from "./questions.js";
 import Report from "./report.js";
 import SellerUsage from "./sellerUsage.js";
 import ProductImage from "./productImages.js";
+import SellerCategory from "./sellerCategory.js";
 
 /* ============================
    ASSOCIATIONS
@@ -40,6 +41,20 @@ Product.hasMany(ProductImage, {
 });
 ProductImage.belongsTo(Product, { foreignKey: "product_id" });
 
+// SellerCategory: one seller has many categories (and subcategories)
+Seller.hasMany(SellerCategory, { foreignKey: "seller_id", as: "sellerCategories" });
+SellerCategory.belongsTo(Seller, { foreignKey: "seller_id" });
+
+// SellerCategory self-reference: parent → children (subcategories)
+SellerCategory.hasMany(SellerCategory, {
+  foreignKey: "parent_id",
+  as: "subcategories",
+});
+SellerCategory.belongsTo(SellerCategory, {
+  foreignKey: "parent_id",
+  as: "parentCategory",
+});
+
 /* Seller.hasMany(SellerPlan, { foreignKey: "seller_id" });
 SellerPlan.belongsTo(Seller, { foreignKey: "seller_id" });
 
@@ -66,6 +81,7 @@ export {
   Report,
   SellerUsage,
   ProductImage,
+  SellerCategory,
 };
 
 /* import { Sequelize } from "sequelize";

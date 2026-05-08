@@ -132,6 +132,18 @@ const Product = sequelize.define(
       allowNull: true,
       defaultValue: null,
     },
+    category_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null,
+      comment: "FK to seller_categories.id (NULL = uses legacy string category)",
+    },
+    subcategory_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null,
+      comment: "FK to seller_categories.id where parent_id IS NOT NULL",
+    },
   },
   {
     timestamps: true,
