@@ -11,6 +11,7 @@
 import SellerPlan from "../database/sellerPlan.js";
 import Plan from "../database/plan.js";
 import SellerUsage from "../database/sellerUsage.js";
+import { ensureSellerStorageUsage } from "../utils/sellerStorageUsage.js";
 
 const BYTES_PER_MB = 1024 * 1024;
 
@@ -65,13 +66,9 @@ export async function checkStorageLimit(req, res, next) {
 
     const limitMb = parseFloat(plan.storage_limit_mb) || 500;
 
-    // Get current usage (upsert ensures the row exists)
-    const [usageRecord] = await SellerUsage.findOrCreate({
-      where: { seller_id: sellerId },
-      defaults: { storage_used_mb: 0 },
+    const usedMb = await ensureSellerStorageUsage(sellerId, plan, {
+      force: true,
     });
-
-    const usedMb = parseFloat(usageRecord.storage_used_mb) || 0;
     const incomingMb = incomingBytes / BYTES_PER_MB;
 
     if (usedMb + incomingMb > limitMb) {

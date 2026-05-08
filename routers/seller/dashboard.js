@@ -8,10 +8,10 @@ import Seller from "../../database/seller.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
-import SellerUsage from "../../database/sellerUsage.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { clearCookieOpts } from "../../utils/addingToken.js";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
+import { ensureSellerStorageUsage } from "../../utils/sellerStorageUsage.js";
 import {
   processRedLineData,
   getRedLineStatus,
@@ -323,7 +323,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       currentOfferCount,
       offers,
       { count: totalProductsCount, rows: rawProducts },
-      sellerUsage,
+      storageUsedMb,
     ] = await Promise.all([
       Product.count({ where: { seller_id: id } }),
       SellerOffer.count({ where: { seller_id: id, is_active: true } }),
@@ -381,7 +381,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         offset: productOffset,
         order: [["id", "DESC"]],
       }),
-      SellerUsage.findOne({ where: { seller_id: id } }),
+      ensureSellerStorageUsage(id, planRow, { force: false }),
     ]);
 
     // ── 8. Expired offer cleanup (WRITE — fire-and-forget, non-blocking) ──────
@@ -460,7 +460,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       current_product_count: currentProductCount,
       current_offer_count: currentOfferCount,
       storage_limit_mb: planRow?.storage_limit_mb ?? 0,
-      storage_used_mb: parseFloat(sellerUsage?.storage_used_mb ?? 0),
+      storage_used_mb: parseFloat(storageUsedMb ?? 0),
       default_shop_lang: seller.default_shop_lang || "ku",
     });
   } catch (error) {

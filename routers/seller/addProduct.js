@@ -21,33 +21,137 @@ import {
   deleteMultipleFromR2,
   isLocalEnv,
 } from "../../utils/r2.js";
+import getTikTokEmbedUrl, {
+  isTikTokUrlCandidate,
+} from "../../utils/getTikTokEmbedUrl.js";
 
 const router = express.Router();
+const MAX_COLOR_IMAGE_FIELDS = 15;
+const ADVANCED_PLAN_ALIASES = new Set([
+  "large seller",
+  "plus",
+  "plus plan",
+  "business",
+  "business pro",
+  "business pro plan",
+]);
 
-/** Accept product images + up to 5 per-color images. */
+/** Accept product images + up to 15 per-color images. */
 const productUpload = r2Multer.fields([
   { name: "images", maxCount: 5 },
-  { name: "colorImage_0", maxCount: 1 },
-  { name: "colorImage_1", maxCount: 1 },
-  { name: "colorImage_2", maxCount: 1 },
-  { name: "colorImage_3", maxCount: 1 },
-  { name: "colorImage_4", maxCount: 1 },
+  ...Array.from({ length: MAX_COLOR_IMAGE_FIELDS }, (_, index) => ({
+    name: `colorImage_${index}`,
+    maxCount: 1,
+  })),
 ]);
 
 /**
- * Build variantPricesAr by replacing Kurdish color names with Arabic ones.
+ * Build variantPricesAr by replacing Kurdish color and size names with Arabic ones.
  * Falls back to original value if no mapping found.
  */
-function deriveVariantPricesAr(variantPrices, colors) {
-  const kuToAr = {};
+function deriveVariantPricesAr(variantPrices, colors, sizes) {
+  const kuToArColor = {};
   (colors || []).forEach((c) => {
-    if (c.nameKu && c.nameAr) kuToAr[c.nameKu] = c.nameAr;
-    if (c.nameAr) kuToAr[c.nameAr] = c.nameAr; // identity for arabic-only products
+    if (c.nameKu && c.nameAr) kuToArColor[c.nameKu] = c.nameAr;
+    if (c.nameAr) kuToArColor[c.nameAr] = c.nameAr; // identity for arabic-only products
+  });
+  const kuToArSize = {};
+  (sizes || []).forEach((s) => {
+    if (typeof s === "string") {
+      kuToArSize[s] = s; // old string format — identity
+    } else {
+      if (s.nameKu && s.nameAr) kuToArSize[s.nameKu] = s.nameAr;
+      if (s.nameAr) kuToArSize[s.nameAr] = s.nameAr; // identity for arabic-only
+    }
   });
   return variantPrices.map((v) => ({
     ...v,
-    color: kuToAr[v.color] ?? v.color,
+    color: kuToArColor[v.color] ?? v.color,
+    size: kuToArSize[v.size] ?? v.size,
   }));
+}
+
+async function normalizeVideoLinks(videoLinks) {
+  const normalizedLinks = [];
+
+  for (let index = 0; index < videoLinks.length; index += 1) {
+    const currentLink =
+      typeof videoLinks[index] === "string" ? videoLinks[index].trim() : "";
+
+    if (!currentLink) {
+      normalizedLinks.push("");
+      continue;
+    }
+
+    if (!isTikTokUrlCandidate(currentLink)) {
+      normalizedLinks.push(currentLink);
+      continue;
+    }
+
+    const embedUrl = await getTikTokEmbedUrl(currentLink);
+    if (!embedUrl) {
+      const invalidTikTokError = new Error(
+        `Invalid TikTok URL at index ${index}`,
+      );
+      invalidTikTokError.statusCode = 400;
+      invalidTikTokError.clientMessage =
+        `Invalid TikTok URL provided for video link ${index + 1}`;
+      throw invalidTikTokError;
+    }
+
+    normalizedLinks.push(embedUrl);
+  }
+
+  return normalizedLinks;
+}
+
+function normalizePlanValue(planName) {
+  return String(planName || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function getProductFieldLimit(plan) {
+  const normalizedPlan = normalizePlanValue(plan?.name);
+  const compactPlan = normalizedPlan.replace(/\s+/g, "");
+  const isAdvancedPlan =
+    ADVANCED_PLAN_ALIASES.has(normalizedPlan) ||
+    compactPlan === "businesspro" ||
+    (plan?.max_products ?? 0) >= 200;
+
+  return isAdvancedPlan ? 15 : 5;
+}
+
+function validateProductFieldLimits({
+  plan,
+  colors,
+  sizes,
+  customInputs,
+  customInputsAr,
+}) {
+  const fieldLimit = getProductFieldLimit(plan);
+  const counts = [
+    { label: "colors", count: colors.length },
+    { label: "sizes", count: sizes.length },
+    { label: "custom fields", count: customInputs.length },
+    { label: "custom fields", count: customInputsAr.length },
+  ];
+
+  const exceededField = counts.find(({ count }) => count > fieldLimit);
+
+  if (!exceededField) {
+    return fieldLimit;
+  }
+
+  const planLimitError = new Error(
+    `Plan field limit exceeded for ${exceededField.label}`,
+  );
+  planLimitError.statusCode = 400;
+  planLimitError.clientMessage =
+    `Your current seller plan allows up to ${fieldLimit} colors, ${fieldLimit} sizes, and ${fieldLimit} custom fields per product.`;
+  throw planLimitError;
 }
 
 // Route to create product
@@ -127,12 +231,26 @@ router.post(
         sizes: sizesBody,
       } = req.body;
 
+      const parsedYoutubeLinks = youtubeLinks ? JSON.parse(youtubeLinks) : [];
+      const normalizedYoutubeLinks = await normalizeVideoLinks(
+        parsedYoutubeLinks,
+      );
+
       const isRealPricePost = hasRealPrice === "true" || hasRealPrice === true;
 
-      // Parse colors [{nameKu, nameAr}] and sizes [string]
+      // Parse colors [{nameKu, nameAr}] and sizes [{nameKu, nameAr}]
       const rawColors = colorsBody ? JSON.parse(colorsBody) : [];
       const parsedSizes = sizesBody
-        ? JSON.parse(sizesBody).filter((s) => s && s.trim())
+        ? JSON.parse(sizesBody).filter((s) => {
+            if (typeof s === "string") return s && s.trim();
+            return s && (s.nameKu?.trim() || s.nameAr?.trim());
+          })
+        : [];
+      const parsedCustomInputs = customInputs
+        ? JSON.parse(customInputs).filter((c) => c.name && c.name !== "")
+        : [];
+      const parsedCustomInputsAr = customInputsAr
+        ? JSON.parse(customInputsAr).filter((c) => c.name && c.name !== "")
         : [];
 
       // Parse variant price combinations
@@ -140,10 +258,19 @@ router.post(
         ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
         : [];
 
-      // Auto-derive Arabic variant prices from colors mapping
+      validateProductFieldLimits({
+        plan,
+        colors: rawColors,
+        sizes: parsedSizes,
+        customInputs: parsedCustomInputs,
+        customInputsAr: parsedCustomInputsAr,
+      });
+
+      // Auto-derive Arabic variant prices from colors and sizes mapping
       const derivedVariantPricesAr = deriveVariantPricesAr(
         parsedVariantPrices,
         rawColors,
+        parsedSizes,
       );
 
       // Create product first so we have its ID for R2 key paths
@@ -156,19 +283,15 @@ router.post(
         descriptionKu,
         descriptionAr,
         images: [],
-        youtubeLinks: youtubeLinks ? JSON.parse(youtubeLinks) : [],
+        youtubeLinks: normalizedYoutubeLinks,
         realPrice: isRealPricePost && realPrice !== "" ? realPrice : null,
         priceType,
         variantPrices: parsedVariantPrices,
         variantPricesAr: derivedVariantPricesAr,
         colors: rawColors.length > 0 ? rawColors : null,
         sizes: parsedSizes.length > 0 ? parsedSizes : null,
-        customInputs: customInputs
-          ? JSON.parse(customInputs).filter((c) => c.name && c.name !== "")
-          : [],
-        customInputsAr: customInputsAr
-          ? JSON.parse(customInputsAr).filter((c) => c.name && c.name !== "")
-          : [],
+        customInputs: parsedCustomInputs,
+        customInputsAr: parsedCustomInputsAr,
         category: category || null,
       });
 
@@ -225,10 +348,10 @@ router.post(
       });
     } catch (error) {
       console.error(error);
-      res.status(500).json({
+      res.status(error.statusCode || 500).json({
         success: false,
         error: true,
-        message: "Failed to create product",
+        message: error.clientMessage || "Failed to create product",
       });
     }
   },
@@ -258,6 +381,20 @@ router.put(
           .json({ success: false, error: true, message: "Product not found" });
       }
 
+      const sellerPlan = await SellerPlan.findOne({
+        where: { seller_id: sellerId },
+      });
+
+      if (!sellerPlan) {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          message: "No plan found for this seller",
+        });
+      }
+
+      const plan = await Plan.findByPk(sellerPlan.plan_id);
+
       const {
         language,
         hasRealPrice,
@@ -277,6 +414,36 @@ router.put(
         colors: colorsBody,
         sizes: sizesBody,
       } = req.body;
+
+      const parsedYoutubeLinks = youtubeLinks ? JSON.parse(youtubeLinks) : [];
+      const normalizedYoutubeLinks = await normalizeVideoLinks(
+        parsedYoutubeLinks,
+      );
+
+      const rawColors = colorsBody ? JSON.parse(colorsBody) : [];
+      const parsedSizes = sizesBody
+        ? JSON.parse(sizesBody).filter((s) => {
+            if (typeof s === "string") return s && s.trim();
+            return s && (s.nameKu?.trim() || s.nameAr?.trim());
+          })
+        : [];
+      const parsedVariantPrices = variantPrices
+        ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
+        : [];
+      const parsedCustomInputs = customInputs
+        ? JSON.parse(customInputs).filter((c) => c.name && c.name !== "")
+        : [];
+      const parsedCustomInputsAr = customInputsAr
+        ? JSON.parse(customInputsAr).filter((c) => c.name && c.name !== "")
+        : [];
+
+      validateProductFieldLimits({
+        plan,
+        colors: rawColors,
+        sizes: parsedSizes,
+        customInputs: parsedCustomInputs,
+        customInputsAr: parsedCustomInputsAr,
+      });
 
       // Delete removed product images (main + thumb) and update storage
       if (removedImageKeys) {
@@ -340,12 +507,6 @@ router.put(
         }
       }
 
-      // Parse colors and upload new color images
-      const rawColors = colorsBody ? JSON.parse(colorsBody) : [];
-      const parsedSizes = sizesBody
-        ? JSON.parse(sizesBody).filter((s) => s && s.trim())
-        : [];
-
       const finalColors = rawColors.map((c) => ({ ...c }));
       for (let i = 0; i < finalColors.length; i++) {
         const colorFile = req.files?.[`colorImage_${i}`]?.[0];
@@ -374,20 +535,11 @@ router.put(
 
       const isRealPrice = hasRealPrice === "true" || hasRealPrice === true;
 
-      const parsedVariantPrices = variantPrices
-        ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
-        : [];
       const derivedVariantPricesAr = deriveVariantPricesAr(
         parsedVariantPrices,
         finalColors,
+        parsedSizes,
       );
-
-      const parsedCustomInputs = customInputs
-        ? JSON.parse(customInputs).filter((c) => c.name && c.name !== "")
-        : [];
-      const parsedCustomInputsAr = customInputsAr
-        ? JSON.parse(customInputsAr).filter((c) => c.name && c.name !== "")
-        : [];
 
       await product.update({
         language,
@@ -398,7 +550,7 @@ router.put(
         descriptionAr,
         realPrice: isRealPrice && realPrice !== "" ? realPrice : null,
         priceType,
-        youtubeLinks: youtubeLinks ? JSON.parse(youtubeLinks) : [],
+        youtubeLinks: normalizedYoutubeLinks,
         variantPrices: parsedVariantPrices,
         variantPricesAr: derivedVariantPricesAr,
         colors: finalColors.length > 0 ? finalColors : null,
@@ -416,10 +568,10 @@ router.put(
       });
     } catch (error) {
       console.error(error);
-      res.status(500).json({
+      res.status(error.statusCode || 500).json({
         success: false,
         error: true,
-        message: "Failed to update product",
+        message: error.clientMessage || "Failed to update product",
       });
     }
   },

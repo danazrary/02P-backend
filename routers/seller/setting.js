@@ -16,6 +16,11 @@ import { uploadSellerImage } from "../../middlewares/uploadSellerImage.js";
 import { getImageUrlPath, convertToWebp } from "../../utils/uploadHandler.js";
 import { isReservedShopName } from "../../utils/reservedShopNames.js";
 import { toUTC } from "../../utils/timezoneHandler.js";
+import {
+  decrementSellerStorage,
+  incrementSellerStorage,
+} from "../../middlewares/checkStorageLimit.js";
+import { getStoredAssetBytes } from "../../utils/sellerStorageUsage.js";
 
 const router = Router();
 
@@ -227,11 +232,19 @@ router.post(
       if (req.file) {
         // remove old image if exists
         if (seller.shop_image) {
+          const oldImageBytes = await getStoredAssetBytes(seller.shop_image);
           deleteFile(seller.shop_image);
+          if (oldImageBytes > 0) {
+            await decrementSellerStorage(id, oldImageBytes);
+          }
         }
 
         // save new image with environment-aware path
         imageUrl = getImageUrlPath("sellers", req.file.filename);
+        const newImageBytes = await getStoredAssetBytes(imageUrl);
+        if (newImageBytes > 0) {
+          await incrementSellerStorage(id, newImageBytes);
+        }
       }
 
       await seller.update({
@@ -446,9 +459,17 @@ router.post(
       // �🖼️ Handle image update
       if (req.file) {
         if (seller.shop_image) {
+          const oldImageBytes = await getStoredAssetBytes(seller.shop_image);
           deleteFile(seller.shop_image); // remove old image
+          if (oldImageBytes > 0) {
+            await decrementSellerStorage(id, oldImageBytes);
+          }
         }
         updateData.shop_image = getImageUrlPath("sellers", req.file.filename);
+        const newImageBytes = await getStoredAssetBytes(updateData.shop_image);
+        if (newImageBytes > 0) {
+          await incrementSellerStorage(id, newImageBytes);
+        }
       }
       // Handle bio update
       if (bio !== undefined) {

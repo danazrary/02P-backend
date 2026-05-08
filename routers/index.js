@@ -20,6 +20,7 @@ import sellerCatalogRouter from "./seller/catalog.js";
 import customerShopRouter from "./customer/shop.js";
 import customerProductRouter from "./customer/product.js";
 import customerQuestionsRouter from "./customer/questions.js";
+import customerSearchRouter from "./customer/search.js";
 
 const router = Router();
 //admin routers
@@ -42,6 +43,7 @@ router.use("/seller", sellerCatalogRouter);
 //customer routers
 router.use("/customer", customerProductRouter);
 router.use("/customer", customerQuestionsRouter);
+router.use("/customer", customerSearchRouter);
 router.use("/customer", customerShopRouter);
 
 export default router;

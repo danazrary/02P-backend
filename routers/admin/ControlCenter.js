@@ -6,8 +6,10 @@ import Plan from "../../database/plan.js";
 import Product from "../../database/products.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import Question from "../../database/questions.js";
+import SellerUsage from "../../database/sellerUsage.js";
 import { checkMe, adminAuth } from "../../middlewares/jwtVerify.js";
 import { toUTC } from "../../utils/timezoneHandler.js";
+import { clearCookieOpts } from "../../utils/addingToken.js";
 const router = Router();
 
 router.get("/check-me", checkMe, async (req, res) => {
@@ -122,7 +124,6 @@ router.post("/cleanup-expired-sellers", adminAuth, async (req, res) => {
 router.post("/add-seller-plan", adminAuth, async (req, res) => {
   try {
     const { seller_id, plan_id, is_trial = false } = req.body;
-   
 
     if (!seller_id || !plan_id) {
       return res
@@ -131,7 +132,7 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
     }
 
     const seller = await Seller.findByPk(seller_id);
-   
+
     if (!seller) {
       return res
         .status(404)
@@ -139,7 +140,7 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
     }
 
     const plan = await Plan.findByPk(plan_id);
-    
+
     if (!plan) {
       return res
         .status(404)
@@ -159,7 +160,7 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
     const existingPlan = await SellerPlan.findOne({
       where: { seller_id },
     });
-   
+
     let sellerPlan;
 
     if (existingPlan) {
@@ -199,7 +200,6 @@ router.post("/add-seller-plan", adminAuth, async (req, res) => {
       },
     });
   } catch (error) {
-    
     console.error("add-seller-plan error:", error);
     res.status(500).json({ success: false });
   }
@@ -649,6 +649,150 @@ router.post("/delete-question", adminAuth, async (req, res) => {
       error: true,
       message: "Server error",
     });
+  }
+});
+
+// Admin logout
+router.post("/logout", adminAuth, (req, res) => {
+  res.clearCookie("admin_token", clearCookieOpts());
+  return res.json({ success: true, message: "Logged out successfully" });
+});
+
+// Get sellers who requested account deletion
+router.post("/get-deletion-requested-sellers", adminAuth, async (req, res) => {
+  try {
+    const sellers = await Seller.findAll({
+      where: { deletion_requested_at: { [Op.ne]: null } },
+      attributes: ["id", "name", "shop_name", "phone", "deletion_requested_at"],
+      order: [["deletion_requested_at", "ASC"]],
+    });
+
+    const now = new Date();
+    const result = sellers.map((s) => {
+      const reqAt = new Date(s.deletion_requested_at);
+      const daysSince = Math.floor((now - reqAt) / (1000 * 60 * 60 * 24));
+      return {
+        sellerId: s.id,
+        sellerName: s.name,
+        shopName: s.shop_name,
+        phone: s.phone,
+        deletionRequestedAt: s.deletion_requested_at,
+        daysSince,
+      };
+    });
+
+    return res.json({
+      success: true,
+      error: false,
+      count: result.length,
+      data: result,
+    });
+  } catch (err) {
+    console.error("get-deletion-requested-sellers error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: true, message: "Server error" });
+  }
+});
+
+// Delete a seller account permanently
+router.post("/delete-seller-account", adminAuth, async (req, res) => {
+  try {
+    const { seller_id } = req.body;
+
+    if (!seller_id) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "seller_id is required",
+      });
+    }
+
+    const seller = await Seller.findByPk(seller_id);
+    if (!seller) {
+      return res
+        .status(404)
+        .json({ success: false, error: true, message: "Seller not found" });
+    }
+
+    await Product.destroy({ where: { seller_id } });
+    await SellerOffer.destroy({ where: { seller_id } });
+    await SellerPlan.destroy({ where: { seller_id } });
+    await SellerUsage.destroy({ where: { seller_id } });
+    await seller.destroy();
+
+    return res.json({
+      success: true,
+      error: false,
+      message: "Seller account deleted successfully",
+    });
+  } catch (err) {
+    console.error("delete-seller-account error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: true, message: "Server error" });
+  }
+});
+
+// Get sellers with product count and storage usage (paginated, 20 per req)
+router.post("/get-sellers-usage", adminAuth, async (req, res) => {
+  try {
+    const LIMIT = 20;
+    const offset = parseInt(req.body.offset || 0, 10);
+
+    const { count: total, rows: sellers } = await Seller.findAndCountAll({
+      attributes: ["id", "name", "shop_name"],
+      include: [
+        {
+          model: SellerUsage,
+          as: "usage",
+          required: false,
+          attributes: ["storage_used_mb"],
+        },
+      ],
+      order: [["id", "ASC"]],
+      limit: LIMIT,
+      offset,
+    });
+
+    const sellerIds = sellers.map((s) => s.id);
+
+    let countMap = {};
+    if (sellerIds.length > 0) {
+      const productCounts = await Product.findAll({
+        where: { seller_id: { [Op.in]: sellerIds } },
+        attributes: [
+          "seller_id",
+          [Sequelize.fn("COUNT", Sequelize.col("id")), "count"],
+        ],
+        group: ["seller_id"],
+        raw: true,
+      });
+      for (const pc of productCounts) {
+        countMap[pc.seller_id] = parseInt(pc.count, 10);
+      }
+    }
+
+    const result = sellers.map((s) => ({
+      sellerId: s.id,
+      sellerName: s.name,
+      shopName: s.shop_name,
+      productCount: countMap[s.id] || 0,
+      storageMb: parseFloat(s.usage?.storage_used_mb || 0).toFixed(2),
+    }));
+
+    return res.json({
+      success: true,
+      error: false,
+      total,
+      hasMore: offset + LIMIT < total,
+      data: result,
+    });
+  } catch (err) {
+    console.error("get-sellers-usage error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: true, message: "Server error" });
   }
 });
 

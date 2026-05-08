@@ -5,6 +5,10 @@ import ProductImage from "../../database/productImages.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { decrementSellerStorage } from "../../middlewares/checkStorageLimit.js";
 import { deleteMultipleFromR2 } from "../../utils/r2.js";
+import {
+  getProductImageRecordBytes,
+  getStoredAssetBytes,
+} from "../../utils/sellerStorageUsage.js";
 
 const router = Router();
 
@@ -203,7 +207,7 @@ router.delete(
       for (const rec of imageRecords) {
         if (rec.image_key) r2Keys.push(rec.image_key);
         if (rec.thumb_key) r2Keys.push(rec.thumb_key);
-        totalBytes += rec.size_bytes || 0;
+        totalBytes += await getProductImageRecordBytes(rec);
       }
 
       // Collect color image keys from product.colors
@@ -212,7 +216,9 @@ router.delete(
         const colorImages = (product.colors || []).filter((c) => c.imageKey);
         for (const ci of colorImages) {
           r2Keys.push(ci.imageKey);
-          colorBytes += ci.imageSizeBytes || 0;
+          colorBytes +=
+            Number(ci.imageSizeBytes || 0) ||
+            (ci.imageKey ? await getStoredAssetBytes(ci.imageKey) : 0);
         }
       }
 

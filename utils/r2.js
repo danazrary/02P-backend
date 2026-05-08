@@ -18,6 +18,7 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
+  HeadObjectCommand,
 } from "@aws-sdk/client-s3";
 import sharp from "sharp";
 import { v4 as uuidv4 } from "uuid";
@@ -237,7 +238,7 @@ export async function uploadToR2(buffer, key, options = {}) {
  *
  * @param {Buffer} buffer   - Raw file buffer from multer memoryStorage
  * @param {string} basePath - Key prefix, e.g. "shops/14/products/123"
- * @returns {Promise<{mainKey: string, thumbKey: string, sizeBytes: number}>}
+ * @returns {Promise<{mainKey: string, thumbKey: string, sizeBytes: number, thumbSizeBytes: number, totalSizeBytes: number}>}
  */
 export async function uploadToR2WithThumb(buffer, basePath) {
   // ── Defensive buffer validation ──────────────────────────────────────────
@@ -281,7 +282,37 @@ export async function uploadToR2WithThumb(buffer, basePath) {
     throw new Error(`R2 upload failed: ${err.message}`);
   }
 
-  return { mainKey, thumbKey, sizeBytes: mainBuffer.length };
+  return {
+    mainKey,
+    thumbKey,
+    sizeBytes: mainBuffer.length,
+    thumbSizeBytes: thumbBuffer.length,
+    totalSizeBytes: mainBuffer.length + thumbBuffer.length,
+  };
+}
+
+/**
+ * Read the current object size in bytes for a single R2 key.
+ * Returns 0 when the object is missing or cannot be read.
+ * @param {string} key
+ * @returns {Promise<number>}
+ */
+export async function getR2ObjectSize(key) {
+  if (!key) return 0;
+
+  try {
+    const response = await r2Client.send(
+      new HeadObjectCommand({
+        Bucket: BUCKET,
+        Key: key,
+      }),
+    );
+
+    return Number(response.ContentLength || 0);
+  } catch (err) {
+    console.error("R2 head-object error:", err?.message || err);
+    return 0;
+  }
 }
 
 /**

@@ -2,8 +2,13 @@ import { Router } from "express";
 import { v4 as uuidv4 } from "uuid";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { r2Multer, uploadToR2, deleteFromR2 } from "../../utils/r2.js";
+import {
+  decrementSellerStorage,
+  incrementSellerStorage,
+} from "../../middlewares/checkStorageLimit.js";
 import Seller from "../../database/seller.js";
 import Product from "../../database/products.js";
+import { getStoredAssetBytes } from "../../utils/sellerStorageUsage.js";
 
 const catImageUpload = r2Multer.single("image");
 
@@ -521,15 +526,22 @@ router.put(
 
       // Delete old image from R2 if exists
       if (catImages[decodedCategory]) {
+        const oldImageBytes = await getStoredAssetBytes(catImages[decodedCategory]);
         await deleteFromR2(catImages[decodedCategory]).catch(() => {});
+        if (oldImageBytes > 0) {
+          await decrementSellerStorage(id, oldImageBytes);
+        }
       }
 
       // Upload new image to R2
       const catKey = `shops/${id}/categories/${uuidv4()}.webp`;
-      await uploadToR2(req.file.buffer, catKey);
+      const { sizeBytes } = await uploadToR2(req.file.buffer, catKey);
       catImages[decodedCategory] = catKey;
 
       await seller.update({ category_images: catImages });
+      if (sizeBytes > 0) {
+        await incrementSellerStorage(id, sizeBytes);
+      }
 
       return res.status(200).json({
         success: true,
@@ -570,9 +582,13 @@ router.delete(
 
       const catImages = { ...(seller.category_images || {}) };
       if (catImages[decodedCategory]) {
+        const removedBytes = await getStoredAssetBytes(catImages[decodedCategory]);
         await deleteFromR2(catImages[decodedCategory]).catch(() => {});
         delete catImages[decodedCategory];
         await seller.update({ category_images: catImages });
+        if (removedBytes > 0) {
+          await decrementSellerStorage(id, removedBytes);
+        }
       }
 
       return res.status(200).json({
