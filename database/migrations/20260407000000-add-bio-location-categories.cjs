@@ -3,39 +3,49 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    // Add bio to seller table
-    await queryInterface.addColumn("seller", "bio", {
-      type: Sequelize.TEXT,
-      allowNull: true,
-      defaultValue: null,
-    });
+    const seller = await queryInterface.describeTable("seller");
 
-    // Add shop_location to seller table
-    await queryInterface.addColumn("seller", "shop_location", {
-      type: Sequelize.TEXT,
-      allowNull: true,
-      defaultValue: null,
-    });
+    if (!seller.bio) {
+      await queryInterface.addColumn("seller", "bio", {
+        type: Sequelize.TEXT,
+        allowNull: true,
+        defaultValue: null,
+      });
+    }
 
-    // Add categories (JSON) to seller table
-    await queryInterface.addColumn("seller", "categories", {
-      type: Sequelize.JSON,
-      allowNull: true,
-      defaultValue: null,
-    });
+    if (!seller.shop_location) {
+      await queryInterface.addColumn("seller", "shop_location", {
+        type: Sequelize.TEXT,
+        allowNull: true,
+        defaultValue: null,
+      });
+    }
 
-    // Add category to products table
-    await queryInterface.addColumn("products", "category", {
-      type: Sequelize.STRING,
-      allowNull: true,
-      defaultValue: null,
-    });
+    if (!seller.categories) {
+      await queryInterface.addColumn("seller", "categories", {
+        type: Sequelize.JSON,
+        allowNull: true,
+        defaultValue: null,
+      });
+    }
+
+    const products = await queryInterface.describeTable("products");
+    if (!products.category) {
+      await queryInterface.addColumn("products", "category", {
+        type: Sequelize.STRING,
+        allowNull: true,
+        defaultValue: null,
+      });
+    }
   },
 
   async down(queryInterface) {
-    await queryInterface.removeColumn("seller", "bio");
-    await queryInterface.removeColumn("seller", "shop_location");
-    await queryInterface.removeColumn("seller", "categories");
-    await queryInterface.removeColumn("products", "category");
+    const seller = await queryInterface.describeTable("seller");
+    if (seller.bio)           await queryInterface.removeColumn("seller", "bio");
+    if (seller.shop_location) await queryInterface.removeColumn("seller", "shop_location");
+    if (seller.categories)    await queryInterface.removeColumn("seller", "categories");
+
+    const products = await queryInterface.describeTable("products");
+    if (products.category)    await queryInterface.removeColumn("products", "category");
   },
 };

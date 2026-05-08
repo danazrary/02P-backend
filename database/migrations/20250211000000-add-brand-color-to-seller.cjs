@@ -4,9 +4,9 @@
 module.exports = {
   async up(queryInterface, Sequelize) {
     const table = await queryInterface.describeTable("seller");
-    if (!table.deletion_requested_at) {
-      await queryInterface.addColumn("seller", "deletion_requested_at", {
-        type: Sequelize.DATE,
+    if (!table.brand_color) {
+      await queryInterface.addColumn("seller", "brand_color", {
+        type: Sequelize.STRING,
         allowNull: true,
         defaultValue: null,
       });
@@ -15,8 +15,8 @@ module.exports = {
 
   async down(queryInterface) {
     const table = await queryInterface.describeTable("seller");
-    if (table.deletion_requested_at) {
-      await queryInterface.removeColumn("seller", "deletion_requested_at");
+    if (table.brand_color) {
+      await queryInterface.removeColumn("seller", "brand_color");
     }
   },
 };

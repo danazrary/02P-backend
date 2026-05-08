@@ -4,19 +4,18 @@
 module.exports = {
   async up(queryInterface, Sequelize) {
     const table = await queryInterface.describeTable("seller");
-    if (!table.deletion_requested_at) {
-      await queryInterface.addColumn("seller", "deletion_requested_at", {
-        type: Sequelize.DATE,
+    if (!table.red_lineAr) {
+      await queryInterface.addColumn("seller", "red_lineAr", {
+        type: Sequelize.JSON,
         allowNull: true,
-        defaultValue: null,
       });
     }
   },
 
   async down(queryInterface) {
     const table = await queryInterface.describeTable("seller");
-    if (table.deletion_requested_at) {
-      await queryInterface.removeColumn("seller", "deletion_requested_at");
+    if (table.red_lineAr) {
+      await queryInterface.removeColumn("seller", "red_lineAr");
     }
   },
 };

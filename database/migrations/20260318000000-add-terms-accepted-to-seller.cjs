@@ -3,14 +3,20 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn("seller", "terms_accepted_at", {
-      type: Sequelize.DATE,
-      allowNull: true,
-      defaultValue: null, // null means terms not yet accepted
-    });
+    const table = await queryInterface.describeTable("seller");
+    if (!table.terms_accepted_at) {
+      await queryInterface.addColumn("seller", "terms_accepted_at", {
+        type: Sequelize.DATE,
+        allowNull: true,
+        defaultValue: null,
+      });
+    }
   },
 
-  async down(queryInterface, Sequelize) {
-    await queryInterface.removeColumn("seller", "terms_accepted_at");
+  async down(queryInterface) {
+    const table = await queryInterface.describeTable("seller");
+    if (table.terms_accepted_at) {
+      await queryInterface.removeColumn("seller", "terms_accepted_at");
+    }
   },
 };
