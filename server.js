@@ -4,6 +4,7 @@ import bodyParser from "body-parser";
 import dotenv from "dotenv";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import session from "express-session";
 import helmet from "helmet";
 import hpp from "hpp";
 import http from "http";
@@ -36,6 +37,20 @@ console.log(`🔧 Loading environment from: ${envFile}`);
 // --- CREATE EXPRESS APP ---
 const app = express();
 
+const isProductionEnvironment =
+  process.env.NODE_ENV === "production" || process.env.ENVIRONMENT === "product";
+const sessionBaseDomain = process.env.BASE_DOMAIN || "dwkanlink.com";
+const sessionCookieOptions = {
+  httpOnly: true,
+  secure: isProductionEnvironment,
+  sameSite: "lax",
+  path: "/",
+};
+
+if (isProductionEnvironment) {
+  sessionCookieOptions.domain = `.${sessionBaseDomain}`;
+}
+
 // Request logging - Only in development
 if (process.env.NODE_ENV !== "production") {
   app.use((req, res, next) => {
@@ -45,6 +60,24 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 app.set("trust proxy", 1);
+app.use(
+  session({
+    name: process.env.SESSION_COOKIE_NAME || "dwkanlink.sid",
+    secret:
+      process.env.SESSION_SECRET ||
+      process.env.COOKIE_SECRET_PARSER ||
+      process.env.JWT_SECRET ||
+      "change-me-in-production",
+    resave: false,
+    saveUninitialized: false,
+    proxy: true,
+    rolling: false,
+    cookie: {
+      ...sessionCookieOptions,
+      maxAge: 24 * 60 * 60 * 1000,
+    },
+  }),
+);
 app.use(passport.initialize());
 //app.use("/uploads", express.static("uploads"));
 

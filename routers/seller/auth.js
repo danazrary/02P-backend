@@ -18,6 +18,41 @@ const router = express.Router();
 
 const resendClient = new Resend(process.env.RESEND_API_KEY || "");
 
+const isProductionEnvironment =
+  process.env.NODE_ENV === "production" || process.env.ENVIRONMENT === "product";
+
+function getFrontendOrigin(req) {
+  if (isProductionEnvironment) {
+    return process.env.FRONTEND_ORIGIN || "https://dwkanlink.com";
+  }
+
+  return req.query.origin || process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+}
+
+function getStoredOAuthRedirect(req, provider, code) {
+  const stored = req.session?.oauthCallbacks?.[provider];
+  if (!stored || stored.code !== code) {
+    return null;
+  }
+
+  return stored.redirectUrl || null;
+}
+
+function storeOAuthRedirect(req, provider, code, redirectUrl) {
+  if (!req.session) {
+    return;
+  }
+
+  req.session.oauthCallbacks = {
+    ...(req.session.oauthCallbacks || {}),
+    [provider]: {
+      code,
+      redirectUrl,
+      finishedAt: Date.now(),
+    },
+  };
+}
+
 function generate6DigitCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
@@ -419,11 +454,24 @@ router.get("/google/url", (req, res) => {
 
 router.get(
   "/google",
-  passport.authenticate("google", { scope: ["profile", "email"] }),
+  passport.authenticate("google", {
+    scope: ["profile", "email"],
+    state: true,
+  }),
 );
 
 router.get(
   "/google/callback",
+  (req, res, next) => {
+    const code = req.query.code;
+    const redirectUrl = getStoredOAuthRedirect(req, "google", code);
+
+    if (redirectUrl) {
+      return res.redirect(redirectUrl);
+    }
+
+    next();
+  },
   passport.authenticate("google", { session: false }),
   (req, res) => {
     const seller = req.user;
@@ -431,12 +479,20 @@ router.get(
     // Create short-lived temp token
     const tempToken = shortSellerToken(seller.id, { info: seller.name }, res);
 
-    const frontend = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+    const frontend = getFrontendOrigin(req);
+    const redirectUrl = `${frontend}/oauth-success?token=${tempToken}&provider=google`;
+
+    storeOAuthRedirect(req, "google", req.query.code, redirectUrl);
 
     // Redirect the same tab directly to frontend OAuthSuccess
-    res.redirect(
-      `${frontend}/oauth-success?token=${tempToken}&provider=google`,
-    );
+    if (req.session) {
+      req.session.save(() => {
+        res.redirect(redirectUrl);
+      });
+      return;
+    }
+
+    res.redirect(redirectUrl);
   },
 );
 
@@ -450,7 +506,7 @@ router.get("/facebook/url", (req, res) => {
 // Start OAuth
 router.get(
   "/facebook",
-  passport.authenticate("facebook", { scope: [] }), // removed "email" scope
+  passport.authenticate("facebook", { scope: [], state: true }), // removed "email" scope
 );
 
 // Callback
@@ -459,11 +515,15 @@ router.get(
 
   // 1️⃣ Handle cancel FIRST
   (req, res, next) => {
+    const code = req.query.code;
+    const redirectUrl = getStoredOAuthRedirect(req, "facebook", code);
+
+    if (redirectUrl) {
+      return res.redirect(redirectUrl);
+    }
+
     if (req.query.error === "access_denied") {
-      const frontendUrl =
-        req.query.origin ||
-        process.env.FRONTEND_ORIGIN ||
-        "http://localhost:5173";
+      const frontendUrl = getFrontendOrigin(req);
 
       return res.redirect(`${frontendUrl}/login`);
     }
@@ -488,16 +548,19 @@ router.get(
       token = sellerToken(seller.id, seller.email, seller.shop_name, res);
     }
 
-    const frontendUrl =
-      process.env.ENVIRONMENT === "product"
-        ? "https://dwkanlink.com"
-        : req.query.origin ||
-          process.env.FRONTEND_ORIGIN ||
-          "http://localhost:5173";
+    const frontendUrl = getFrontendOrigin(req);
+    const redirectUrl = `${frontendUrl}/oauth-success?token=${token}&provider=facebook`;
 
-    res.redirect(
-      `${frontendUrl}/oauth-success?token=${token}&provider=facebook`,
-    );
+    storeOAuthRedirect(req, "facebook", req.query.code, redirectUrl);
+
+    if (req.session) {
+      req.session.save(() => {
+        res.redirect(redirectUrl);
+      });
+      return;
+    }
+
+    res.redirect(redirectUrl);
   },
 );
 /* router.get("/facebook/url", (req, res) => {

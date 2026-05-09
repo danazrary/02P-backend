@@ -3,8 +3,9 @@ import {
   generateCsrfToken,
 } from "../utils/csrfProtection.js";
 
-const isSecure = process.env.ENVIRONMENT === "product";
 const baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com";
+const isProductionEnvironment =
+  process.env.NODE_ENV === "production" || process.env.ENVIRONMENT === "product";
 
 const csrfMiddleware = (req, res, next) => {
   let csrfSecret = req.cookies.csrfSecret;
@@ -14,11 +15,11 @@ const csrfMiddleware = (req, res, next) => {
     csrfSecret = generateCsrfSecret();
     const opts = {
       httpOnly: true,
-      secure: isSecure,
+      secure: isProductionEnvironment,
       sameSite: "lax",
       maxAge: 10 * 60 * 1000, // 10 minutes
     };
-    if (isSecure) {
+    if (isProductionEnvironment) {
       opts.domain = `.${baseDomain}`;
     }
     res.cookie("csrfSecret", csrfSecret, opts);
