@@ -36,9 +36,14 @@ function esc(str) {
 function imgUrl(image, type) {
   const backend = process.env.BACKEND_URL || "";
   const frontend = process.env.FRONTEND_ORIGIN || "https://dwkanlink.com";
+  const r2PublicUrl = (process.env.R2_PUBLIC_URL || "").replace(/\/$/, "");
   if (!image) return `${frontend}/og-default.png`;
   if (image.startsWith("http")) return image;
-  return `${backend}/uploads/${type}/${image}`;
+  if (image.startsWith("/uploads/") || image.startsWith("uploads/")) {
+    const normalizedPath = image.startsWith("/") ? image : `/${image}`;
+    return `${backend}${normalizedPath}`;
+  }
+  return `${r2PublicUrl}/${image}`;
 }
 
 function shopHtml(seller) {

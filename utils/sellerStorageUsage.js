@@ -5,10 +5,14 @@
  * Used by checkStorageLimit middleware and the seller dashboard route.
  */
 
+import fs from "fs";
 import { getR2ObjectSize } from "./r2.js";
 import SellerUsage from "../database/sellerUsage.js";
 import ProductImage from "../database/productImages.js";
 import Product from "../database/products.js";
+import Seller from "../database/seller.js";
+import SellerOffer from "../database/sellerOffer.js";
+import { getImageAbsolutePath } from "./uploadHandler.js";
 
 const BYTES_PER_MB = 1024 * 1024;
 
@@ -21,6 +25,17 @@ const BYTES_PER_MB = 1024 * 1024;
  */
 export async function getStoredAssetBytes(key) {
   if (!key) return 0;
+
+  if (key.startsWith("/uploads/") || key.startsWith("uploads/")) {
+    try {
+      const absolutePath = getImageAbsolutePath(key);
+      if (!absolutePath || !fs.existsSync(absolutePath)) return 0;
+      return fs.statSync(absolutePath).size || 0;
+    } catch {
+      return 0;
+    }
+  }
+
   return getR2ObjectSize(key);
 }
 
@@ -116,6 +131,35 @@ export async function ensureSellerStorageUsage(sellerId, plan, options = {}) {
         (ci.imageKey ? await getStoredAssetBytes(ci.imageKey) : 0);
       totalBytes += bytes;
     }
+  }
+
+  // 3. Seller-level assets (shop image + category images)
+  const seller = await Seller.findByPk(sellerId, {
+    attributes: ["shop_image", "category_images"],
+  });
+
+  if (seller?.shop_image) {
+    totalBytes += await getStoredAssetBytes(seller.shop_image);
+  }
+
+  const categoryImages = Object.values(seller?.category_images || {}).filter(
+    Boolean,
+  );
+  for (const categoryImageKey of categoryImages) {
+    totalBytes += await getStoredAssetBytes(categoryImageKey);
+  }
+
+  // 4. Offer cover images
+  const offers = await SellerOffer.findAll({
+    where: { seller_id: sellerId },
+    attributes: ["cover_image", "cover_image_size_bytes"],
+  });
+
+  for (const offer of offers) {
+    const bytes =
+      Number(offer.cover_image_size_bytes || 0) ||
+      (offer.cover_image ? await getStoredAssetBytes(offer.cover_image) : 0);
+    totalBytes += bytes;
   }
 
   const totalMb = totalBytes / BYTES_PER_MB;

@@ -13,7 +13,7 @@ import {
   decrementSellerStorage,
 } from "../../middlewares/checkStorageLimit.js";
 import {
-  r2Multer,
+  createR2Multer,
   buildR2Key,
   uploadToR2,
   uploadToR2WithThumb,
@@ -24,9 +24,11 @@ import {
 import getTikTokEmbedUrl, {
   isTikTokUrlCandidate,
 } from "../../utils/getTikTokEmbedUrl.js";
+import { getProductImageRecordBytes } from "../../utils/sellerStorageUsage.js";
 
 const router = express.Router();
 const MAX_COLOR_IMAGE_FIELDS = 15;
+const MAX_PRODUCT_IMAGE_BYTES = 2 * 1024 * 1024;
 const ADVANCED_PLAN_ALIASES = new Set([
   "large seller",
   "plus",
@@ -37,13 +39,55 @@ const ADVANCED_PLAN_ALIASES = new Set([
 ]);
 
 /** Accept product images + up to 15 per-color images. */
-const productUpload = r2Multer.fields([
+const productUploadMiddleware = createR2Multer({
+  fileSize: MAX_PRODUCT_IMAGE_BYTES,
+  files: 20,
+}).fields([
   { name: "images", maxCount: 5 },
   ...Array.from({ length: MAX_COLOR_IMAGE_FIELDS }, (_, index) => ({
     name: `colorImage_${index}`,
     maxCount: 1,
   })),
 ]);
+
+function productUpload(req, res, next) {
+  productUploadMiddleware(req, res, (err) => {
+    if (!err) {
+      next();
+      return;
+    }
+
+    if (err.code === "LIMIT_FILE_SIZE") {
+      res.status(413).json({
+        success: false,
+        error: true,
+        message:
+          "Each product image must be 2MB or smaller after frontend compression.",
+      });
+      return;
+    }
+
+    if (err.code === "LIMIT_FILE_COUNT") {
+      res.status(400).json({
+        success: false,
+        error: true,
+        message: "You can upload up to 20 product images per request.",
+      });
+      return;
+    }
+
+    if (err.code === "LIMIT_UNEXPECTED_FILE") {
+      res.status(400).json({
+        success: false,
+        error: true,
+        message: "Unexpected product image field in upload request.",
+      });
+      return;
+    }
+
+    next(err);
+  });
+}
 
 /**
  * Build variantPricesAr by replacing Kurdish color and size names with Arabic ones.
@@ -94,8 +138,7 @@ async function normalizeVideoLinks(videoLinks) {
         `Invalid TikTok URL at index ${index}`,
       );
       invalidTikTokError.statusCode = 400;
-      invalidTikTokError.clientMessage =
-        `Invalid TikTok URL provided for video link ${index + 1}`;
+      invalidTikTokError.clientMessage = `Invalid TikTok URL provided for video link ${index + 1}`;
       throw invalidTikTokError;
     }
 
@@ -124,6 +167,108 @@ function getProductFieldLimit(plan) {
   return isAdvancedPlan ? 15 : 5;
 }
 
+function getProductImageLimits(plan) {
+  const colorImages = getProductFieldLimit(plan);
+
+  return {
+    mainImages: 5,
+    colorImages,
+    totalImages: colorImages + 5,
+  };
+}
+
+function countUploadedColorImages(files = {}) {
+  return Object.entries(files)
+    .filter(([fieldName]) => fieldName.startsWith("colorImage_"))
+    .reduce((sum, [, fieldFiles]) => sum + fieldFiles.length, 0);
+}
+
+function getUploadedColorImageIndexes(files = {}) {
+  return Object.keys(files)
+    .filter((fieldName) => fieldName.startsWith("colorImage_"))
+    .map((fieldName) => Number(fieldName.replace("colorImage_", "")))
+    .filter((index) => Number.isInteger(index));
+}
+
+function validateProductImageUploadLimits({
+  plan,
+  files,
+  colorCount,
+  existingMainImages = 0,
+  existingColorImages = 0,
+}) {
+  const limits = getProductImageLimits(plan);
+  const mainImages = files?.images?.length || 0;
+  const colorImages = countUploadedColorImages(files);
+  const totalImages = mainImages + colorImages;
+
+  if (mainImages > limits.mainImages) {
+    const err = new Error("Main image limit exceeded");
+    err.statusCode = 400;
+    err.clientMessage = `Your current seller plan allows up to ${limits.mainImages} main product images.`;
+    throw err;
+  }
+
+  if (colorImages > limits.colorImages) {
+    const err = new Error("Color image limit exceeded");
+    err.statusCode = 400;
+    err.clientMessage = `Your current seller plan allows up to ${limits.colorImages} color images.`;
+    throw err;
+  }
+
+  if (totalImages > limits.totalImages) {
+    const err = new Error("Total image limit exceeded");
+    err.statusCode = 400;
+    err.clientMessage = `Your current seller plan allows up to ${limits.totalImages} product images in total.`;
+    throw err;
+  }
+
+  if (existingMainImages + mainImages > limits.mainImages) {
+    const err = new Error("Final main image limit exceeded");
+    err.statusCode = 400;
+    err.clientMessage = `Your current seller plan allows up to ${limits.mainImages} main product images.`;
+    throw err;
+  }
+
+  if (existingColorImages + colorImages > limits.colorImages) {
+    const err = new Error("Final color image limit exceeded");
+    err.statusCode = 400;
+    err.clientMessage = `Your current seller plan allows up to ${limits.colorImages} color images.`;
+    throw err;
+  }
+
+  if (
+    existingMainImages + existingColorImages + totalImages >
+    limits.totalImages
+  ) {
+    const err = new Error("Final total image limit exceeded");
+    err.statusCode = 400;
+    err.clientMessage = `Your current seller plan allows up to ${limits.totalImages} product images in total.`;
+    throw err;
+  }
+
+  const uploadedIndexes = getUploadedColorImageIndexes(files);
+  if (uploadedIndexes.some((index) => index < 0 || index >= colorCount)) {
+    const err = new Error("Unexpected color image field");
+    err.statusCode = 400;
+    err.clientMessage =
+      "Uploaded color images must match the submitted product colors.";
+    throw err;
+  }
+
+  return limits;
+}
+
+function normalizeColorSegment(value) {
+  return (
+    String(value || "color")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "color"
+  );
+}
+
 function validateProductFieldLimits({
   plan,
   colors,
@@ -149,8 +294,7 @@ function validateProductFieldLimits({
     `Plan field limit exceeded for ${exceededField.label}`,
   );
   planLimitError.statusCode = 400;
-  planLimitError.clientMessage =
-    `Your current seller plan allows up to ${fieldLimit} colors, ${fieldLimit} sizes, and ${fieldLimit} custom fields per product.`;
+  planLimitError.clientMessage = `Your current seller plan allows up to ${fieldLimit} colors, ${fieldLimit} sizes, and ${fieldLimit} custom fields per product.`;
   throw planLimitError;
 }
 
@@ -232,9 +376,8 @@ router.post(
       } = req.body;
 
       const parsedYoutubeLinks = youtubeLinks ? JSON.parse(youtubeLinks) : [];
-      const normalizedYoutubeLinks = await normalizeVideoLinks(
-        parsedYoutubeLinks,
-      );
+      const normalizedYoutubeLinks =
+        await normalizeVideoLinks(parsedYoutubeLinks);
 
       const isRealPricePost = hasRealPrice === "true" || hasRealPrice === true;
 
@@ -253,6 +396,12 @@ router.post(
         ? JSON.parse(customInputsAr).filter((c) => c.name && c.name !== "")
         : [];
 
+      validateProductImageUploadLimits({
+        plan,
+        files: req.files,
+        colorCount: rawColors.length,
+      });
+
       // Parse variant price combinations
       const parsedVariantPrices = variantPrices
         ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
@@ -265,6 +414,20 @@ router.post(
         customInputs: parsedCustomInputs,
         customInputsAr: parsedCustomInputsAr,
       });
+
+      // Enforce: base price is not allowed when colors or sizes are present
+      const hasColorsOrSizes =
+        rawColors.some((c) => (c.nameKu || c.nameAr || "").trim()) ||
+        parsedSizes.length > 0;
+      if (hasColorsOrSizes && isRealPricePost) {
+        const basePriceConflictError = new Error(
+          "Cannot use base price when colors or sizes are provided",
+        );
+        basePriceConflictError.statusCode = 400;
+        basePriceConflictError.clientMessage =
+          "You cannot set a Base Price when colors or sizes are added. Please use variant prices instead.";
+        throw basePriceConflictError;
+      }
 
       // Auto-derive Arabic variant prices from colors and sizes mapping
       const derivedVariantPricesAr = deriveVariantPricesAr(
@@ -303,11 +466,9 @@ router.post(
       for (let i = 0; i < imageFiles.length; i++) {
         const file = imageFiles[i];
         const basePath = `shops/${id}/products/${product.id}`;
-        const { mainKey, thumbKey, sizeBytes } = await uploadToR2WithThumb(
-          file.buffer,
-          basePath,
-        );
-        totalUploadedBytes += sizeBytes;
+        const { mainKey, thumbKey, sizeBytes, totalSizeBytes } =
+          await uploadToR2WithThumb(file.buffer, basePath);
+        totalUploadedBytes += totalSizeBytes;
         imageRecords.push({
           product_id: product.id,
           image_key: mainKey,
@@ -324,7 +485,10 @@ router.post(
         const colorFile = req.files?.[`colorImage_${i}`]?.[0];
         if (colorFile) {
           const filename = `${uuidv4()}.webp`;
-          const key = `shops/${id}/products/${product.id}/colors/${filename}`;
+          const colorSegment = normalizeColorSegment(
+            finalColors[i].nameKu || finalColors[i].nameAr,
+          );
+          const key = `shops/${id}/products/${product.id}/colors/${colorSegment}/${filename}`;
           const { sizeBytes } = await uploadToR2(colorFile.buffer, key);
           totalUploadedBytes += sizeBytes;
           finalColors[i].imageKey = key;
@@ -416,9 +580,8 @@ router.put(
       } = req.body;
 
       const parsedYoutubeLinks = youtubeLinks ? JSON.parse(youtubeLinks) : [];
-      const normalizedYoutubeLinks = await normalizeVideoLinks(
-        parsedYoutubeLinks,
-      );
+      const normalizedYoutubeLinks =
+        await normalizeVideoLinks(parsedYoutubeLinks);
 
       const rawColors = colorsBody ? JSON.parse(colorsBody) : [];
       const parsedSizes = sizesBody
@@ -437,6 +600,38 @@ router.put(
         ? JSON.parse(customInputsAr).filter((c) => c.name && c.name !== "")
         : [];
 
+      const removedMainImageKeys = removedImageKeys
+        ? JSON.parse(removedImageKeys)
+        : [];
+      const removedColorKeys = removedColorImageKeys
+        ? JSON.parse(removedColorImageKeys).filter(Boolean)
+        : [];
+
+      const existingMainImages = await ProductImage.count({
+        where: { product_id: productId },
+      });
+      const remainingExistingMainImages = Math.max(
+        0,
+        existingMainImages - removedMainImageKeys.length,
+      );
+      const uploadedColorIndexes = new Set(
+        getUploadedColorImageIndexes(req.files),
+      );
+      const existingColorImages = (product.colors || []).filter(
+        (color, index) =>
+          color.imageKey &&
+          !removedColorKeys.includes(color.imageKey) &&
+          !uploadedColorIndexes.has(index),
+      ).length;
+
+      validateProductImageUploadLimits({
+        plan,
+        files: req.files,
+        colorCount: rawColors.length,
+        existingMainImages: remainingExistingMainImages,
+        existingColorImages,
+      });
+
       validateProductFieldLimits({
         plan,
         colors: rawColors,
@@ -445,17 +640,33 @@ router.put(
         customInputsAr: parsedCustomInputsAr,
       });
 
+      // Enforce: base price is not allowed when colors or sizes are present
+      const isRealPrice = hasRealPrice === "true" || hasRealPrice === true;
+      const hasColorsOrSizesEdit =
+        rawColors.some((c) => (c.nameKu || c.nameAr || "").trim()) ||
+        parsedSizes.length > 0;
+      if (hasColorsOrSizesEdit && isRealPrice) {
+        const basePriceConflictError = new Error(
+          "Cannot use base price when colors or sizes are provided",
+        );
+        basePriceConflictError.statusCode = 400;
+        basePriceConflictError.clientMessage =
+          "You cannot set a Base Price when colors or sizes are added. Please use variant prices instead.";
+        throw basePriceConflictError;
+      }
+
       // Delete removed product images (main + thumb) and update storage
       if (removedImageKeys) {
-        const keys = JSON.parse(removedImageKeys);
+        const keys = removedMainImageKeys;
         if (keys.length > 0) {
           const records = await ProductImage.findAll({
             where: { product_id: productId, image_key: keys },
           });
-          const removedBytes = records.reduce(
-            (sum, r) => sum + (r.size_bytes || 0),
-            0,
-          );
+          const removedBytes = (
+            await Promise.all(
+              records.map((record) => getProductImageRecordBytes(record)),
+            )
+          ).reduce((sum, bytes) => sum + bytes, 0);
           // Delete both the main key and its thumbnail from R2
           const allR2Keys = records.flatMap((r) =>
             [r.image_key, r.thumb_key].filter(Boolean),
@@ -470,7 +681,7 @@ router.put(
 
       // Delete removed color images from R2 and decrement storage
       if (removedColorImageKeys) {
-        const keys = JSON.parse(removedColorImageKeys).filter(Boolean);
+        const keys = removedColorKeys;
         if (keys.length > 0) {
           const existingColors = product.colors || [];
           const removedColorBytes = existingColors
@@ -486,22 +697,17 @@ router.put(
       let totalUploadedBytes = 0;
       const imageFiles = req.files?.images || [];
       if (imageFiles.length > 0) {
-        const existingCount = await ProductImage.count({
-          where: { product_id: productId },
-        });
         for (let i = 0; i < imageFiles.length; i++) {
           const file = imageFiles[i];
           const basePath = `shops/${sellerId}/products/${productId}`;
-          const { mainKey, thumbKey, sizeBytes } = await uploadToR2WithThumb(
-            file.buffer,
-            basePath,
-          );
-          totalUploadedBytes += sizeBytes;
+          const { mainKey, thumbKey, sizeBytes, totalSizeBytes } =
+            await uploadToR2WithThumb(file.buffer, basePath);
+          totalUploadedBytes += totalSizeBytes;
           await ProductImage.create({
             product_id: productId,
             image_key: mainKey,
             thumb_key: thumbKey,
-            is_main: existingCount === 0 && i === 0,
+            is_main: remainingExistingMainImages === 0 && i === 0,
             size_bytes: sizeBytes,
           });
         }
@@ -521,7 +727,10 @@ router.put(
             await deleteFromR2(finalColors[i].imageKey);
           }
           const filename = `${uuidv4()}.webp`;
-          const key = `shops/${sellerId}/products/${productId}/colors/${filename}`;
+          const colorSegment = normalizeColorSegment(
+            finalColors[i].nameKu || finalColors[i].nameAr,
+          );
+          const key = `shops/${sellerId}/products/${productId}/colors/${colorSegment}/${filename}`;
           const { sizeBytes } = await uploadToR2(colorFile.buffer, key);
           totalUploadedBytes += sizeBytes;
           finalColors[i].imageKey = key;
@@ -532,8 +741,6 @@ router.put(
 
       if (totalUploadedBytes > 0)
         await incrementSellerStorage(sellerId, totalUploadedBytes);
-
-      const isRealPrice = hasRealPrice === "true" || hasRealPrice === true;
 
       const derivedVariantPricesAr = deriveVariantPricesAr(
         parsedVariantPrices,
@@ -603,10 +810,11 @@ router.delete(
       if (imageRecords.length > 0) {
         const keys = imageRecords.map((r) => r.image_key);
         const thumbKeys = imageRecords.map((r) => r.thumb_key).filter(Boolean);
-        const totalBytes = imageRecords.reduce(
-          (sum, r) => sum + (r.size_bytes || 0),
-          0,
-        );
+        const totalBytes = (
+          await Promise.all(
+            imageRecords.map((record) => getProductImageRecordBytes(record)),
+          )
+        ).reduce((sum, bytes) => sum + bytes, 0);
         await deleteMultipleFromR2([...keys, ...thumbKeys]);
         await ProductImage.destroy({ where: { product_id: productId } });
         await decrementSellerStorage(sellerId, totalBytes);

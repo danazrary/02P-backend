@@ -4,6 +4,7 @@
 //seller-info-update
 
 import { Router } from "express";
+import { v4 as uuidv4 } from "uuid";
 import passport from "passport";
 import jwt from "jsonwebtoken";
 import "../../utils/passportConfig.js";
@@ -12,8 +13,6 @@ import crypto from "crypto";
 import { sellerToken, shortSellerToken } from "../../utils/addingToken.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { deleteFile } from "../../utils/deleteFile.js";
-import { uploadSellerImage } from "../../middlewares/uploadSellerImage.js";
-import { getImageUrlPath, convertToWebp } from "../../utils/uploadHandler.js";
 import { isReservedShopName } from "../../utils/reservedShopNames.js";
 import { toUTC } from "../../utils/timezoneHandler.js";
 import {
@@ -21,8 +20,40 @@ import {
   incrementSellerStorage,
 } from "../../middlewares/checkStorageLimit.js";
 import { getStoredAssetBytes } from "../../utils/sellerStorageUsage.js";
+import { createR2Multer, uploadToR2, deleteFromR2 } from "../../utils/r2.js";
 
 const router = Router();
+const sellerImageUpload = createR2Multer({
+  fileSize: 2 * 1024 * 1024,
+  files: 1,
+});
+
+function isLegacyUploadPath(value) {
+  return value?.startsWith("/uploads/") || value?.startsWith("uploads/");
+}
+
+async function deleteStoredSellerImage(imageKeyOrPath) {
+  if (!imageKeyOrPath) return;
+
+  if (isLegacyUploadPath(imageKeyOrPath)) {
+    deleteFile(imageKeyOrPath);
+    return;
+  }
+
+  await deleteFromR2(imageKeyOrPath);
+}
+
+async function uploadSellerImageToR2(file, sellerId) {
+  const key = `shops/${sellerId}/sellers/main/${uuidv4()}.webp`;
+  const { sizeBytes } = await uploadToR2(file.buffer, key, {
+    width: 1280,
+    height: 1280,
+    qualities: [82, 76, 70, 64],
+    maxOutputBytes: 500 * 1024,
+  });
+
+  return { key, sizeBytes };
+}
 
 router.post(
   "/complete-profile-check",
@@ -75,8 +106,7 @@ router.post(
 router.post(
   "/complete-profile",
   jwtVerifySellerToken,
-  uploadSellerImage.single("shopImage"),
-  convertToWebp(),
+  sellerImageUpload.single("shopImage"),
   async (req, res) => {
     try {
       const { id } = req.user;
@@ -233,15 +263,15 @@ router.post(
         // remove old image if exists
         if (seller.shop_image) {
           const oldImageBytes = await getStoredAssetBytes(seller.shop_image);
-          deleteFile(seller.shop_image);
+          await deleteStoredSellerImage(seller.shop_image);
           if (oldImageBytes > 0) {
             await decrementSellerStorage(id, oldImageBytes);
           }
         }
 
-        // save new image with environment-aware path
-        imageUrl = getImageUrlPath("sellers", req.file.filename);
-        const newImageBytes = await getStoredAssetBytes(imageUrl);
+        const { key, sizeBytes } = await uploadSellerImageToR2(req.file, id);
+        imageUrl = key;
+        const newImageBytes = sizeBytes;
         if (newImageBytes > 0) {
           await incrementSellerStorage(id, newImageBytes);
         }
@@ -316,8 +346,7 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
 router.post(
   "/seller-info-update",
   jwtVerifySellerToken,
-  uploadSellerImage.single("shop_image"), // must match FormData
-  convertToWebp(),
+  sellerImageUpload.single("shop_image"), // must match FormData
   async (req, res) => {
     try {
       const { id } = req.user;
@@ -460,13 +489,14 @@ router.post(
       if (req.file) {
         if (seller.shop_image) {
           const oldImageBytes = await getStoredAssetBytes(seller.shop_image);
-          deleteFile(seller.shop_image); // remove old image
+          await deleteStoredSellerImage(seller.shop_image);
           if (oldImageBytes > 0) {
             await decrementSellerStorage(id, oldImageBytes);
           }
         }
-        updateData.shop_image = getImageUrlPath("sellers", req.file.filename);
-        const newImageBytes = await getStoredAssetBytes(updateData.shop_image);
+        const { key, sizeBytes } = await uploadSellerImageToR2(req.file, id);
+        updateData.shop_image = key;
+        const newImageBytes = sizeBytes;
         if (newImageBytes > 0) {
           await incrementSellerStorage(id, newImageBytes);
         }

@@ -72,6 +72,7 @@ const r2Client = new S3Client({
 const BUCKET = process.env.R2_BUCKET_NAME;
 const MAX_INPUT_BYTES = 25 * 1024 * 1024; // 25 MB raw upload ceiling
 const MAX_OUTPUT_BYTES = 1 * 1024 * 1024; // 1 MB post-compression ceiling
+const THUMB_MAX_OUTPUT_BYTES = 120 * 1024;
 
 const DEFAULT_UPLOAD_OPTIONS = {
   width: 1280,
@@ -154,6 +155,24 @@ async function _compressImage(buffer, options = {}) {
  * @returns {Promise<Buffer>} WebP thumbnail buffer
  */
 async function _compressThumb(buffer) {
+  const qualities = [60, 55, 50, 45, 40];
+
+  for (const quality of qualities) {
+    const thumbBuffer = await sharp(buffer)
+      .resize({
+        width: 300,
+        height: 300,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .webp({ quality, effort: 6 })
+      .toBuffer();
+
+    if (thumbBuffer.length <= THUMB_MAX_OUTPUT_BYTES) {
+      return thumbBuffer;
+    }
+  }
+
   return sharp(buffer)
     .resize({
       width: 300,
@@ -161,7 +180,7 @@ async function _compressThumb(buffer) {
       fit: "inside",
       withoutEnlargement: true,
     })
-    .webp({ quality: 60, effort: 6 })
+    .webp({ quality: 40, effort: 6 })
     .toBuffer();
 }
 
@@ -368,21 +387,31 @@ import multer from "multer";
 
 const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp"];
 
-export const r2Multer = multer({
-  storage: multer.memoryStorage(),
-  fileFilter: (_req, file, cb) => {
-    if (!ALLOWED_MIME.includes(file.mimetype)) {
-      return cb(
-        new Error(
-          `File type "${file.mimetype}" is not allowed. Use JPEG, PNG, or WebP.`,
-        ),
-        false,
-      );
-    }
-    cb(null, true);
-  },
-  limits: {
-    fileSize: MAX_INPUT_BYTES, // 25 MB per file (raw)
-    files: 20, // max 20 files per request
-  },
-});
+export function createR2Multer(options = {}) {
+  const {
+    fileSize = MAX_INPUT_BYTES,
+    files = 20,
+    allowedMime = ALLOWED_MIME,
+  } = options;
+
+  return multer({
+    storage: multer.memoryStorage(),
+    fileFilter: (_req, file, cb) => {
+      if (!allowedMime.includes(file.mimetype)) {
+        return cb(
+          new Error(
+            `File type "${file.mimetype}" is not allowed. Use JPEG, PNG, or WebP.`,
+          ),
+          false,
+        );
+      }
+      cb(null, true);
+    },
+    limits: {
+      fileSize,
+      files,
+    },
+  });
+}
+
+export const r2Multer = createR2Multer();

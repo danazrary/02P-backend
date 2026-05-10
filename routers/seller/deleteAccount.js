@@ -8,8 +8,24 @@ import {
 } from "../../database/index.js";
 import { deleteFile } from "../../utils/deleteFile.js";
 import { clearCookieOpts } from "../../utils/addingToken.js";
+import { deleteFromR2 } from "../../utils/r2.js";
 
 const router = Router();
+
+function isLegacyUploadPath(value) {
+  return value?.startsWith("/uploads/") || value?.startsWith("uploads/");
+}
+
+async function deleteStoredAsset(pathOrKey) {
+  if (!pathOrKey) return;
+
+  if (isLegacyUploadPath(pathOrKey)) {
+    deleteFile(pathOrKey);
+    return;
+  }
+
+  await deleteFromR2(pathOrKey);
+}
 
 // Request account deletion (sets 30-day timer)
 router.delete("/delete-account", jwtVerifySellerToken, async (req, res) => {
@@ -109,7 +125,7 @@ export async function permanentlyDeleteSellerAccount(sellerId) {
     });
     for (const offer of offers) {
       if (offer.cover_image) {
-        deleteFile(offer.cover_image);
+        await deleteStoredAsset(offer.cover_image);
       }
     }
     await SellerOffer.destroy({ where: { seller_id: sellerId } });
@@ -119,7 +135,7 @@ export async function permanentlyDeleteSellerAccount(sellerId) {
 
     // Delete seller shop image
     if (seller.shop_image) {
-      deleteFile(seller.shop_image);
+      await deleteStoredAsset(seller.shop_image);
     }
 
     // Delete the seller record
