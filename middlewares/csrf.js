@@ -5,7 +5,8 @@ import {
 
 const baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com";
 const isProductionEnvironment =
-  process.env.NODE_ENV === "production" || process.env.ENVIRONMENT === "product";
+  process.env.NODE_ENV === "production" ||
+  process.env.ENVIRONMENT === "product";
 
 const csrfMiddleware = (req, res, next) => {
   let csrfSecret = req.cookies.csrfSecret;

@@ -38,7 +38,8 @@ console.log(`🔧 Loading environment from: ${envFile}`);
 const app = express();
 
 const isProductionEnvironment =
-  process.env.NODE_ENV === "production" || process.env.ENVIRONMENT === "product";
+  process.env.NODE_ENV === "production" ||
+  process.env.ENVIRONMENT === "product";
 const sessionBaseDomain = process.env.BASE_DOMAIN || "dwkanlink.com";
 const sessionCookieOptions = {
   httpOnly: true,

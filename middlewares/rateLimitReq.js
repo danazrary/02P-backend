@@ -1,4 +1,4 @@
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
 export const adminAuthLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
@@ -34,7 +34,8 @@ export const sellerAuthLimiter = rateLimit({
 export const uploadRateLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 4,
-  keyGenerator: (req) => (req.user?.id ? String(req.user.id) : req.ip),
+  keyGenerator: (req) =>
+    req.user?.id ? String(req.user.id) : ipKeyGenerator(req),
   message: {
     success: false,
     error: true,

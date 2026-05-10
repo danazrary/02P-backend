@@ -19,14 +19,17 @@ const router = express.Router();
 const resendClient = new Resend(process.env.RESEND_API_KEY || "");
 
 const isProductionEnvironment =
-  process.env.NODE_ENV === "production" || process.env.ENVIRONMENT === "product";
+  process.env.NODE_ENV === "production" ||
+  process.env.ENVIRONMENT === "product";
 
 function getFrontendOrigin(req) {
   if (isProductionEnvironment) {
     return process.env.FRONTEND_ORIGIN || "https://dwkanlink.com";
   }
 
-  return req.query.origin || process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+  return (
+    req.query.origin || process.env.FRONTEND_ORIGIN || "http://localhost:5173"
+  );
 }
 
 function getStoredOAuthRedirect(req, provider, code) {

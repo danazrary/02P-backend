@@ -9,10 +9,9 @@ import { Strategy as FacebookStrategy } from "passport-facebook";
 const isHttpsMode = process.argv.includes("--env=https");
 dotenv.config({ path: isHttpsMode ? ".env.https" : ".env" });
 
-const BACKEND_BASE_URL = (process.env.BACKEND_URL || "http://localhost:3001").replace(
-  /\/$/,
-  "",
-);
+const BACKEND_BASE_URL = (
+  process.env.BACKEND_URL || "http://localhost:3001"
+).replace(/\/$/, "");
 
 function getCallbackUrl(provider) {
   return `${BACKEND_BASE_URL}/api/seller/auth/${provider}/callback`;
@@ -30,7 +29,10 @@ passport.use(
       try {
         const email = profile.emails?.[0]?.value || null;
         const name =
-          profile.displayName || profile.name?.givenName || email || "Google User";
+          profile.displayName ||
+          profile.name?.givenName ||
+          email ||
+          "Google User";
         const googleId = profile.id;
 
         let sellerExist = await seller.findOne({ where: { googleId } });

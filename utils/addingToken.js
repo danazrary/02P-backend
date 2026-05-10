@@ -3,7 +3,8 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const isSecure =
-  process.env.NODE_ENV === "production" || process.env.ENVIRONMENT === "product";
+  process.env.NODE_ENV === "production" ||
+  process.env.ENVIRONMENT === "product";
 
 // Centralized cookie options for subdomain support
 // In production, cookies are shared across *.dwkanlink.com via domain attribute
