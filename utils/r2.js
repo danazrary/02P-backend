@@ -85,6 +85,11 @@ const DEFAULT_UPLOAD_OPTIONS = {
   webpEffort: 6,
 };
 
+// ── Color image constants ──────────────────────────────────────────────────
+const COLOR_IMAGE_MAX_BYTES = 180 * 1024; // 180 KB hard cap
+const COLOR_IMAGE_PASS1 = { width: 1000, height: 1000, quality: 68 };
+const COLOR_IMAGE_PASS2 = { width: 850, height: 850, quality: 55 };
+
 /**
  * Build a structured R2 key for an image.
  * @param {"products"|"offers"|"branding"} type
@@ -185,6 +190,70 @@ async function _compressThumb(buffer) {
 }
 
 /**
+ * Strict compression pipeline for per-color images.
+ * Target: 20–120 KB.  Hard cap: 180 KB.
+ *
+ * Pass 1: resize ≤ 1000×1000, WebP q=68, effort=6, smartSubsample.
+ * Pass 2 (if still > 180 KB): resize ≤ 850×850, WebP q=55.
+ *
+ * @param {Buffer} buffer
+ * @returns {Promise<Buffer>}
+ */
+async function _compressColorImage(buffer) {
+  const metadata = await sharp(buffer).metadata();
+  const origW = metadata.width || 0;
+  const origH = metadata.height || 0;
+
+  // Pass 1
+  const pass1 = await sharp(buffer)
+    .resize({
+      width: COLOR_IMAGE_PASS1.width,
+      height: COLOR_IMAGE_PASS1.height,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .webp({
+      quality: COLOR_IMAGE_PASS1.quality,
+      effort: 6,
+      smartSubsample: true,
+    })
+    .toBuffer();
+
+  const resizedMeta = await sharp(pass1).metadata();
+  console.log(
+    `🎨 [ColorImg] original ${origW}×${origH} (${(buffer.length / 1024).toFixed(1)} KB) → ` +
+      `resized ${resizedMeta.width}×${resizedMeta.height} → pass1 ${(pass1.length / 1024).toFixed(1)} KB (q=${COLOR_IMAGE_PASS1.quality})`,
+  );
+
+  if (pass1.length <= COLOR_IMAGE_MAX_BYTES) {
+    return pass1;
+  }
+
+  // Pass 2: re-compress harder
+  console.warn(
+    `⚠️  [ColorImg] pass1 ${(pass1.length / 1024).toFixed(1)} KB > 180 KB — re-compressing with q=${COLOR_IMAGE_PASS2.quality} @ ${COLOR_IMAGE_PASS2.width}px`,
+  );
+  const pass2 = await sharp(buffer)
+    .resize({
+      width: COLOR_IMAGE_PASS2.width,
+      height: COLOR_IMAGE_PASS2.height,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .webp({
+      quality: COLOR_IMAGE_PASS2.quality,
+      effort: 6,
+      smartSubsample: true,
+    })
+    .toBuffer();
+
+  console.log(
+    `🎨 [ColorImg] pass2 final: ${(pass2.length / 1024).toFixed(1)} KB (q=${COLOR_IMAGE_PASS2.quality})`,
+  );
+  return pass2;
+}
+
+/**
  * Internal: put a pre-processed buffer to R2 with CDN cache headers.
  * @param {Buffer} buffer
  * @param {string} key
@@ -241,6 +310,48 @@ export async function uploadToR2(buffer, key, options = {}) {
     await _putToR2(webpBuffer, key);
   } catch (err) {
     console.error(`❌ R2 upload failed [${key}]:`, err.message);
+    throw new Error(`R2 upload failed: ${err.message}`);
+  }
+
+  return { key, sizeBytes: webpBuffer.length };
+}
+
+/**
+ * Compress a color image with the strict color pipeline and upload to R2.
+ * Target: 20–120 KB.  Hard cap: 180 KB.
+ * Uses upload-first, delete-old logic — callers are responsible for removing
+ * the old key AFTER this function returns successfully.
+ *
+ * @param {Buffer} buffer - Raw file buffer from multer memoryStorage
+ * @param {string} key    - Full R2 object key
+ * @returns {Promise<{key: string, sizeBytes: number}>}
+ */
+export async function uploadColorImageToR2(buffer, key) {
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
+    throw new Error("uploadColorImageToR2: invalid or empty buffer");
+  }
+  if (buffer.length > MAX_INPUT_BYTES) {
+    throw new Error(
+      `uploadColorImageToR2: file (${(buffer.length / 1024 / 1024).toFixed(2)} MB) exceeds 25 MB raw upload limit`,
+    );
+  }
+
+  await _acquireSharp();
+  let webpBuffer;
+  try {
+    webpBuffer = await _compressColorImage(buffer);
+  } finally {
+    _releaseSharp();
+  }
+
+  console.log(
+    `☁️  [${isLocalEnv ? "LOCAL" : "VPS"}] Uploading color image: ${key} | final ${(webpBuffer.length / 1024).toFixed(1)} KB`,
+  );
+
+  try {
+    await _putToR2(webpBuffer, key);
+  } catch (err) {
+    console.error(`❌ R2 color upload failed [${key}]:`, err.message);
     throw new Error(`R2 upload failed: ${err.message}`);
   }
 

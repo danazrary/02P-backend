@@ -16,6 +16,7 @@ import {
   createR2Multer,
   buildR2Key,
   uploadToR2,
+  uploadColorImageToR2,
   uploadToR2WithThumb,
   deleteFromR2,
   deleteMultipleFromR2,
@@ -489,7 +490,7 @@ router.post(
             finalColors[i].nameKu || finalColors[i].nameAr,
           );
           const key = `shops/${id}/products/${product.id}/colors/${colorSegment}/${filename}`;
-          const { sizeBytes } = await uploadToR2(colorFile.buffer, key);
+          const { sizeBytes } = await uploadColorImageToR2(colorFile.buffer, key);
           totalUploadedBytes += sizeBytes;
           finalColors[i].imageKey = key;
           finalColors[i].imageSizeBytes = sizeBytes;
@@ -717,24 +718,28 @@ router.put(
       for (let i = 0; i < finalColors.length; i++) {
         const colorFile = req.files?.[`colorImage_${i}`]?.[0];
         if (colorFile) {
-          // Decrement storage for the old color image being replaced
-          if (finalColors[i].imageKey) {
-            const oldColor = (product.colors || []).find(
-              (c) => c.imageKey === finalColors[i].imageKey,
-            );
-            if (oldColor?.imageSizeBytes)
-              await decrementSellerStorage(sellerId, oldColor.imageSizeBytes);
-            await deleteFromR2(finalColors[i].imageKey);
-          }
+          const oldImageKey = finalColors[i].imageKey || null;
           const filename = `${uuidv4()}.webp`;
           const colorSegment = normalizeColorSegment(
             finalColors[i].nameKu || finalColors[i].nameAr,
           );
           const key = `shops/${sellerId}/products/${productId}/colors/${colorSegment}/${filename}`;
-          const { sizeBytes } = await uploadToR2(colorFile.buffer, key);
+
+          // Upload new image FIRST — only delete old after confirmed success
+          const { sizeBytes } = await uploadColorImageToR2(colorFile.buffer, key);
           totalUploadedBytes += sizeBytes;
           finalColors[i].imageKey = key;
           finalColors[i].imageSizeBytes = sizeBytes;
+
+          // Now safely delete the old image and decrement its storage
+          if (oldImageKey) {
+            const oldColor = (product.colors || []).find(
+              (c) => c.imageKey === oldImageKey,
+            );
+            if (oldColor?.imageSizeBytes)
+              await decrementSellerStorage(sellerId, oldColor.imageSizeBytes);
+            await deleteFromR2(oldImageKey);
+          }
         }
         // If no new file, keep existing imageKey (and imageSizeBytes) as-is
       }
