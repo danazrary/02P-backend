@@ -490,7 +490,10 @@ router.post(
             finalColors[i].nameKu || finalColors[i].nameAr,
           );
           const key = `shops/${id}/products/${product.id}/colors/${colorSegment}/${filename}`;
-          const { sizeBytes } = await uploadColorImageToR2(colorFile.buffer, key);
+          const { sizeBytes } = await uploadColorImageToR2(
+            colorFile.buffer,
+            key,
+          );
           totalUploadedBytes += sizeBytes;
           finalColors[i].imageKey = key;
           finalColors[i].imageSizeBytes = sizeBytes;
@@ -499,7 +502,12 @@ router.post(
         }
       }
       if (finalColors.length > 0) {
-        await product.update({ colors: finalColors });
+        // Use static update — instance .update() on a JSON column may skip the
+        // SQL write if Sequelize thinks the value hasn't changed after create().
+        await Product.update(
+          { colors: finalColors },
+          { where: { id: product.id } },
+        );
       }
 
       if (totalUploadedBytes > 0)
@@ -714,11 +722,14 @@ router.put(
         }
       }
 
+      const dbColors = product.colors || [];
       const finalColors = rawColors.map((c) => ({ ...c }));
       for (let i = 0; i < finalColors.length; i++) {
         const colorFile = req.files?.[`colorImage_${i}`]?.[0];
         if (colorFile) {
-          const oldImageKey = finalColors[i].imageKey || null;
+          // Always read the old key from the DB record by index — never trust
+          // what the frontend sends, as it may have already cleared imageKey.
+          const oldImageKey = dbColors[i]?.imageKey || null;
           const filename = `${uuidv4()}.webp`;
           const colorSegment = normalizeColorSegment(
             finalColors[i].nameKu || finalColors[i].nameAr,
@@ -726,22 +737,28 @@ router.put(
           const key = `shops/${sellerId}/products/${productId}/colors/${colorSegment}/${filename}`;
 
           // Upload new image FIRST — only delete old after confirmed success
-          const { sizeBytes } = await uploadColorImageToR2(colorFile.buffer, key);
+          const { sizeBytes } = await uploadColorImageToR2(
+            colorFile.buffer,
+            key,
+          );
           totalUploadedBytes += sizeBytes;
           finalColors[i].imageKey = key;
           finalColors[i].imageSizeBytes = sizeBytes;
 
           // Now safely delete the old image and decrement its storage
           if (oldImageKey) {
-            const oldColor = (product.colors || []).find(
-              (c) => c.imageKey === oldImageKey,
-            );
-            if (oldColor?.imageSizeBytes)
-              await decrementSellerStorage(sellerId, oldColor.imageSizeBytes);
+            const oldDbColor = dbColors.find((c) => c.imageKey === oldImageKey);
+            if (oldDbColor?.imageSizeBytes)
+              await decrementSellerStorage(sellerId, oldDbColor.imageSizeBytes);
             await deleteFromR2(oldImageKey);
           }
+        } else {
+          // No new file — keep existing imageKey and imageSizeBytes from DB
+          if (dbColors[i]?.imageKey) {
+            finalColors[i].imageKey = dbColors[i].imageKey;
+            finalColors[i].imageSizeBytes = dbColors[i].imageSizeBytes || 0;
+          }
         }
-        // If no new file, keep existing imageKey (and imageSizeBytes) as-is
       }
 
       if (totalUploadedBytes > 0)
@@ -753,24 +770,30 @@ router.put(
         parsedSizes,
       );
 
-      await product.update({
-        language,
-        hasRealPrice: isRealPrice,
-        titleKu,
-        titleAr,
-        descriptionKu,
-        descriptionAr,
-        realPrice: isRealPrice && realPrice !== "" ? realPrice : null,
-        priceType,
-        youtubeLinks: normalizedYoutubeLinks,
-        variantPrices: parsedVariantPrices,
-        variantPricesAr: derivedVariantPricesAr,
-        colors: finalColors.length > 0 ? finalColors : null,
-        sizes: parsedSizes.length > 0 ? parsedSizes : null,
-        customInputs: parsedCustomInputs,
-        customInputsAr: parsedCustomInputsAr,
-        category: category || null,
-      });
+      // Use static update — instance .update() on JSON columns can silently
+      // skip writing if Sequelize's change-detection gives a false negative.
+      await Product.update(
+        {
+          language,
+          hasRealPrice: isRealPrice,
+          titleKu,
+          titleAr,
+          descriptionKu,
+          descriptionAr,
+          realPrice: isRealPrice && realPrice !== "" ? realPrice : null,
+          priceType,
+          youtubeLinks: normalizedYoutubeLinks,
+          variantPrices: parsedVariantPrices,
+          variantPricesAr: derivedVariantPricesAr,
+          colors: finalColors.length > 0 ? finalColors : null,
+          sizes: parsedSizes.length > 0 ? parsedSizes : null,
+          customInputs: parsedCustomInputs,
+          customInputsAr: parsedCustomInputsAr,
+          category: category || null,
+        },
+        { where: { id: productId, seller_id: sellerId } },
+      );
+      await product.reload();
 
       res.status(200).json({
         success: true,
@@ -826,7 +849,20 @@ router.delete(
       }
 
       // Delete color images from R2 and decrement their storage
-      const colorImages = (product.colors || []).filter((c) => c.imageKey);
+      // Safely parse colors — Sequelize may return a raw string for JSON columns
+      const _rawProductColors = product.colors;
+      const _parsedProductColors = Array.isArray(_rawProductColors)
+        ? _rawProductColors
+        : typeof _rawProductColors === "string"
+          ? (() => {
+              try {
+                return JSON.parse(_rawProductColors);
+              } catch {
+                return [];
+              }
+            })()
+          : [];
+      const colorImages = _parsedProductColors.filter((c) => c && c.imageKey);
       if (colorImages.length > 0) {
         const colorKeys = colorImages.map((c) => c.imageKey);
         const colorBytes = colorImages.reduce(
