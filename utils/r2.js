@@ -35,8 +35,11 @@ console.log(
 );
 // ───────────────────────────────────────────────────────────────────────────
 
-// ── Concurrency control for sharp (max 4 parallel compressions) ────────────
-const MAX_CONCURRENT_SHARP = 4;
+// Apply a global concurrency cap so Sharp never thrashes the CPU
+sharp.concurrency(2);
+
+// ── Concurrency control for sharp (max 2 parallel requests) ─────────────────
+const MAX_CONCURRENT_SHARP = 2;
 let _sharpActive = 0;
 const _sharpQueue = [];
 
@@ -70,25 +73,38 @@ const r2Client = new S3Client({
 });
 
 const BUCKET = process.env.R2_BUCKET_NAME;
-const MAX_INPUT_BYTES = 25 * 1024 * 1024; // 25 MB raw upload ceiling
-const MAX_OUTPUT_BYTES = 1 * 1024 * 1024; // 1 MB post-compression ceiling
-const THUMB_MAX_OUTPUT_BYTES = 120 * 1024;
+const MAX_INPUT_BYTES = 2 * 1024 * 1024; // 2 MB multer per-file limit (matches middleware)
+const R2_HARD_CEILING_BYTES = 500 * 1024; // 500 KB absolute ceiling — nothing larger enters R2
+
+// Main product image targets: ≤1400×1400, quality 68→62→56, max 350 KB
+const MAIN_MAX_DIM = 1400;
+const MAIN_MAX_OUTPUT_BYTES = 350 * 1024;
+const MAIN_QUALITIES = [68, 62, 56];
+
+// Thumbnail targets: ≤300×300, quality 50→42→36, max 60 KB
+const THUMB_MAX_DIM = 300;
+const THUMB_MAX_OUTPUT_BYTES = 60 * 1024;
+const THUMB_QUALITIES = [50, 42, 36];
+
+// Color image targets: ≤900×900, quality 60→50→42, max 180 KB
+const COLOR_IMAGE_MAX_BYTES = 180 * 1024;
+const COLOR_IMAGE_PASS1 = { width: 900, height: 900, quality: 60 };
+const COLOR_IMAGE_PASS2 = { width: 750, height: 750, quality: 48 };
+const COLOR_IMAGE_PASS3 = { width: 600, height: 600, quality: 40 };
+
+// Legacy constant (kept so existing callers of buildR2Key/uploadToR2 still work)
+const MAX_OUTPUT_BYTES = MAIN_MAX_OUTPUT_BYTES;
 
 const DEFAULT_UPLOAD_OPTIONS = {
-  width: 1280,
-  height: 1280,
+  width: MAIN_MAX_DIM,
+  height: MAIN_MAX_DIM,
   fit: "inside",
   withoutEnlargement: true,
   background: undefined,
-  qualities: [80, 75, 70],
-  maxOutputBytes: MAX_OUTPUT_BYTES,
-  webpEffort: 6,
+  qualities: MAIN_QUALITIES,
+  maxOutputBytes: MAIN_MAX_OUTPUT_BYTES,
+  webpEffort: 4, // effort 4 is faster than 6 with negligible quality loss
 };
-
-// ── Color image constants ──────────────────────────────────────────────────
-const COLOR_IMAGE_MAX_BYTES = 180 * 1024; // 180 KB hard cap
-const COLOR_IMAGE_PASS1 = { width: 1000, height: 1000, quality: 68 };
-const COLOR_IMAGE_PASS2 = { width: 850, height: 850, quality: 55 };
 
 /**
  * Build a structured R2 key for an image.
@@ -106,10 +122,10 @@ export function buildR2Key(type, sellerId, resourceId, filename) {
 }
 
 /**
- * Mandatory compression pipeline for the main image.
- * Resizes to ≤ 1280×1280 and converts to WebP.
- * Tries qualities [80, 75, 70] until output ≤ 1 MB.
- * Throws if even quality-70 exceeds the limit.
+ * Mandatory compression pipeline for the main product image.
+ * Resizes to ≤ MAIN_MAX_DIM×MAIN_MAX_DIM, converts to WebP.
+ * Adaptive: tries MAIN_QUALITIES until output ≤ MAIN_MAX_OUTPUT_BYTES.
+ * Absolute ceiling: rejects any result above R2_HARD_CEILING_BYTES (500 KB).
  *
  * @param {Buffer} buffer
  * @param {Object} options
@@ -119,7 +135,9 @@ async function _compressImage(buffer, options = {}) {
   const config = { ...DEFAULT_UPLOAD_OPTIONS, ...options };
   const qualities = Array.isArray(config.qualities)
     ? config.qualities
-    : DEFAULT_UPLOAD_OPTIONS.qualities;
+    : MAIN_QUALITIES;
+
+  let bestBuffer = null;
 
   for (const quality of qualities) {
     const resizeOptions = {
@@ -132,45 +150,57 @@ async function _compressImage(buffer, options = {}) {
       resizeOptions.background = config.background;
     }
 
+    // eslint-disable-next-line no-await-in-loop
     const result = await sharp(buffer)
       .resize(resizeOptions)
       .webp({ quality, effort: config.webpEffort })
       .toBuffer();
 
+    bestBuffer = result;
+
     if (result.length <= config.maxOutputBytes) {
       return result;
     }
 
-    if (quality === qualities[qualities.length - 1]) {
-      throw new Error(
-        `Image cannot be compressed below ${(config.maxOutputBytes / 1024 / 1024).toFixed(0)} MB (size at quality=${quality}: ${(result.length / 1024 / 1024).toFixed(2)} MB). Use a smaller source image.`,
-      );
-    }
     console.warn(
       `⚠️  R2 compress q=${quality}: ${(result.length / 1024).toFixed(0)} KB > ${(config.maxOutputBytes / 1024).toFixed(0)} KB — retrying lower quality`,
     );
   }
+
+  // bestBuffer is the result at the lowest quality
+  if (bestBuffer && bestBuffer.length <= R2_HARD_CEILING_BYTES) {
+    console.warn(
+      `⚠️  R2 compress: could not reach target (${(MAIN_MAX_OUTPUT_BYTES / 1024).toFixed(0)} KB), ` +
+        `but result (${(bestBuffer.length / 1024).toFixed(0)} KB) is within the 500 KB hard cap — accepting.`,
+    );
+    return bestBuffer;
+  }
+
+  throw new Error(
+    `Image cannot be compressed below 500 KB after all quality passes. ` +
+      `Final size: ${bestBuffer ? (bestBuffer.length / 1024).toFixed(0) + " KB" : "unknown"}. ` +
+      `Use a smaller or simpler source image.`,
+  );
 }
 
 /**
  * Thumbnail compression pipeline.
- * Resizes to ≤ 300×300, quality 60. Thumbnails are always small enough.
+ * Resizes to ≤ 300×300. Adaptive quality until output ≤ 60 KB.
  *
  * @param {Buffer} buffer
  * @returns {Promise<Buffer>} WebP thumbnail buffer
  */
 async function _compressThumb(buffer) {
-  const qualities = [60, 55, 50, 45, 40];
-
-  for (const quality of qualities) {
+  for (const quality of THUMB_QUALITIES) {
+    // eslint-disable-next-line no-await-in-loop
     const thumbBuffer = await sharp(buffer)
       .resize({
-        width: 300,
-        height: 300,
+        width: THUMB_MAX_DIM,
+        height: THUMB_MAX_DIM,
         fit: "inside",
         withoutEnlargement: true,
       })
-      .webp({ quality, effort: 6 })
+      .webp({ quality, effort: 4 })
       .toBuffer();
 
     if (thumbBuffer.length <= THUMB_MAX_OUTPUT_BYTES) {
@@ -178,23 +208,25 @@ async function _compressThumb(buffer) {
     }
   }
 
+  // Fallback: lowest quality defined
   return sharp(buffer)
     .resize({
-      width: 300,
-      height: 300,
+      width: THUMB_MAX_DIM,
+      height: THUMB_MAX_DIM,
       fit: "inside",
       withoutEnlargement: true,
     })
-    .webp({ quality: 40, effort: 6 })
+    .webp({ quality: THUMB_QUALITIES[THUMB_QUALITIES.length - 1], effort: 4 })
     .toBuffer();
 }
 
 /**
  * Strict compression pipeline for per-color images.
- * Target: 20–120 KB.  Hard cap: 180 KB.
+ * Target: 60–180 KB. Hard cap: 180 KB. Absolute ceiling: 500 KB.
  *
- * Pass 1: resize ≤ 1000×1000, WebP q=68, effort=6, smartSubsample.
- * Pass 2 (if still > 180 KB): resize ≤ 850×850, WebP q=55.
+ * Pass 1: resize ≤ 900×900, WebP q=60, effort=4.
+ * Pass 2 (if > 180 KB): resize ≤ 750×750, WebP q=48.
+ * Pass 3 (if still > 180 KB): resize ≤ 600×600, WebP q=40.
  *
  * @param {Buffer} buffer
  * @returns {Promise<Buffer>}
@@ -214,24 +246,21 @@ async function _compressColorImage(buffer) {
     })
     .webp({
       quality: COLOR_IMAGE_PASS1.quality,
-      effort: 6,
+      effort: 4,
       smartSubsample: true,
     })
     .toBuffer();
 
-  const resizedMeta = await sharp(pass1).metadata();
   console.log(
     `🎨 [ColorImg] original ${origW}×${origH} (${(buffer.length / 1024).toFixed(1)} KB) → ` +
-      `resized ${resizedMeta.width}×${resizedMeta.height} → pass1 ${(pass1.length / 1024).toFixed(1)} KB (q=${COLOR_IMAGE_PASS1.quality})`,
+      `pass1 ${(pass1.length / 1024).toFixed(1)} KB (q=${COLOR_IMAGE_PASS1.quality})`,
   );
 
-  if (pass1.length <= COLOR_IMAGE_MAX_BYTES) {
-    return pass1;
-  }
+  if (pass1.length <= COLOR_IMAGE_MAX_BYTES) return pass1;
 
-  // Pass 2: re-compress harder
+  // Pass 2
   console.warn(
-    `⚠️  [ColorImg] pass1 ${(pass1.length / 1024).toFixed(1)} KB > 180 KB — re-compressing with q=${COLOR_IMAGE_PASS2.quality} @ ${COLOR_IMAGE_PASS2.width}px`,
+    `⚠️  [ColorImg] pass1 ${(pass1.length / 1024).toFixed(1)} KB > 180 KB — pass2 q=${COLOR_IMAGE_PASS2.quality} @ ${COLOR_IMAGE_PASS2.width}px`,
   );
   const pass2 = await sharp(buffer)
     .resize({
@@ -242,15 +271,46 @@ async function _compressColorImage(buffer) {
     })
     .webp({
       quality: COLOR_IMAGE_PASS2.quality,
-      effort: 6,
+      effort: 4,
       smartSubsample: true,
     })
     .toBuffer();
 
   console.log(
-    `🎨 [ColorImg] pass2 final: ${(pass2.length / 1024).toFixed(1)} KB (q=${COLOR_IMAGE_PASS2.quality})`,
+    `🎨 [ColorImg] pass2 ${(pass2.length / 1024).toFixed(1)} KB (q=${COLOR_IMAGE_PASS2.quality})`,
   );
-  return pass2;
+
+  if (pass2.length <= COLOR_IMAGE_MAX_BYTES) return pass2;
+
+  // Pass 3
+  console.warn(
+    `⚠️  [ColorImg] pass2 still > 180 KB — pass3 q=${COLOR_IMAGE_PASS3.quality} @ ${COLOR_IMAGE_PASS3.width}px`,
+  );
+  const pass3 = await sharp(buffer)
+    .resize({
+      width: COLOR_IMAGE_PASS3.width,
+      height: COLOR_IMAGE_PASS3.height,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .webp({
+      quality: COLOR_IMAGE_PASS3.quality,
+      effort: 4,
+      smartSubsample: true,
+    })
+    .toBuffer();
+
+  console.log(
+    `🎨 [ColorImg] pass3 final: ${(pass3.length / 1024).toFixed(1)} KB (q=${COLOR_IMAGE_PASS3.quality})`,
+  );
+
+  if (pass3.length > R2_HARD_CEILING_BYTES) {
+    throw new Error(
+      `Color image cannot be compressed below 500 KB. Final size: ${(pass3.length / 1024).toFixed(0)} KB.`,
+    );
+  }
+
+  return pass3;
 }
 
 /**
@@ -290,6 +350,7 @@ export async function uploadToR2(buffer, key, options = {}) {
   }
 
   const originalKb = (buffer.length / 1024).toFixed(1);
+  const t0 = Date.now();
 
   // ── Concurrency-limited compression ─────────────────────────────────────
   await _acquireSharp();
@@ -300,12 +361,14 @@ export async function uploadToR2(buffer, key, options = {}) {
     _releaseSharp();
   }
 
+  const compressMs = Date.now() - t0;
   const finalKb = (webpBuffer.length / 1024).toFixed(1);
   console.log(
-    `☁️  [${isLocalEnv ? "LOCAL" : "VPS"}] Uploading: ${key} | raw ${originalKb} KB → webp ${finalKb} KB`,
+    `☁️  [${isLocalEnv ? "LOCAL" : "VPS"}] Uploading: ${key} | raw ${originalKb} KB → webp ${finalKb} KB | compress ${compressMs}ms`,
   );
 
   // ── R2 upload ─────────────────────────────────────────────────────────────
+  const t1 = Date.now();
   try {
     await _putToR2(webpBuffer, key);
   } catch (err) {
@@ -313,6 +376,7 @@ export async function uploadToR2(buffer, key, options = {}) {
     throw new Error(`R2 upload failed: ${err.message}`);
   }
 
+  console.log(`[Upload] R2 PUT ${key} in ${Date.now() - t1}ms`);
   return { key, sizeBytes: webpBuffer.length };
 }
 
@@ -377,15 +441,16 @@ export async function uploadToR2WithThumb(buffer, basePath) {
   }
   if (buffer.length > MAX_INPUT_BYTES) {
     throw new Error(
-      `uploadToR2WithThumb: file (${(buffer.length / 1024 / 1024).toFixed(2)} MB) exceeds 25 MB raw upload limit`,
+      `uploadToR2WithThumb: file (${(buffer.length / 1024 / 1024).toFixed(2)} MB) exceeds ${(MAX_INPUT_BYTES / 1024 / 1024).toFixed(0)} MB raw upload limit`,
     );
   }
 
-  const id = uuidv4();
-  const mainKey = `${basePath}/main/${id}.webp`;
-  const thumbKey = `${basePath}/thumb/${id}.webp`;
+  const fileId = uuidv4();
+  const mainKey = `${basePath}/main/${fileId}.webp`;
+  const thumbKey = `${basePath}/thumb/${fileId}.webp`;
 
   // ── Concurrency-limited compression (both variants in one slot) ──────────
+  const t0 = Date.now();
   await _acquireSharp();
   let mainBuffer, thumbBuffer;
   try {
@@ -396,12 +461,15 @@ export async function uploadToR2WithThumb(buffer, basePath) {
   } finally {
     _releaseSharp();
   }
+  const compressMs = Date.now() - t0;
 
   console.log(
-    `☁️  [${isLocalEnv ? "LOCAL" : "VPS"}] Uploading main+thumb: ${basePath} | main ${(mainBuffer.length / 1024).toFixed(1)} KB | thumb ${(thumbBuffer.length / 1024).toFixed(1)} KB`,
+    `☁️  [${isLocalEnv ? "LOCAL" : "VPS"}] main+thumb compress ${compressMs}ms | ` +
+      `main ${(mainBuffer.length / 1024).toFixed(1)} KB | thumb ${(thumbBuffer.length / 1024).toFixed(1)} KB`,
   );
 
   // ── Upload both keys in parallel ─────────────────────────────────────────
+  const t1 = Date.now();
   try {
     await Promise.all([
       _putToR2(mainBuffer, mainKey),
@@ -411,6 +479,9 @@ export async function uploadToR2WithThumb(buffer, basePath) {
     console.error(`❌ R2 dual upload failed [${basePath}]:`, err.message);
     throw new Error(`R2 upload failed: ${err.message}`);
   }
+  console.log(
+    `[Upload] R2 PUT main+thumb for ${basePath} in ${Date.now() - t1}ms`,
+  );
 
   return {
     mainKey,

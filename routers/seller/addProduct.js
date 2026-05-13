@@ -168,6 +168,25 @@ function getProductFieldLimit(plan) {
   return isAdvancedPlan ? 15 : 5;
 }
 
+/**
+ * Returns max allowed price combinations for the plan:
+ *   Basic/Pro  → 25   (5×5)
+ *   Plus/Business Pro → 225 (15×15)
+ */
+function getMaxVariantPriceCombinations(plan) {
+  return getProductFieldLimit(plan) === 15 ? 225 : 25;
+}
+
+function validateVariantPriceCombinations(plan, variantPrices) {
+  const maxCombos = getMaxVariantPriceCombinations(plan);
+  if (variantPrices.length > maxCombos) {
+    const err = new Error("Variant price combination limit exceeded");
+    err.statusCode = 400;
+    err.clientMessage = `Your current seller plan allows up to ${maxCombos} price combinations.`;
+    throw err;
+  }
+}
+
 function getProductImageLimits(plan) {
   const colorImages = getProductFieldLimit(plan);
 
@@ -308,6 +327,7 @@ router.post(
   checkStorageLimit,
   async (req, res) => {
     try {
+      const tRequest = Date.now();
       const { id } = req.user;
       console.log(
         `🛒 Add-product — seller ${id} — env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
@@ -416,6 +436,8 @@ router.post(
         customInputsAr: parsedCustomInputsAr,
       });
 
+      validateVariantPriceCombinations(plan, parsedVariantPrices);
+
       // Enforce: base price is not allowed when colors or sizes are present
       const hasColorsOrSizes =
         rawColors.some((c) => (c.nameKu || c.nameAr || "").trim()) ||
@@ -459,35 +481,52 @@ router.post(
         category: category || null,
       });
 
-      // Upload product images to R2 (main 1280px + thumbnail 300px)
+      // Upload product images to R2 (main 1400px + thumbnail 300px) — parallel
+      const tUploadStart = Date.now();
       let totalUploadedBytes = 0;
-      const imageRecords = [];
       const imageFiles = req.files?.images || [];
+      const basePath = `shops/${id}/products/${product.id}`;
 
-      for (let i = 0; i < imageFiles.length; i++) {
-        const file = imageFiles[i];
-        const basePath = `shops/${id}/products/${product.id}`;
-        const { mainKey, thumbKey, sizeBytes, totalSizeBytes } =
-          await uploadToR2WithThumb(file.buffer, basePath);
-        totalUploadedBytes += totalSizeBytes;
-        imageRecords.push({
-          product_id: product.id,
-          image_key: mainKey,
-          thumb_key: thumbKey,
-          is_main: i === 0,
-          size_bytes: sizeBytes,
-        });
-      }
+      const imageUploadResults = await Promise.all(
+        imageFiles.map((file, i) =>
+          uploadToR2WithThumb(file.buffer, basePath).then((result) => ({
+            ...result,
+            isMain: i === 0,
+          })),
+        ),
+      );
+
+      const imageRecords = imageUploadResults.map(
+        ({ mainKey, thumbKey, sizeBytes, totalSizeBytes, isMain }) => {
+          totalUploadedBytes += totalSizeBytes;
+          return {
+            product_id: product.id,
+            image_key: mainKey,
+            thumb_key: thumbKey,
+            is_main: isMain,
+            size_bytes: sizeBytes,
+          };
+        },
+      );
       if (imageRecords.length > 0) await ProductImage.bulkCreate(imageRecords);
+      console.log(
+        `[Upload] ${imageFiles.length} main images uploaded in ${Date.now() - tUploadStart}ms`,
+      );
 
-      // Upload per-color images and attach imageKey to each color
+      // Upload per-color images in parallel and attach imageKey to each color
       const finalColors = rawColors.map((c) => ({ ...c }));
-      for (let i = 0; i < finalColors.length; i++) {
-        const colorFile = req.files?.[`colorImage_${i}`]?.[0];
-        if (colorFile) {
+      const tColorStart = Date.now();
+
+      await Promise.all(
+        finalColors.map(async (color, i) => {
+          const colorFile = req.files?.[`colorImage_${i}`]?.[0];
+          if (!colorFile) {
+            finalColors[i].imageKey = null;
+            return;
+          }
           const filename = `${uuidv4()}.webp`;
           const colorSegment = normalizeColorSegment(
-            finalColors[i].nameKu || finalColors[i].nameAr,
+            color.nameKu || color.nameAr,
           );
           const key = `shops/${id}/products/${product.id}/colors/${colorSegment}/${filename}`;
           const { sizeBytes } = await uploadColorImageToR2(
@@ -497,10 +536,13 @@ router.post(
           totalUploadedBytes += sizeBytes;
           finalColors[i].imageKey = key;
           finalColors[i].imageSizeBytes = sizeBytes;
-        } else {
-          finalColors[i].imageKey = null;
-        }
-      }
+        }),
+      );
+
+      const colorCount = finalColors.filter((c) => c.imageKey).length;
+      console.log(
+        `[Upload] ${colorCount} color images uploaded in ${Date.now() - tColorStart}ms`,
+      );
       if (finalColors.length > 0) {
         // Use static update — instance .update() on a JSON column may skip the
         // SQL write if Sequelize thinks the value hasn't changed after create().
@@ -512,6 +554,10 @@ router.post(
 
       if (totalUploadedBytes > 0)
         await incrementSellerStorage(id, totalUploadedBytes);
+
+      console.log(
+        `[Upload] Total add-product request: ${Date.now() - tRequest}ms`,
+      );
 
       res.status(201).json({
         success: true,
@@ -648,6 +694,8 @@ router.put(
         customInputs: parsedCustomInputs,
         customInputsAr: parsedCustomInputsAr,
       });
+
+      validateVariantPriceCombinations(plan, parsedVariantPrices);
 
       // Enforce: base price is not allowed when colors or sizes are present
       const isRealPrice = hasRealPrice === "true" || hasRealPrice === true;
