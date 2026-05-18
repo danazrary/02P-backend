@@ -16,6 +16,7 @@ import sellerProductDiscountRouter from "./seller/productDiscount.js";
 import sellerDeleteAccountRouter from "./seller/deleteAccount.js";
 import sellerCategoryRouter from "./seller/category.js";
 import sellerCatalogRouter from "./seller/catalog.js";
+import sellerCategoryProductsRouter from "./seller/categoryProducts.js";
 //customer routers
 import customerShopRouter from "./customer/shop.js";
 import customerProductRouter from "./customer/product.js";
@@ -40,6 +41,7 @@ router.use("/seller", sellerProductDiscountRouter);
 router.use("/seller", sellerDeleteAccountRouter);
 router.use("/seller", sellerCategoryRouter);
 router.use("/seller", sellerCatalogRouter);
+router.use("/seller", sellerCategoryProductsRouter);
 //customer routers
 router.use("/customer", customerProductRouter);
 router.use("/customer", customerQuestionsRouter);

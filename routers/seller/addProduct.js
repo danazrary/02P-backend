@@ -394,7 +394,27 @@ router.post(
         category,
         colors: colorsBody,
         sizes: sizesBody,
+        stock: stockBody,
+        isAvailable: isAvailableBody,
       } = req.body;
+
+      // --- Validate stock ---
+      let parsedStock = null;
+      if (stockBody !== undefined && stockBody !== "" && stockBody !== null) {
+        const rawStock = Number(stockBody);
+        if (!Number.isInteger(rawStock) || rawStock < 0) {
+          return res.status(400).json({
+            success: false,
+            error: true,
+            message: "Stock must be a non-negative integer.",
+          });
+        }
+        parsedStock = rawStock;
+      }
+
+      // --- Validate isAvailable ---
+      const isAvailablePost =
+        isAvailableBody === "false" || isAvailableBody === false ? false : true;
 
       const parsedYoutubeLinks = youtubeLinks ? JSON.parse(youtubeLinks) : [];
       const normalizedYoutubeLinks =
@@ -478,6 +498,9 @@ router.post(
         sizes: parsedSizes.length > 0 ? parsedSizes : null,
         customInputs: parsedCustomInputs,
         customInputsAr: parsedCustomInputsAr,
+        // stock only tracked when product has no variants
+        stock: hasColorsOrSizes ? null : parsedStock,
+        isAvailable: isAvailablePost,
         category: category || null,
       });
 
@@ -632,7 +655,27 @@ router.put(
         category,
         colors: colorsBody,
         sizes: sizesBody,
+        stock: stockBody,
+        isAvailable: isAvailableBody,
       } = req.body;
+
+      // --- Validate stock ---
+      let parsedStockEdit = null;
+      if (stockBody !== undefined && stockBody !== "" && stockBody !== null) {
+        const rawStock = Number(stockBody);
+        if (!Number.isInteger(rawStock) || rawStock < 0) {
+          return res.status(400).json({
+            success: false,
+            error: true,
+            message: "Stock must be a non-negative integer.",
+          });
+        }
+        parsedStockEdit = rawStock;
+      }
+
+      // --- Validate isAvailable ---
+      const isAvailableEdit =
+        isAvailableBody === "false" || isAvailableBody === false ? false : true;
 
       const parsedYoutubeLinks = youtubeLinks ? JSON.parse(youtubeLinks) : [];
       const normalizedYoutubeLinks =
@@ -838,6 +881,9 @@ router.put(
           customInputs: parsedCustomInputs,
           customInputsAr: parsedCustomInputsAr,
           category: category || null,
+          // stock only tracked when product has no variants
+          stock: hasColorsOrSizesEdit ? null : parsedStockEdit,
+          isAvailable: isAvailableEdit,
         },
         { where: { id: productId, seller_id: sellerId } },
       );

@@ -21,6 +21,200 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 const router = Router();
 
+/**
+ * Lightweight endpoint for CategoryPage — returns only shop open/close status
+ * plus categories, subcategories_map, category_images and minimal seller info.
+ * No products, no offers, no red_line.
+ * GET /api/seller/sellers-customer/:shopName/category
+ */
+router.get(
+  "/sellers-customer/:shopName/category",
+  detectSeller,
+  async (req, res) => {
+    const { shopName } = req.params;
+
+    console.log(
+      "\n========== [SHOP CATEGORY] INCOMING REQUEST ==========",
+    );
+    console.log(`  shopName : ${shopName}`);
+    console.log("=======================================================\n");
+
+    try {
+      let role = false;
+      let sellerShop = null;
+
+      if (req.isSeller && req.seller) {
+        const findSeller = await Seller.findByPk(req.seller.id, {
+          attributes: ["shop_name"],
+        });
+        role = true;
+        sellerShop = findSeller ? findSeller.shop_name : null;
+      }
+
+      // 1. Find seller
+      const seller = await Seller.findOne({
+        where: { shop_name: shopName },
+        attributes: [
+          "id",
+          "name",
+          "shop_name",
+          "shop_image",
+          "bio",
+          "shop_location",
+          "brand_color",
+          "default_shop_lang",
+          "categories",
+          "subcategories_map",
+          "category_images",
+        ],
+      });
+
+      if (!seller) {
+        console.log(`[SHOP CATEGORY] Shop not found: ${shopName}`);
+        return res.status(200).json({
+          success: false,
+          error: true,
+          isSeller: role,
+          message: "Seller shop not found",
+        });
+      }
+
+      // 2. Check plan (is shop open?)
+      const sellerPlanRecord = await SellerPlan.findOne({
+        where: { seller_id: seller.id },
+      });
+
+      if (!sellerPlanRecord) {
+        console.log(`[SHOP CATEGORY] No plan — shop closed: ${shopName}`);
+        return res.status(200).json({
+          success: true,
+          error: false,
+          isSeller: role,
+          shopName: sellerShop,
+          yourShopClose: true,
+          closeReason: "no_plan",
+          seller: {
+            id: seller.id,
+            name: seller.name,
+            shop_name: seller.shop_name,
+            shop_image: seller.shop_image,
+          },
+        });
+      }
+
+      const plan = await Plan.findByPk(sellerPlanRecord.plan_id, {
+        attributes: ["name"],
+      });
+      const planName = plan ? plan.name : "";
+
+      // Free plan → shop closed
+      if (
+        planName === "free_seller" ||
+        planName === "Free" ||
+        sellerPlanRecord.plan_id === 1
+      ) {
+        return res.status(200).json({
+          success: true,
+          error: false,
+          isSeller: role,
+          shopName: sellerShop,
+          yourShopClose: true,
+          closeReason: "free_plan",
+          seller: {
+            id: seller.id,
+            name: seller.name,
+            shop_name: seller.shop_name,
+            shop_image: seller.shop_image,
+          },
+        });
+      }
+
+      // Trial plan expired?
+      if (planName === "trial_seller" || sellerPlanRecord.plan_id === 9) {
+        const { baghdadFull: now } = getCurrentTimeBaghdad();
+        const endDate = dayjs(sellerPlanRecord.end_date).tz("Asia/Baghdad");
+        if (now.isAfter(endDate) && now.diff(endDate, "day") > 1) {
+          return res.status(200).json({
+            success: true,
+            error: false,
+            isSeller: role,
+            shopName: sellerShop,
+            yourShopClose: true,
+            closeReason: "trial_expired",
+            seller: {
+              id: seller.id,
+              name: seller.name,
+              shop_name: seller.shop_name,
+              shop_image: seller.shop_image,
+            },
+          });
+        }
+      }
+
+      // Paid plan expired?
+      if (
+        planName !== "free_seller" &&
+        planName !== "Free" &&
+        planName !== "trial_seller" &&
+        sellerPlanRecord.plan_id !== 1 &&
+        sellerPlanRecord.plan_id !== 9
+      ) {
+        const { baghdadFull: now } = getCurrentTimeBaghdad();
+        const endDate = dayjs(sellerPlanRecord.end_date).tz("Asia/Baghdad");
+        if (now.isAfter(endDate) && now.diff(endDate, "day") > 1) {
+          return res.status(200).json({
+            success: true,
+            error: false,
+            isSeller: role,
+            shopName: sellerShop,
+            yourShopClose: true,
+            closeReason: "plan_expired",
+            seller: {
+              id: seller.id,
+              name: seller.name,
+              shop_name: seller.shop_name,
+              shop_image: seller.shop_image,
+            },
+          });
+        }
+      }
+
+      // 3. Shop is open — return categories data
+      console.log(
+        `[SHOP CATEGORY] OK — categories: ${(seller.categories || []).length}`,
+      );
+
+      return res.status(200).json({
+        success: true,
+        error: false,
+        isSeller: role,
+        shopName: sellerShop,
+        yourShopClose: false,
+        seller: {
+          id: seller.id,
+          name: seller.name,
+          shop_name: seller.shop_name,
+          shop_image: seller.shop_image,
+          bio: seller.bio || null,
+          shop_location: seller.shop_location || null,
+          brand_color: seller.brand_color || null,
+        },
+        default_shop_lang: seller.default_shop_lang || "ku",
+        categories: seller.categories || [],
+        subcategories_map: seller.subcategories_map || {},
+        category_images: seller.category_images || {},
+      });
+    } catch (error) {
+      console.error("[SHOP CATEGORY] ERROR:", error.message);
+      return res.status(500).json({
+        success: false,
+        error: true,
+        message: "Server error",
+      });
+    }
+  },
+);
+
 router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
   try {
     const { shopName } = req.params;
@@ -49,11 +243,11 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     });
 
     if (!seller) {
-      return res.status(404).json({
+      return res.status(200).json({
         success: false,
         error: true,
         isSeller: role, // return true if requester is a seller, false otherwise
-        shopName: sellerShop || null,
+        shopName: "null",
         message: "Seller shop not found",
       });
     }
@@ -245,8 +439,11 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
           "freeDeliveryEndDate",
           "free_delivery",
           "variantPrices",
+          "variantPricesAr",
           "category",
           "subcategory",
+          "isAvailable",
+          "stock",
         ],
         include: [
           {
@@ -397,7 +594,11 @@ router.get("/more-products/:sellerId", async (req, res) => {
         "freeDeliveryEndDate",
         "free_delivery",
         "variantPrices",
+        "variantPricesAr",
         "category",
+        "subcategory",
+        "isAvailable",
+        "stock",
       ],
       include: [
         {
@@ -431,18 +632,21 @@ router.get("/more-products/:sellerId", async (req, res) => {
 /**
  * GET /products-by-category/:sellerId
  * Fetch products filtered by category for a seller's shop
- * Query params: category, limit, offset
+ * Query params: category, subcategory, limit, offset
  */
 router.get("/products-by-category/:sellerId", async (req, res) => {
   try {
     const { sellerId } = req.params;
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
     const offset = parseInt(req.query.offset) || 0;
-    const { category } = req.query;
+    const { category, subcategory } = req.query;
 
     const whereClause = { seller_id: sellerId };
     if (category) {
       whereClause.category = category;
+    }
+    if (subcategory) {
+      whereClause.subcategory = subcategory;
     }
 
     const { count: total, rows: rawProducts } = await Product.findAndCountAll({
@@ -464,7 +668,12 @@ router.get("/products-by-category/:sellerId", async (req, res) => {
         "freeDeliveryEndDate",
         "free_delivery",
         "variantPrices",
+        "colors",
+        "sizes",
+        "stock",
+        "isAvailable",
         "category",
+        "subcategory",
       ],
       include: [
         {
@@ -505,7 +714,9 @@ router.get("/product-for-cart/:productId", async (req, res) => {
     const { productId } = req.params;
     const id = parseInt(productId, 10);
     if (!id || isNaN(id)) {
-      return res.status(400).json({ success: false, message: "Invalid product ID" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid product ID" });
     }
 
     const product = await Product.findByPk(id, {
@@ -544,7 +755,9 @@ router.get("/product-for-cart/:productId", async (req, res) => {
     });
 
     if (!product) {
-      return res.status(404).json({ success: false, message: "Product not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Product not found" });
     }
 
     return res.status(200).json({ success: true, product });

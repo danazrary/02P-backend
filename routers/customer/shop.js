@@ -148,6 +148,10 @@ router.get("/:shopName", detectSeller, async (req, res) => {
         "variantPricesAr",
         "colors",
         "sizes",
+        "stock",
+        "isAvailable",
+        "category",
+        "subcategory",
       ],
     });
 
@@ -274,6 +278,10 @@ router.get("/:shopName/search", async (req, res) => {
         "variantPricesAr",
         "colors",
         "sizes",
+        "stock",
+        "isAvailable",
+        "category",
+        "subcategory",
       ],
       include: [
         {
