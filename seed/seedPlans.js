@@ -21,36 +21,40 @@ async function seedPlans() {
         max_products: 0,
       },
 
-      // SMALL
+      // SMALL (Basic) — 100 products, 500 MB storage
       {
         name: "small_seller",
         billing_cycle: "monthly",
         price: 5000,
         duration_days: 30,
-        max_products: 30,
+        max_products: 100,
+        storage_limit_mb: 500,
       },
       {
         name: "small_seller",
         billing_cycle: "yearly",
         price: 50000,
         duration_days: 365,
-        max_products: 30,
+        max_products: 100,
+        storage_limit_mb: 500,
       },
 
-      // MEDIUM
+      // MEDIUM (Pro) — 400 products, 2 GB storage
       {
         name: "medium_seller",
         billing_cycle: "monthly",
         price: 10000,
         duration_days: 30,
-        max_products: 80,
+        max_products: 400,
+        storage_limit_mb: 2048,
       },
       {
         name: "medium_seller",
         billing_cycle: "yearly",
         price: 100000,
         duration_days: 365,
-        max_products: 80,
+        max_products: 400,
+        storage_limit_mb: 2048,
       },
 
       // LARGE

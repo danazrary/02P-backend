@@ -163,7 +163,7 @@ function getProductFieldLimit(plan) {
   const isAdvancedPlan =
     ADVANCED_PLAN_ALIASES.has(normalizedPlan) ||
     compactPlan === "businesspro" ||
-    (plan?.max_products ?? 0) >= 200;
+    (plan?.max_products ?? 0) >= 500;
 
   return isAdvancedPlan ? 15 : 5;
 }
