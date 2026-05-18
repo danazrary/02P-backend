@@ -33,9 +33,7 @@ router.get(
   async (req, res) => {
     const { shopName } = req.params;
 
-    console.log(
-      "\n========== [SHOP CATEGORY] INCOMING REQUEST ==========",
-    );
+    console.log("\n========== [SHOP CATEGORY] INCOMING REQUEST ==========");
     console.log(`  shopName : ${shopName}`);
     console.log("=======================================================\n");
 
