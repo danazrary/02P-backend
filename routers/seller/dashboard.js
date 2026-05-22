@@ -17,6 +17,7 @@ import {
   getRedLineStatus,
   toUTC,
 } from "../../utils/timezoneHandler.js";
+import { normalizeUiSettings } from "../../utils/uiSettings.js";
 
 const router = Router();
 
@@ -366,6 +367,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
           "freeDeliveryStartDate",
           "freeDeliveryEndDate",
           "free_delivery",
+          "options",
+          "variants",
           "variantPrices",
           "category",
           "subcategory",
@@ -462,6 +465,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       storage_limit_mb: planRow?.storage_limit_mb ?? 0,
       storage_used_mb: parseFloat(storageUsedMb ?? 0),
       default_shop_lang: seller.default_shop_lang || "ku",
+      ui_settings: normalizeUiSettings(seller.ui_settings),
     });
   } catch (error) {
     console.error("[dashboard] Unhandled error:", error);

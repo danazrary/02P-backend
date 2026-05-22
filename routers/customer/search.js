@@ -128,6 +128,8 @@ router.get("/search", async (req, res) => {
         "discountEndDate",
         "free_delivery",
         "hasRealPrice",
+        "options",
+        "variants",
         "variantPrices",
         "variantPricesAr",
         "category",

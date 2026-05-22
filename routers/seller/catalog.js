@@ -45,6 +45,8 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
         "category",
         "subcategory",
         "language",
+        "options",
+        "variants",
         "createdAt",
       ],
       include: [
@@ -64,7 +66,8 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
 
     const data = rows.map((p) => {
       // Prefer is_main image, fall back to first image
-      const mainImg = p.productImages?.find((img) => img.is_main) || p.productImages?.[0];
+      const mainImg =
+        p.productImages?.find((img) => img.is_main) || p.productImages?.[0];
       return {
         id: p.id,
         titleKu: p.titleKu,
@@ -74,6 +77,8 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
         category: p.category,
         subcategory: p.subcategory,
         language: p.language,
+        options: p.options,
+        variants: p.variants,
         thumb_key: mainImg?.thumb_key || mainImg?.image_key || null,
       };
     });

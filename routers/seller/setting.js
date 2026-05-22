@@ -21,11 +21,16 @@ import {
 } from "../../middlewares/checkStorageLimit.js";
 import { getStoredAssetBytes } from "../../utils/sellerStorageUsage.js";
 import { createR2Multer, uploadToR2, deleteFromR2 } from "../../utils/r2.js";
+import { normalizeUiSettings } from "../../utils/uiSettings.js";
 
 const router = Router();
 const sellerImageUpload = createR2Multer({
   fileSize: 2 * 1024 * 1024,
   files: 1,
+});
+const sellerSettingsUpload = createR2Multer({
+  fileSize: 12 * 1024 * 1024,
+  files: 2,
 });
 
 function isLegacyUploadPath(value) {
@@ -53,6 +58,32 @@ async function uploadSellerImageToR2(file, sellerId) {
   });
 
   return { key, sizeBytes };
+}
+
+async function uploadSellerHeroImageToR2(file, sellerId) {
+  const key = `shops/${sellerId}/hero/${uuidv4()}.webp`;
+  const { sizeBytes } = await uploadToR2(file.buffer, key, {
+    width: 1920,
+    height: 840,
+    qualities: [84, 78, 72, 66],
+    maxOutputBytes: 1200 * 1024,
+  });
+
+  return { key, sizeBytes };
+}
+
+function parseUiSettingsPayload(payload, fallbackSettings) {
+  if (payload === undefined || payload === null || payload === "") {
+    return normalizeUiSettings(fallbackSettings);
+  }
+
+  try {
+    const parsed =
+      typeof payload === "string" ? JSON.parse(payload) : payload || {};
+    return normalizeUiSettings(parsed);
+  } catch {
+    return null;
+  }
 }
 
 router.post(
@@ -335,6 +366,7 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
       shopLocation: seller.shop_location || "",
       categories: seller.categories || [],
       defaultShopLang: seller.default_shop_lang || "ku",
+      uiSettings: normalizeUiSettings(seller.ui_settings),
     });
   } catch (err) {
     return res
@@ -346,7 +378,10 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
 router.post(
   "/seller-info-update",
   jwtVerifySellerToken,
-  sellerImageUpload.single("shop_image"), // must match FormData
+  sellerSettingsUpload.fields([
+    { name: "shop_image", maxCount: 1 },
+    { name: "hero_image", maxCount: 1 },
+  ]),
   async (req, res) => {
     try {
       const { id } = req.user;
@@ -360,6 +395,7 @@ router.post(
         bio,
         shopLocation,
         defaultShopLang,
+        uiSettings,
       } = req.body;
 
       // Validate sellerName length if provided
@@ -485,8 +521,11 @@ router.post(
         updateData.social_links = updatedSocialLinks;
       }
 
-      // �🖼️ Handle image update
-      if (req.file) {
+      const shopImageFile = req.files?.shop_image?.[0] || null;
+      const heroImageFile = req.files?.hero_image?.[0] || null;
+
+      // Handle main shop image update
+      if (shopImageFile) {
         if (seller.shop_image) {
           const oldImageBytes = await getStoredAssetBytes(seller.shop_image);
           await deleteStoredSellerImage(seller.shop_image);
@@ -494,12 +533,49 @@ router.post(
             await decrementSellerStorage(id, oldImageBytes);
           }
         }
-        const { key, sizeBytes } = await uploadSellerImageToR2(req.file, id);
+        const { key, sizeBytes } = await uploadSellerImageToR2(shopImageFile, id);
         updateData.shop_image = key;
         const newImageBytes = sizeBytes;
         if (newImageBytes > 0) {
           await incrementSellerStorage(id, newImageBytes);
         }
+      }
+
+      const parsedUiSettings = parseUiSettingsPayload(uiSettings, seller.ui_settings);
+      if (uiSettings !== undefined && !parsedUiSettings) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: "Invalid uiSettings payload",
+        });
+      }
+
+      if (heroImageFile) {
+        const oldHeroImageKey = normalizeUiSettings(seller.ui_settings).heroSection
+          .imageKey;
+        if (oldHeroImageKey) {
+          const oldHeroBytes = await getStoredAssetBytes(oldHeroImageKey);
+          await deleteStoredSellerImage(oldHeroImageKey);
+          if (oldHeroBytes > 0) {
+            await decrementSellerStorage(id, oldHeroBytes);
+          }
+        }
+
+        const { key, sizeBytes } = await uploadSellerHeroImageToR2(heroImageFile, id);
+        if (parsedUiSettings) {
+          parsedUiSettings.heroSection.imageKey = key;
+        }
+
+        if (sizeBytes > 0) {
+          await incrementSellerStorage(id, sizeBytes);
+        }
+      }
+
+      if (parsedUiSettings) {
+        if (!parsedUiSettings.heroSection.imageKey) {
+          parsedUiSettings.heroSection.enabled = false;
+        }
+        updateData.ui_settings = parsedUiSettings;
       }
       // Handle bio update
       if (bio !== undefined) {
@@ -554,5 +630,118 @@ router.post(
     }
   },
 );
+
+router.get("/ui-settings", jwtVerifySellerToken, async (req, res) => {
+  try {
+    const { id } = req.user;
+    const seller = await Seller.findByPk(id, {
+      attributes: ["id", "ui_settings"],
+    });
+
+    if (!seller) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "Seller not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      error: false,
+      uiSettings: normalizeUiSettings(seller.ui_settings),
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
+  }
+});
+
+router.post(
+  "/ui-settings",
+  jwtVerifySellerToken,
+  sellerSettingsUpload.fields([{ name: "hero_image", maxCount: 1 }]),
+  async (req, res) => {
+    try {
+      const { id } = req.user;
+      const seller = await Seller.findByPk(id);
+      if (!seller) {
+        return res.status(404).json({
+          success: false,
+          error: true,
+          message: "Seller not found",
+        });
+      }
+
+      const parsedUiSettings = parseUiSettingsPayload(
+        req.body.uiSettings,
+        seller.ui_settings,
+      );
+      if (!parsedUiSettings) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: "Invalid uiSettings payload",
+        });
+      }
+
+      const heroImageFile = req.files?.hero_image?.[0] || null;
+      if (heroImageFile) {
+        const oldHeroImageKey = normalizeUiSettings(seller.ui_settings).heroSection
+          .imageKey;
+        if (oldHeroImageKey) {
+          const oldHeroBytes = await getStoredAssetBytes(oldHeroImageKey);
+          await deleteStoredSellerImage(oldHeroImageKey);
+          if (oldHeroBytes > 0) {
+            await decrementSellerStorage(id, oldHeroBytes);
+          }
+        }
+
+        const { key, sizeBytes } = await uploadSellerHeroImageToR2(heroImageFile, id);
+        parsedUiSettings.heroSection.imageKey = key;
+        if (sizeBytes > 0) {
+          await incrementSellerStorage(id, sizeBytes);
+        }
+      }
+
+      if (!parsedUiSettings.heroSection.imageKey) {
+        parsedUiSettings.heroSection.enabled = false;
+      }
+
+      await seller.update({ ui_settings: parsedUiSettings });
+
+      return res.status(200).json({
+        success: true,
+        error: false,
+        message: "UI settings updated successfully",
+        uiSettings: normalizeUiSettings(parsedUiSettings),
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({
+        success: false,
+        error: true,
+        message: "Server error",
+      });
+    }
+  },
+);
+
+router.use((err, req, res, next) => {
+  if (err?.code === "LIMIT_FILE_SIZE") {
+    return res.status(413).json({
+      success: false,
+      error: true,
+      message: "Image is too large. Please upload an image under 12MB.",
+      field: err.field || null,
+      code: err.code,
+    });
+  }
+  return next(err);
+});
 
 export default router;

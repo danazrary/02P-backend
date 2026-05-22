@@ -136,7 +136,8 @@ const Product = sequelize.define(
       type: DataTypes.INTEGER,
       allowNull: true,
       defaultValue: null,
-      comment: "FK to seller_categories.id (NULL = uses legacy string category)",
+      comment:
+        "FK to seller_categories.id (NULL = uses legacy string category)",
     },
     subcategory_id: {
       type: DataTypes.INTEGER,
@@ -148,13 +149,23 @@ const Product = sequelize.define(
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,
       defaultValue: null,
-      comment: "Product-level stock count; null = no tracking; only used when product has no variants",
+      comment:
+        "Product-level stock count; null = no tracking; only used when product has no variants",
     },
     isAvailable: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: true,
-      comment: "Seller toggle to enable/disable the product without deleting it",
+      comment:
+        "Seller toggle to enable/disable the product without deleting it",
+    },
+    options: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
+    variants: {
+      type: DataTypes.JSON,
+      allowNull: true,
     },
   },
   {

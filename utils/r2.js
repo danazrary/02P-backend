@@ -73,7 +73,7 @@ const r2Client = new S3Client({
 });
 
 const BUCKET = process.env.R2_BUCKET_NAME;
-const MAX_INPUT_BYTES = 2 * 1024 * 1024; // 2 MB multer per-file limit (matches middleware)
+const MAX_INPUT_BYTES = 25 * 1024 * 1024; // 25 MB raw input guard before compression
 const R2_HARD_CEILING_BYTES = 500 * 1024; // 500 KB absolute ceiling — nothing larger enters R2
 
 // Main product image targets: ≤1400×1400, quality 68→62→56, max 350 KB

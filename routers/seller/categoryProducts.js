@@ -32,7 +32,9 @@ router.get("/category-products/:sellerId", async (req, res) => {
     limit,
     offset,
   });
-  console.log("==============================================================\n");
+  console.log(
+    "==============================================================\n",
+  );
 
   if (!rawCategory) {
     console.warn("[CATEGORY PRODUCTS] No category provided — returning 400");
@@ -72,6 +74,8 @@ router.get("/category-products/:sellerId", async (req, res) => {
         "freeDeliveryStartDate",
         "freeDeliveryEndDate",
         "free_delivery",
+        "options",
+        "variants",
         "variantPrices",
         "variantPricesAr",
         "colors",
@@ -102,7 +106,9 @@ router.get("/category-products/:sellerId", async (req, res) => {
     const hasMore = offset + limit < total;
 
     // ── LOG: outgoing response ───────────────────────────────────────────────
-    console.log("\n========== [CATEGORY PRODUCTS] OUTGOING RESPONSE ==========");
+    console.log(
+      "\n========== [CATEGORY PRODUCTS] OUTGOING RESPONSE ==========",
+    );
     console.log(`  Success   : true`);
     console.log(`  Products  : ${products.length} items`);
     console.log(`  Total     : ${total}`);
@@ -118,7 +124,9 @@ router.get("/category-products/:sellerId", async (req, res) => {
         isAvailable: products[0].isAvailable,
       });
     }
-    console.log("=============================================================\n");
+    console.log(
+      "=============================================================\n",
+    );
 
     return res.status(200).json({
       success: true,

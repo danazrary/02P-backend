@@ -2,11 +2,11 @@ import { Router } from "express";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import Product from "../../database/products.js";
 import Seller from "../../database/seller.js";
-import ProductImage from "../../database/productImages.js";
 import Report from "../../database/report.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
+import ShopSection from "../../database/ShopSection.js";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
 import {
   processRedLineData,
@@ -14,7 +14,23 @@ import {
   toUTC,
 } from "../../utils/timezoneHandler.js";
 import { Op } from "sequelize";
+
 const router = Router();
+
+const SECTION_KEYS = ["hero", "flash_banner", "discount"];
+
+const DEFAULT_CONFIGS = {
+  hero: {
+    items: [],
+  },
+  flash_banner: {
+    height: "72px",
+    width: "100%",
+    fontSize: "22px",
+    viewMode: "home",
+  },
+  discount: {},
+};
 
 function isNewDay(lastVisit) {
   const last = new Date(lastVisit).toDateString();
@@ -22,17 +38,77 @@ function isNewDay(lastVisit) {
   return last !== today;
 }
 
-const ONE_HOUR = 60 * 60 * 1000;
+function buildUiSettingsFromSections(shopSections) {
+  const sectionMap = {};
 
-function canCountAgain(lastVisit) {
-  return Date.now() - lastVisit >= ONE_HOUR;
+  shopSections.forEach((section) => {
+    sectionMap[section.section_key] = section;
+  });
+
+  return {
+    heroSection: {
+      enabled: sectionMap.hero?.is_visible ?? true,
+      ...(sectionMap.hero?.config || DEFAULT_CONFIGS.hero),
+    },
+    flashDiscountBanner: {
+      enabled: sectionMap.flash_banner?.is_visible ?? true,
+      ...(sectionMap.flash_banner?.config || DEFAULT_CONFIGS.flash_banner),
+    },
+    discountsSection: {
+      enabled: sectionMap.discount?.is_visible ?? true,
+      ...(sectionMap.discount?.config || DEFAULT_CONFIGS.discount),
+    },
+  };
+}
+
+async function getShopSections(sellerId) {
+  const sectionRows = await ShopSection.findAll({
+    where: {
+      seller_id: sellerId,
+      section_key: {
+        [Op.in]: SECTION_KEYS,
+      },
+    },
+    attributes: ["section_key", "is_visible", "config"],
+  });
+
+  const sectionMap = {};
+
+  sectionRows.forEach((row) => {
+    sectionMap[row.section_key] = row;
+  });
+
+  return SECTION_KEYS.map((key) => {
+    const row = sectionMap[key];
+    const defaultConfig = DEFAULT_CONFIGS[key];
+
+    if (!row) {
+      return {
+        section_key: key,
+        is_visible: true,
+        config: defaultConfig,
+      };
+    }
+
+    return {
+      section_key: key,
+      is_visible: row.is_visible,
+      config: {
+        ...defaultConfig,
+        ...(row.config || {}),
+      },
+    };
+  });
 }
 
 router.get("/:shopName", detectSeller, async (req, res) => {
   try {
     const { shopName } = req.params;
 
-    const seller = await Seller.findOne({ where: { shop_name: shopName } });
+    const seller = await Seller.findOne({
+      where: { shop_name: shopName },
+    });
+
     if (!seller) {
       return res.status(404).json({
         success: false,
@@ -41,10 +117,10 @@ router.get("/:shopName", detectSeller, async (req, res) => {
         message: "Seller not found",
       });
     }
+
     const sellerId = seller.id;
     const today = new Date().toISOString().split("T")[0];
 
-    // 🍪 COOKIE NAME
     const visitCookieName = `shop_visit_${sellerId}`;
     const lastVisit = req.cookies?.[visitCookieName];
 
@@ -59,7 +135,6 @@ router.get("/:shopName", detectSeller, async (req, res) => {
     }
 
     if (shouldIncrease) {
-      // 📊 REPORT
       const [report, created] = await Report.findOrCreate({
         where: {
           seller_id: sellerId,
@@ -74,20 +149,20 @@ router.get("/:shopName", detectSeller, async (req, res) => {
         await report.increment("shopVisitors", { by: 1 });
       }
 
-      // 🍪 Save/update cookie
       const visitCookieOpts = {
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: true,
         sameSite: "lax",
         path: "/",
       };
+
       if (process.env.NODE_ENV === "production") {
         visitCookieOpts.domain = `.${process.env.BASE_DOMAIN || "dwkanlink.com"}`;
       }
+
       res.cookie(visitCookieName, Date.now(), visitCookieOpts);
     }
 
-    // 🔹 SELLER PLAN
     let sellerPlanRecord = await SellerPlan.findOne({
       where: { seller_id: sellerId },
     });
@@ -106,7 +181,6 @@ router.get("/:shopName", detectSeller, async (req, res) => {
 
     const sellerPlanRow = await Plan.findByPk(sellerPlanRecord.plan_id);
 
-    // 🎯 Fetch all active offers
     const offers = await SellerOffer.findAll({
       where: { seller_id: sellerId, is_active: true },
       attributes: [
@@ -144,6 +218,8 @@ router.get("/:shopName", detectSeller, async (req, res) => {
         "freeDeliveryStartDate",
         "freeDeliveryEndDate",
         "free_delivery",
+        "options",
+        "variants",
         "variantPrices",
         "variantPricesAr",
         "colors",
@@ -155,25 +231,25 @@ router.get("/:shopName", detectSeller, async (req, res) => {
       ],
     });
 
-    // Check and clean expired discounts and free delivery
     products = await checkAndCleanProductExpiration(products);
 
-    // ────────────────────────────────────────────────────────────
-    // Build combined redLine from both Kurdish (red_line) and Arabic (red_lineAr)
-    // Use Baghdad timezone for status determination
-    // ────────────────────────────────────────────────────────────
+    const shopSections = await getShopSections(sellerId);
+    const uiSettings = buildUiSettingsFromSections(shopSections);
+
     let redLine = null;
     const kuResult = processRedLineData(seller.red_line);
     const arResult = processRedLineData(seller.red_lineAr);
 
     if (kuResult.data || arResult.data) {
       let language = "both";
+
       if (kuResult.data && !arResult.data) language = "kurdish";
       else if (!kuResult.data && arResult.data) language = "arabic";
 
       const kuStatus = kuResult.data
         ? getRedLineStatus(kuResult.data.start_time, kuResult.data.end_time)
         : null;
+
       const arStatus = arResult.data
         ? getRedLineStatus(arResult.data.start_time, arResult.data.end_time)
         : null;
@@ -184,11 +260,11 @@ router.get("/:shopName", detectSeller, async (req, res) => {
         language,
         start_time: kuResult.data?.start_time || arResult.data?.start_time,
         end_time: kuResult.data?.end_time || arResult.data?.end_time,
-        status: kuStatus || arStatus, // "coming_soon" | "active" | "expired"
+        status: kuStatus || arStatus,
       };
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       error: false,
       logout: false,
@@ -197,10 +273,17 @@ router.get("/:shopName", detectSeller, async (req, res) => {
       brand_color: seller.brand_color || null,
       offers,
       products,
+
+      // New correct data from shop_sections table
+      sections: shopSections,
+
+      // Old frontend-compatible shape, also from shop_sections table
+      ui_settings: uiSettings,
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({
+
+    return res.status(500).json({
       success: false,
       error: true,
       logout: false,
@@ -274,6 +357,8 @@ router.get("/:shopName/search", async (req, res) => {
         "freeDeliveryStartDate",
         "freeDeliveryEndDate",
         "free_delivery",
+        "options",
+        "variants",
         "variantPrices",
         "variantPricesAr",
         "colors",

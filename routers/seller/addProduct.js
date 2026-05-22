@@ -29,6 +29,7 @@ import { getProductImageRecordBytes } from "../../utils/sellerStorageUsage.js";
 
 const router = express.Router();
 const MAX_COLOR_IMAGE_FIELDS = 15;
+const MAX_OPTION_IMAGE_FIELDS = 15;
 const MAX_PRODUCT_IMAGE_BYTES = 2 * 1024 * 1024;
 const ADVANCED_PLAN_ALIASES = new Set([
   "large seller",
@@ -38,6 +39,7 @@ const ADVANCED_PLAN_ALIASES = new Set([
   "business pro",
   "business pro plan",
 ]);
+const R2_PUBLIC_URL = (process.env.R2_PUBLIC_URL || "").replace(/\/$/, "");
 
 /** Accept product images + up to 15 per-color images. */
 const productUploadMiddleware = createR2Multer({
@@ -47,6 +49,10 @@ const productUploadMiddleware = createR2Multer({
   { name: "images", maxCount: 5 },
   ...Array.from({ length: MAX_COLOR_IMAGE_FIELDS }, (_, index) => ({
     name: `colorImage_${index}`,
+    maxCount: 1,
+  })),
+  ...Array.from({ length: MAX_OPTION_IMAGE_FIELDS }, (_, index) => ({
+    name: `optionImage_${index}`,
     maxCount: 1,
   })),
 ]);
@@ -90,30 +96,266 @@ function productUpload(req, res, next) {
   });
 }
 
-/**
- * Build variantPricesAr by replacing Kurdish color and size names with Arabic ones.
- * Falls back to original value if no mapping found.
- */
-function deriveVariantPricesAr(variantPrices, colors, sizes) {
-  const kuToArColor = {};
-  (colors || []).forEach((c) => {
-    if (c.nameKu && c.nameAr) kuToArColor[c.nameKu] = c.nameAr;
-    if (c.nameAr) kuToArColor[c.nameAr] = c.nameAr; // identity for arabic-only products
+function normalizeVariantOptionValue(value) {
+  if (typeof value === "string") {
+    const v = value.trim();
+    return v || null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return null;
+}
+
+const RESERVED_VARIANT_KEYS = new Set(["price", "stock", "options"]);
+
+function extractDynamicVariantOptions(row) {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return {};
+
+  const dynamicOptions = {};
+
+  const optionsObject =
+    row.options &&
+    typeof row.options === "object" &&
+    !Array.isArray(row.options)
+      ? row.options
+      : null;
+
+  if (optionsObject) {
+    Object.entries(optionsObject).forEach(([rawKey, rawVal]) => {
+      const key = typeof rawKey === "string" ? rawKey.trim() : "";
+      if (!key) return;
+      const normalizedVal = normalizeVariantOptionValue(rawVal);
+      if (normalizedVal == null) return;
+      dynamicOptions[key] = normalizedVal;
+    });
+    return dynamicOptions;
+  }
+
+  Object.entries(row).forEach(([rawKey, rawVal]) => {
+    const key = typeof rawKey === "string" ? rawKey.trim() : "";
+    if (!key || RESERVED_VARIANT_KEYS.has(key)) return;
+    const normalizedVal = normalizeVariantOptionValue(rawVal);
+    if (normalizedVal == null) return;
+    dynamicOptions[key] = normalizedVal;
   });
-  const kuToArSize = {};
-  (sizes || []).forEach((s) => {
-    if (typeof s === "string") {
-      kuToArSize[s] = s; // old string format — identity
-    } else {
-      if (s.nameKu && s.nameAr) kuToArSize[s.nameKu] = s.nameAr;
-      if (s.nameAr) kuToArSize[s.nameAr] = s.nameAr; // identity for arabic-only
+
+  return dynamicOptions;
+}
+
+function normalizeVariantPriceRows(rawRows) {
+  if (!Array.isArray(rawRows)) return [];
+
+  return rawRows
+    .map((row) => {
+      const parsedPrice = Number(row?.price);
+      if (!Number.isFinite(parsedPrice) || parsedPrice < 0) return null;
+
+      const dynamicOptions = extractDynamicVariantOptions(row);
+      if (Object.keys(dynamicOptions).length === 0) return null;
+
+      const out = {
+        ...dynamicOptions,
+        price: parsedPrice,
+      };
+
+      if (
+        row?.stock !== undefined &&
+        row?.stock !== null &&
+        row?.stock !== ""
+      ) {
+        const parsedStock = Number(row.stock);
+        if (Number.isInteger(parsedStock) && parsedStock >= 0) {
+          out.stock = parsedStock;
+        }
+      }
+
+      return out;
+    })
+    .filter(Boolean);
+}
+
+function pickProvidedLangs(input = {}) {
+  const out = {};
+  ["ku", "ar", "en"].forEach((lang) => {
+    const val = typeof input?.[lang] === "string" ? input[lang].trim() : "";
+    if (val) out[lang] = val;
+  });
+  return out;
+}
+
+function normalizeOptionsPayload(rawOptions) {
+  if (!Array.isArray(rawOptions)) return [];
+
+  return rawOptions
+    .map((group, groupIndex) => {
+      const title = pickProvidedLangs(group?.title || {});
+      const rawValues = Array.isArray(group?.options)
+        ? group.options
+        : Array.isArray(group?.values)
+          ? group.values
+          : [];
+
+      const options = rawValues
+        .map((value) => {
+          const text = pickProvidedLangs(value?.text || value?.title || {});
+          if (Object.keys(text).length === 0) return null;
+
+          const normalized = { text };
+          // Only the first option group (index 0) may have images
+          if (
+            groupIndex === 0 &&
+            typeof value?.image === "string" &&
+            value.image.trim()
+          ) {
+            normalized.image = value.image.trim();
+          }
+          return normalized;
+        })
+        .filter(Boolean);
+
+      if (Object.keys(title).length === 0 || options.length === 0) {
+        return null;
+      }
+
+      return { title, options };
+    })
+    .filter(Boolean);
+}
+
+function parseOptionsInput(rawValue) {
+  if (rawValue === undefined) {
+    return { provided: false, rows: [] };
+  }
+
+  let parsedRaw;
+  try {
+    parsedRaw = JSON.parse(rawValue);
+  } catch {
+    const err = new Error("Invalid options JSON");
+    err.statusCode = 400;
+    err.clientMessage = "options must be a valid JSON array.";
+    throw err;
+  }
+
+  if (!Array.isArray(parsedRaw)) {
+    const err = new Error("Invalid options format");
+    err.statusCode = 400;
+    err.clientMessage = "options must be an array.";
+    throw err;
+  }
+
+  const rows = normalizeOptionsPayload(parsedRaw);
+  if (rows.length === 0) {
+    const err = new Error("options is empty after normalization");
+    err.statusCode = 400;
+    err.clientMessage = "options must include at least one valid option group.";
+    throw err;
+  }
+
+  return { provided: true, rows };
+}
+
+function normalizeToComparableText(value) {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+}
+
+function buildArabicVariantPricesFromOptions(variantPrices, options) {
+  if (!Array.isArray(variantPrices) || variantPrices.length === 0) return [];
+  const groups = Array.isArray(options) ? options : [];
+
+  return variantPrices.map((variant) => {
+    const sourceOptions = extractDynamicVariantOptions(variant);
+    const translatedOptions = {};
+
+    Object.entries(sourceOptions).forEach(([rawKey, rawValue]) => {
+      const keyText = normalizeToComparableText(rawKey);
+      const valueText = normalizeToComparableText(rawValue);
+      if (!keyText || !valueText) return;
+
+      const matchedGroup = groups.find((group) => {
+        const title = group?.title || {};
+        return [title.ku, title.ar, title.en]
+          .map((v) => normalizeToComparableText(v))
+          .includes(keyText);
+      });
+
+      const outputKey =
+        normalizeToComparableText(matchedGroup?.title?.ar) ||
+        normalizeToComparableText(matchedGroup?.title?.ku) ||
+        keyText;
+
+      let outputValue = valueText;
+      if (matchedGroup && Array.isArray(matchedGroup.options)) {
+        const matchedValue = matchedGroup.options.find((optValue) => {
+          const text = optValue?.text || {};
+          return [text.ku, text.ar, text.en]
+            .map((v) => normalizeToComparableText(v))
+            .includes(valueText);
+        });
+
+        outputValue =
+          normalizeToComparableText(matchedValue?.text?.ar) ||
+          normalizeToComparableText(matchedValue?.text?.ku) ||
+          valueText;
+      }
+
+      translatedOptions[outputKey] = outputValue;
+    });
+
+    const translatedVariant = {
+      ...translatedOptions,
+      price: Number(variant?.price),
+    };
+
+    if (
+      variant?.stock !== undefined &&
+      variant?.stock !== null &&
+      variant?.stock !== ""
+    ) {
+      const parsedStock = Number(variant.stock);
+      if (Number.isInteger(parsedStock) && parsedStock >= 0) {
+        translatedVariant.stock = parsedStock;
+      }
     }
+
+    return translatedVariant;
   });
-  return variantPrices.map((v) => ({
-    ...v,
-    color: kuToArColor[v.color] ?? v.color,
-    size: kuToArSize[v.size] ?? v.size,
-  }));
+}
+
+function parseVariantPricesInput(rawValue, fieldName) {
+  if (rawValue === undefined) {
+    return { provided: false, rows: [] };
+  }
+
+  let parsedRaw;
+  try {
+    parsedRaw = JSON.parse(rawValue);
+  } catch {
+    const err = new Error(`Invalid ${fieldName} JSON`);
+    err.statusCode = 400;
+    err.clientMessage = `${fieldName} must be a valid JSON array.`;
+    throw err;
+  }
+
+  if (!Array.isArray(parsedRaw)) {
+    const err = new Error(`Invalid ${fieldName} format`);
+    err.statusCode = 400;
+    err.clientMessage = `${fieldName} must be an array.`;
+    throw err;
+  }
+
+  const rows = normalizeVariantPriceRows(parsedRaw);
+  if (rows.length === 0) {
+    const err = new Error(`${fieldName} is empty after normalization`);
+    err.statusCode = 400;
+    err.clientMessage = `${fieldName} must include at least one valid variant with dynamic keys and price.`;
+    throw err;
+  }
+
+  return { provided: true, rows };
 }
 
 async function normalizeVideoLinks(videoLinks) {
@@ -174,7 +416,7 @@ function getProductFieldLimit(plan) {
  *   Plus/Business Pro → 225 (15×15)
  */
 function getMaxVariantPriceCombinations(plan) {
-  return getProductFieldLimit(plan) === 15 ? 225 : 25;
+  return getProductFieldLimit(plan) === 15 ? 225 : 125;
 }
 
 function validateVariantPriceCombinations(plan, variantPrices) {
@@ -289,6 +531,85 @@ function normalizeColorSegment(value) {
   );
 }
 
+function toPublicR2Url(key) {
+  if (!key) return null;
+  if (!R2_PUBLIC_URL) return key;
+  return `${R2_PUBLIC_URL}/${key}`;
+}
+
+function getUploadedOptionImageIndexes(files = {}) {
+  return Object.keys(files)
+    .filter((fieldName) => fieldName.startsWith("optionImage_"))
+    .map((fieldName) => Number(fieldName.replace("optionImage_", "")))
+    .filter((index) => Number.isInteger(index));
+}
+
+function cloneOptionsPayload(options = []) {
+  return Array.isArray(options) ? JSON.parse(JSON.stringify(options)) : [];
+}
+
+function validateUploadedOptionImageIndexes({ files, options }) {
+  const uploadedIndexes = getUploadedOptionImageIndexes(files);
+  if (uploadedIndexes.length === 0) return;
+
+  const firstGroupValuesCount = Array.isArray(options?.[0]?.options)
+    ? options[0].options.length
+    : 0;
+
+  if (
+    uploadedIndexes.some((index) => index < 0 || index >= firstGroupValuesCount)
+  ) {
+    const err = new Error("Unexpected option image field");
+    err.statusCode = 400;
+    err.clientMessage =
+      "Uploaded option images must match values in the first option group.";
+    throw err;
+  }
+}
+
+async function uploadFirstOptionGroupImagesToR2({
+  sellerId,
+  productId,
+  options,
+  files,
+}) {
+  const nextOptions = cloneOptionsPayload(options);
+  const firstGroupValues = Array.isArray(nextOptions?.[0]?.options)
+    ? nextOptions[0].options
+    : [];
+
+  if (firstGroupValues.length === 0) {
+    return { options: nextOptions, uploadedBytes: 0, changed: false };
+  }
+
+  let uploadedBytes = 0;
+  let changed = false;
+
+  for (
+    let valueIndex = 0;
+    valueIndex < firstGroupValues.length;
+    valueIndex += 1
+  ) {
+    const optionFile = files?.[`optionImage_${valueIndex}`]?.[0];
+    if (!optionFile) continue;
+
+    const valueText =
+      firstGroupValues[valueIndex]?.text?.ku ||
+      firstGroupValues[valueIndex]?.text?.ar ||
+      String(valueIndex + 1);
+    const optionSegment = normalizeColorSegment(valueText);
+    const key = `shops/${sellerId}/products/${productId}/colors/${optionSegment}-${uuidv4()}.webp`;
+
+    // Upload first-group option image using the same color-image compression flow.
+    const { sizeBytes } = await uploadColorImageToR2(optionFile.buffer, key);
+    uploadedBytes += sizeBytes;
+    firstGroupValues[valueIndex].image = toPublicR2Url(key);
+    changed = true;
+  }
+
+  return { options: nextOptions, uploadedBytes, changed };
+}
+
 function validateProductFieldLimits({
   plan,
   colors,
@@ -388,7 +709,9 @@ router.post(
         youtubeLinks,
         realPrice,
         priceType,
+        options: optionsBody,
         variantPrices,
+        variantPricesAr,
         customInputs,
         customInputsAr,
         category,
@@ -397,6 +720,8 @@ router.post(
         stock: stockBody,
         isAvailable: isAvailableBody,
       } = req.body;
+
+      console.log("[add-product] req.body:", req.body);
 
       // --- Validate stock ---
       let parsedStock = null;
@@ -436,6 +761,12 @@ router.post(
       const parsedCustomInputsAr = customInputsAr
         ? JSON.parse(customInputsAr).filter((c) => c.name && c.name !== "")
         : [];
+      const parsedOptionsInput = parseOptionsInput(optionsBody);
+      const parsedOptions = parsedOptionsInput.rows;
+      validateUploadedOptionImageIndexes({
+        files: req.files,
+        options: parsedOptions,
+      });
 
       validateProductImageUploadLimits({
         plan,
@@ -444,9 +775,16 @@ router.post(
       });
 
       // Parse variant price combinations
-      const parsedVariantPrices = variantPrices
-        ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
-        : [];
+      const parsedVariantPricesInput = parseVariantPricesInput(
+        variantPrices,
+        "variantPrices",
+      );
+      const parsedVariantPricesArInput = parseVariantPricesInput(
+        variantPricesAr,
+        "variantPricesAr",
+      );
+      const parsedVariantPrices = parsedVariantPricesInput.rows;
+      const parsedVariantPricesAr = parsedVariantPricesArInput.rows;
 
       validateProductFieldLimits({
         plan,
@@ -456,7 +794,12 @@ router.post(
         customInputsAr: parsedCustomInputsAr,
       });
 
-      validateVariantPriceCombinations(plan, parsedVariantPrices);
+      if (parsedVariantPrices.length > 0) {
+        validateVariantPriceCombinations(plan, parsedVariantPrices);
+      }
+      if (parsedVariantPricesAr.length > 0) {
+        validateVariantPriceCombinations(plan, parsedVariantPricesAr);
+      }
 
       // Enforce: base price is not allowed when colors or sizes are present
       const hasColorsOrSizes =
@@ -472,15 +815,23 @@ router.post(
         throw basePriceConflictError;
       }
 
-      // Auto-derive Arabic variant prices from colors and sizes mapping
-      const derivedVariantPricesAr = deriveVariantPricesAr(
-        parsedVariantPrices,
-        rawColors,
-        parsedSizes,
-      );
+      const finalVariantPricesPayload =
+        parsedVariantPrices.length > 0 ? parsedVariantPrices : null;
+      const finalVariantPricesArPayload =
+        parsedVariantPricesArInput.provided && parsedVariantPricesAr.length > 0
+          ? parsedVariantPricesAr
+          : finalVariantPricesPayload && parsedOptions.length > 0
+            ? buildArabicVariantPricesFromOptions(
+                finalVariantPricesPayload,
+                parsedOptions,
+              )
+            : null;
+
+      console.log("variantPrices BEFORE SAVE", parsedVariantPrices);
+      console.log("variantPricesAr BEFORE SAVE", parsedVariantPricesAr);
 
       // Create product first so we have its ID for R2 key paths
-      const product = await Product.create({
+      const createPayload = {
         seller_id: id,
         language,
         hasRealPrice: isRealPricePost,
@@ -492,8 +843,9 @@ router.post(
         youtubeLinks: normalizedYoutubeLinks,
         realPrice: isRealPricePost && realPrice !== "" ? realPrice : null,
         priceType,
-        variantPrices: parsedVariantPrices,
-        variantPricesAr: derivedVariantPricesAr,
+        options: parsedOptions.length > 0 ? parsedOptions : null,
+        variantPrices: finalVariantPricesPayload,
+        variantPricesAr: finalVariantPricesArPayload,
         colors: rawColors.length > 0 ? rawColors : null,
         sizes: parsedSizes.length > 0 ? parsedSizes : null,
         customInputs: parsedCustomInputs,
@@ -502,11 +854,28 @@ router.post(
         stock: hasColorsOrSizes ? null : parsedStock,
         isAvailable: isAvailablePost,
         category: category || null,
+      };
+
+      console.log("FINAL DB PAYLOAD", createPayload);
+
+      const product = await Product.create(createPayload);
+
+      const uploadedOptionImages = await uploadFirstOptionGroupImagesToR2({
+        sellerId: id,
+        productId: product.id,
+        options: parsedOptions,
+        files: req.files,
       });
+      if (uploadedOptionImages.changed) {
+        await Product.update(
+          { options: uploadedOptionImages.options },
+          { where: { id: product.id } },
+        );
+      }
 
       // Upload product images to R2 (main 1400px + thumbnail 300px) — parallel
       const tUploadStart = Date.now();
-      let totalUploadedBytes = 0;
+      let totalUploadedBytes = uploadedOptionImages.uploadedBytes;
       const imageFiles = req.files?.images || [];
       const basePath = `shops/${id}/products/${product.id}`;
 
@@ -578,6 +947,8 @@ router.post(
       if (totalUploadedBytes > 0)
         await incrementSellerStorage(id, totalUploadedBytes);
 
+      await product.reload();
+
       console.log(
         `[Upload] Total add-product request: ${Date.now() - tRequest}ms`,
       );
@@ -647,7 +1018,9 @@ router.put(
         realPrice,
         priceType,
         youtubeLinks,
+        options: optionsBody,
         variantPrices,
+        variantPricesAr,
         customInputs,
         customInputsAr,
         removedImageKeys,
@@ -688,9 +1061,22 @@ router.put(
             return s && (s.nameKu?.trim() || s.nameAr?.trim());
           })
         : [];
-      const parsedVariantPrices = variantPrices
-        ? JSON.parse(variantPrices).filter((v) => v.price && v.price !== "")
-        : [];
+      const parsedVariantPricesInput = parseVariantPricesInput(
+        variantPrices,
+        "variantPrices",
+      );
+      const parsedVariantPricesArInput = parseVariantPricesInput(
+        variantPricesAr,
+        "variantPricesAr",
+      );
+      const parsedVariantPrices = parsedVariantPricesInput.rows;
+      const parsedVariantPricesAr = parsedVariantPricesArInput.rows;
+      const parsedOptionsInput = parseOptionsInput(optionsBody);
+      const parsedOptions = parsedOptionsInput.rows;
+      validateUploadedOptionImageIndexes({
+        files: req.files,
+        options: parsedOptions,
+      });
       const parsedCustomInputs = customInputs
         ? JSON.parse(customInputs).filter((c) => c.name && c.name !== "")
         : [];
@@ -738,7 +1124,12 @@ router.put(
         customInputsAr: parsedCustomInputsAr,
       });
 
-      validateVariantPriceCombinations(plan, parsedVariantPrices);
+      if (parsedVariantPrices.length > 0) {
+        validateVariantPriceCombinations(plan, parsedVariantPrices);
+      }
+      if (parsedVariantPricesAr.length > 0) {
+        validateVariantPriceCombinations(plan, parsedVariantPricesAr);
+      }
 
       // Enforce: base price is not allowed when colors or sizes are present
       const isRealPrice = hasRealPrice === "true" || hasRealPrice === true;
@@ -852,41 +1243,84 @@ router.put(
         }
       }
 
+      const existingVariantPrices = normalizeVariantPriceRows(
+        product.variantPrices || [],
+      );
+      const existingVariantPricesAr = normalizeVariantPriceRows(
+        product.variantPricesAr || [],
+      );
+      const existingOptions = normalizeOptionsPayload(product.options || []);
+      let finalOptionsPayload = parsedOptionsInput.provided
+        ? parsedOptions
+        : existingOptions;
+      const uploadedOptionImages = await uploadFirstOptionGroupImagesToR2({
+        sellerId,
+        productId,
+        options: finalOptionsPayload,
+        files: req.files,
+      });
+      if (uploadedOptionImages.changed) {
+        finalOptionsPayload = uploadedOptionImages.options;
+      }
+      const finalVariantPricesPayload = parsedVariantPricesInput.provided
+        ? parsedVariantPrices
+        : existingVariantPrices;
+      const finalVariantPricesArPayload = parsedVariantPricesArInput.provided
+        ? parsedVariantPricesAr
+        : parsedVariantPricesInput.provided && finalOptionsPayload.length > 0
+          ? buildArabicVariantPricesFromOptions(
+              finalVariantPricesPayload,
+              finalOptionsPayload,
+            )
+          : existingVariantPricesAr;
+
+      totalUploadedBytes += uploadedOptionImages.uploadedBytes;
+
       if (totalUploadedBytes > 0)
         await incrementSellerStorage(sellerId, totalUploadedBytes);
 
-      const derivedVariantPricesAr = deriveVariantPricesAr(
-        parsedVariantPrices,
-        finalColors,
-        parsedSizes,
-      );
+      console.log("variantPrices BEFORE SAVE", finalVariantPricesPayload);
+      console.log("variantPricesAr BEFORE SAVE", finalVariantPricesArPayload);
 
       // Use static update — instance .update() on JSON columns can silently
       // skip writing if Sequelize's change-detection gives a false negative.
-      await Product.update(
-        {
-          language,
-          hasRealPrice: isRealPrice,
-          titleKu,
-          titleAr,
-          descriptionKu,
-          descriptionAr,
-          realPrice: isRealPrice && realPrice !== "" ? realPrice : null,
-          priceType,
-          youtubeLinks: normalizedYoutubeLinks,
-          variantPrices: parsedVariantPrices,
-          variantPricesAr: derivedVariantPricesAr,
-          colors: finalColors.length > 0 ? finalColors : null,
-          sizes: parsedSizes.length > 0 ? parsedSizes : null,
-          customInputs: parsedCustomInputs,
-          customInputsAr: parsedCustomInputsAr,
-          category: category || null,
-          // stock only tracked when product has no variants
-          stock: hasColorsOrSizesEdit ? null : parsedStockEdit,
-          isAvailable: isAvailableEdit,
-        },
-        { where: { id: productId, seller_id: sellerId } },
-      );
+      const updatePayload = {
+        language,
+        hasRealPrice: isRealPrice,
+        titleKu,
+        titleAr,
+        descriptionKu,
+        descriptionAr,
+        realPrice: isRealPrice && realPrice !== "" ? realPrice : null,
+        priceType,
+        options:
+          finalOptionsPayload.length > 0
+            ? finalOptionsPayload
+            : product.options || null,
+        youtubeLinks: normalizedYoutubeLinks,
+        variantPrices:
+          finalVariantPricesPayload.length > 0
+            ? finalVariantPricesPayload
+            : null,
+        variantPricesAr:
+          finalVariantPricesArPayload.length > 0
+            ? finalVariantPricesArPayload
+            : null,
+        colors: finalColors.length > 0 ? finalColors : null,
+        sizes: parsedSizes.length > 0 ? parsedSizes : null,
+        customInputs: parsedCustomInputs,
+        customInputsAr: parsedCustomInputsAr,
+        category: category || null,
+        // stock only tracked when product has no variants
+        stock: hasColorsOrSizesEdit ? null : parsedStockEdit,
+        isAvailable: isAvailableEdit,
+      };
+
+      console.log("FINAL DB PAYLOAD", updatePayload);
+
+      await Product.update(updatePayload, {
+        where: { id: productId, seller_id: sellerId },
+      });
       await product.reload();
 
       res.status(200).json({
@@ -1018,6 +1452,8 @@ router.get("/products/shop/:shopName", async (req, res) => {
         "priceType",
         "hasRealPrice",
         "language",
+        "options",
+        "variants",
         "variantPrices",
         "variantPricesAr",
         "category",

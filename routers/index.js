@@ -17,11 +17,14 @@ import sellerDeleteAccountRouter from "./seller/deleteAccount.js";
 import sellerCategoryRouter from "./seller/category.js";
 import sellerCatalogRouter from "./seller/catalog.js";
 import sellerCategoryProductsRouter from "./seller/categoryProducts.js";
+import sellerOrdersRouter from "./seller/orders.js";
+import sellerShopSectionsRouter from "./seller/shopSections.js";
 //customer routers
 import customerShopRouter from "./customer/shop.js";
 import customerProductRouter from "./customer/product.js";
 import customerQuestionsRouter from "./customer/questions.js";
 import customerSearchRouter from "./customer/search.js";
+import customerOrdersRouter from "./customer/orders.js";
 
 const router = Router();
 //admin routers
@@ -42,10 +45,13 @@ router.use("/seller", sellerDeleteAccountRouter);
 router.use("/seller", sellerCategoryRouter);
 router.use("/seller", sellerCatalogRouter);
 router.use("/seller", sellerCategoryProductsRouter);
+router.use("/seller", sellerOrdersRouter);
+router.use("/seller", sellerShopSectionsRouter);
 //customer routers
 router.use("/customer", customerProductRouter);
 router.use("/customer", customerQuestionsRouter);
 router.use("/customer", customerSearchRouter);
+router.use("/customer", customerOrdersRouter);
 router.use("/customer", customerShopRouter);
 
 export default router;

@@ -5,6 +5,7 @@ import ProductImage from "../../database/productImages.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
+import ShopSection from "../../database/ShopSection.js";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import { Op } from "sequelize";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
@@ -13,6 +14,7 @@ import {
   getRedLineStatus,
   getCurrentTimeBaghdad,
 } from "../../utils/timezoneHandler.js";
+import { normalizeUiSettings } from "../../utils/uiSettings.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
@@ -20,6 +22,83 @@ import timezone from "dayjs/plugin/timezone.js";
 dayjs.extend(utc);
 dayjs.extend(timezone);
 const router = Router();
+
+const SECTION_KEYS = ["hero", "flash_banner", "discount"];
+
+const DEFAULT_SECTION_CONFIGS = {
+  hero: { items: [] },
+  flash_banner: {
+    height: "72px",
+    width: "100%",
+    fontSize: "22px",
+    viewMode: "home",
+  },
+  discount: {},
+};
+
+function buildUiSettingsFromSections(shopSections) {
+  const sectionMap = {};
+
+  shopSections.forEach((section) => {
+    sectionMap[section.section_key] = section;
+  });
+
+  return {
+    heroSection: {
+      enabled: sectionMap.hero?.is_visible ?? true,
+      ...(sectionMap.hero?.config || DEFAULT_SECTION_CONFIGS.hero),
+    },
+    flashDiscountBanner: {
+      enabled: sectionMap.flash_banner?.is_visible ?? true,
+      ...(sectionMap.flash_banner?.config ||
+        DEFAULT_SECTION_CONFIGS.flash_banner),
+    },
+    discountsSection: {
+      enabled: sectionMap.discount?.is_visible ?? true,
+      ...(sectionMap.discount?.config || DEFAULT_SECTION_CONFIGS.discount),
+    },
+  };
+}
+
+async function getShopSections(sellerId) {
+  const sectionRows = await ShopSection.findAll({
+    where: {
+      seller_id: sellerId,
+      section_key: {
+        [Op.in]: SECTION_KEYS,
+      },
+    },
+    attributes: ["section_key", "is_visible", "config"],
+  });
+
+  const sectionMap = {};
+
+  sectionRows.forEach((row) => {
+    sectionMap[row.section_key] = row;
+  });
+
+  return SECTION_KEYS.map((key) => {
+    const row = sectionMap[key];
+    const defaultConfig = DEFAULT_SECTION_CONFIGS[key];
+
+    if (!row) {
+      return {
+        section_key: key,
+        is_visible: true,
+        config: defaultConfig,
+      };
+    }
+
+    return {
+      section_key: key,
+      is_visible: row.is_visible,
+      config: {
+        ...defaultConfig,
+        ...(row.config || {}),
+      },
+    };
+  });
+}
 
 /**
  * Lightweight endpoint for CategoryPage — returns only shop open/close status
@@ -64,6 +143,7 @@ router.get(
           "categories",
           "subcategories_map",
           "category_images",
+          "ui_settings",
         ],
       });
 
@@ -201,6 +281,7 @@ router.get(
         categories: seller.categories || [],
         subcategories_map: seller.subcategories_map || {},
         category_images: seller.category_images || {},
+        ui_settings: normalizeUiSettings(seller.ui_settings),
       });
     } catch (error) {
       console.error("[SHOP CATEGORY] ERROR:", error.message);
@@ -436,6 +517,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
           "freeDeliveryStartDate",
           "freeDeliveryEndDate",
           "free_delivery",
+          "options",
+          "variants",
           "variantPrices",
           "variantPricesAr",
           "category",
@@ -524,6 +607,9 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       };
     }
 
+    const sections = await getShopSections(sellerId);
+    const uiSettingsFromSections = buildUiSettingsFromSections(sections);
+
     // 7️⃣ Return complete seller data
     res.status(200).json({
       success: true,
@@ -550,6 +636,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       hasMoreProducts,
       offers,
       red_line: redLine,
+      sections,
+      ui_settings: uiSettingsFromSections,
     });
   } catch (error) {
     console.error(error);
@@ -591,6 +679,8 @@ router.get("/more-products/:sellerId", async (req, res) => {
         "freeDeliveryStartDate",
         "freeDeliveryEndDate",
         "free_delivery",
+        "options",
+        "variants",
         "variantPrices",
         "variantPricesAr",
         "category",
@@ -665,6 +755,8 @@ router.get("/products-by-category/:sellerId", async (req, res) => {
         "freeDeliveryStartDate",
         "freeDeliveryEndDate",
         "free_delivery",
+        "options",
+        "variants",
         "variantPrices",
         "colors",
         "sizes",
@@ -735,6 +827,8 @@ router.get("/product-for-cart/:productId", async (req, res) => {
         "freeDeliveryStartDate",
         "freeDeliveryEndDate",
         "free_delivery",
+        "options",
+        "variants",
         "variantPrices",
         "variantPricesAr",
         "colors",
@@ -809,6 +903,8 @@ router.get("/shop-discounts/:shopName", async (req, res) => {
       "freeDeliveryStartDate",
       "freeDeliveryEndDate",
       "free_delivery",
+      "options",
+      "variants",
       "variantPrices",
       "variantPricesAr",
       "colors",

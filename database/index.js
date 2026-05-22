@@ -14,6 +14,8 @@ import Report from "./report.js";
 import SellerUsage from "./sellerUsage.js";
 import ProductImage from "./productImages.js";
 import SellerCategory from "./sellerCategory.js";
+import Order from "./order.js";
+import OrderItem from "./orderItem.js";
 
 /* ============================
    ASSOCIATIONS
@@ -42,7 +44,10 @@ Product.hasMany(ProductImage, {
 ProductImage.belongsTo(Product, { foreignKey: "product_id" });
 
 // SellerCategory: one seller has many categories (and subcategories)
-Seller.hasMany(SellerCategory, { foreignKey: "seller_id", as: "sellerCategories" });
+Seller.hasMany(SellerCategory, {
+  foreignKey: "seller_id",
+  as: "sellerCategories",
+});
 SellerCategory.belongsTo(Seller, { foreignKey: "seller_id" });
 
 // SellerCategory self-reference: parent → children (subcategories)
@@ -54,6 +59,14 @@ SellerCategory.belongsTo(SellerCategory, {
   foreignKey: "parent_id",
   as: "parentCategory",
 });
+
+// Orders: one seller has many orders
+Seller.hasMany(Order, { foreignKey: "seller_id", as: "orders" });
+Order.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
+
+// OrderItems: one order has many items
+Order.hasMany(OrderItem, { foreignKey: "order_id", as: "items" });
+OrderItem.belongsTo(Order, { foreignKey: "order_id", as: "order" });
 
 /* Seller.hasMany(SellerPlan, { foreignKey: "seller_id" });
 SellerPlan.belongsTo(Seller, { foreignKey: "seller_id" });
@@ -82,6 +95,8 @@ export {
   SellerUsage,
   ProductImage,
   SellerCategory,
+  Order,
+  OrderItem,
 };
 
 /* import { Sequelize } from "sequelize";
