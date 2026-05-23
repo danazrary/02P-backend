@@ -26,6 +26,17 @@ import getTikTokEmbedUrl, {
   isTikTokUrlCandidate,
 } from "../../utils/getTikTokEmbedUrl.js";
 import { getProductImageRecordBytes } from "../../utils/sellerStorageUsage.js";
+import { notifyGoogle } from "../../utils/googleIndexing.js";
+
+const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
+
+/**
+ * Build the canonical product URL for Google Indexing API notifications.
+ * shopName may come from req.user JWT (fast) or a fresh DB lookup (reliable).
+ */
+function productUrl(shopName, productId) {
+  return `https://${shopName}.${BASE_DOMAIN}/p/${productId}`;
+}
 
 const router = express.Router();
 const MAX_COLOR_IMAGE_FIELDS = 15;
@@ -959,6 +970,18 @@ router.post(
         message: "Product created successfully",
         product,
       });
+
+      // Fire-and-forget: notify Google to index the new product page.
+      // Fetches fresh shop_name from DB in case JWT is stale.
+      const _createdProductId = product.id;
+      const _createdSellerId = id;
+      Seller.findByPk(_createdSellerId, { attributes: ["shop_name"], raw: true })
+        .then((s) => {
+          if (s?.shop_name) {
+            return notifyGoogle(productUrl(s.shop_name, _createdProductId), "URL_UPDATED");
+          }
+        })
+        .catch(() => {});
     } catch (error) {
       console.error(error);
       res.status(error.statusCode || 500).json({
@@ -1329,6 +1352,17 @@ router.put(
         message: "Product updated successfully",
         product,
       });
+
+      // Fire-and-forget: notify Google that the product page was updated.
+      const _editedProductId = productId;
+      const _editedSellerId = sellerId;
+      Seller.findByPk(_editedSellerId, { attributes: ["shop_name"], raw: true })
+        .then((s) => {
+          if (s?.shop_name) {
+            return notifyGoogle(productUrl(s.shop_name, _editedProductId), "URL_UPDATED");
+          }
+        })
+        .catch(() => {});
     } catch (error) {
       console.error(error);
       res.status(error.statusCode || 500).json({
@@ -1408,6 +1442,17 @@ router.delete(
         error: false,
         message: "Product deleted successfully",
       });
+
+      // Fire-and-forget: notify Google to remove this product URL from the index.
+      const _deletedProductId = productId;
+      const _deletedSellerId = sellerId;
+      Seller.findByPk(_deletedSellerId, { attributes: ["shop_name"], raw: true })
+        .then((s) => {
+          if (s?.shop_name) {
+            return notifyGoogle(productUrl(s.shop_name, _deletedProductId), "URL_DELETED");
+          }
+        })
+        .catch(() => {});
     } catch (error) {
       console.error(error);
       res.status(500).json({

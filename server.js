@@ -221,6 +221,63 @@ app.use((req, res, next) => {
   return res.redirect(301, newUrl);
 });
 
+// Host-aware robots.txt so each subdomain advertises its own sitemap URL.
+app.get("/robots.txt", (req, res) => {
+  const hostname = (req.headers.host || "").split(":")[0];
+  const protocol = isProductionEnvironment ? "https" : req.protocol;
+  const sitemapUrl = `${protocol}://${hostname}/sitemap.xml`;
+
+  const robotsTxt = `User-agent: *
+Allow: /
+
+# Keep private/auth/account pages out of the index
+Disallow: /login
+Disallow: /register
+Disallow: /oauth-success
+Disallow: /forgot-password
+Disallow: /verify-code
+Disallow: /reset-password
+Disallow: /dashboard
+Disallow: /add-product
+Disallow: /edit-product/
+Disallow: /orders
+Disallow: /my-orders
+Disallow: /settings
+Disallow: /secure-control-panel/
+Disallow: /your-shop-name
+Disallow: /your-shop-name/
+
+# Block AI training crawlers
+User-agent: Amazonbot
+Disallow: /
+
+User-agent: Applebot-Extended
+Disallow: /
+
+User-agent: Bytespider
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: GPTBot
+Disallow: /
+
+User-agent: meta-externalagent
+Disallow: /
+
+Sitemap: ${sitemapUrl}
+`;
+
+  res.type("text/plain; charset=utf-8").send(robotsTxt);
+});
+
 // --- SEO PRE-RENDER FOR BOTS ---
 // Must be BEFORE routers so crawlers get HTML with meta tags
 app.use(seoPrerender);

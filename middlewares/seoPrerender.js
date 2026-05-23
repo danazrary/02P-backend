@@ -46,7 +46,7 @@ function imgUrl(image, type) {
   return `${r2PublicUrl}/${image}`;
 }
 
-function shopHtml(seller) {
+function shopHtml(seller, products = []) {
   const name = esc(seller.shop_name || seller.name || "");
   const frontend = process.env.FRONTEND_ORIGIN || "https://dwkanlink.com";
   const baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com";
@@ -64,6 +64,17 @@ function shopHtml(seller) {
     url,
   });
 
+  const productLinks = Array.isArray(products)
+    ? products
+        .filter((p) => p && p.id)
+        .slice(0, 80)
+        .map((p) => {
+          const pTitle = esc(p.titleKu || p.titleAr || `Product ${p.id}`);
+          return `<li><a href="${url}/p/${p.id}">${pTitle}</a></li>`;
+        })
+        .join("\n")
+    : "";
+
   return `<!DOCTYPE html>
 <html lang="ku" dir="rtl">
 <head>
@@ -71,6 +82,7 @@ function shopHtml(seller) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${name} - ${SITE_NAME}</title>
 <meta name="description" content="${desc}">
+<meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large,max-video-preview:-1">
 <link rel="canonical" href="${esc(url)}">
 <meta property="og:type" content="website">
 <meta property="og:title" content="${name} - ${SITE_NAME}">
@@ -89,6 +101,7 @@ function shopHtml(seller) {
 <body>
 <h1>${name}</h1>
 <p>${desc}</p>
+${productLinks ? `<h2>Products</h2><ul>${productLinks}</ul>` : ""}
 </body>
 </html>`;
 }
@@ -139,6 +152,7 @@ function productHtml(product, seller) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${title} - ${shopName} - ${SITE_NAME}</title>
 <meta name="description" content="${desc}">
+<meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large,max-video-preview:-1">
 <link rel="canonical" href="${esc(url)}">
 <meta property="og:type" content="product">
 <meta property="og:title" content="${title} - ${shopName}">
@@ -164,6 +178,22 @@ ${price ? `<p>${price} ${currency}</p>` : ""}
 </html>`;
 }
 
+function notFoundHtml(title, description) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${esc(title)}</title>
+<meta name="robots" content="noindex,follow">
+</head>
+<body>
+<h1>${esc(title)}</h1>
+<p>${esc(description)}</p>
+</body>
+</html>`;
+}
+
 export default function seoPrerender(req, res, next) {
   if (
     req.method !== "GET" ||
@@ -182,10 +212,18 @@ export default function seoPrerender(req, res, next) {
     // / (shop home on subdomain)
     if (parts.length === 0) {
       return Seller.findOne({ where: { shop_name: shopNameFromSub } })
-        .then((s) => {
+        .then(async (s) => {
           if (!s) return next();
+
+          const products = await Product.findAll({
+            where: { seller_id: s.id },
+            attributes: ["id", "titleKu", "titleAr"],
+            order: [["updatedAt", "DESC"]],
+            limit: 80,
+          });
+
           res.set("Content-Type", "text/html; charset=utf-8");
-          res.send(shopHtml(s));
+          res.send(shopHtml(s, products));
         })
         .catch(() => next());
     }
@@ -194,7 +232,13 @@ export default function seoPrerender(req, res, next) {
     if (parts.length === 1 && parts[0] === "profile") {
       return Seller.findOne({ where: { shop_name: shopNameFromSub } })
         .then((s) => {
-          if (!s) return next();
+          if (!s) {
+            res.status(404);
+            res.set("Content-Type", "text/html; charset=utf-8");
+            return res.send(
+              notFoundHtml("Shop not found", "The requested shop does not exist."),
+            );
+          }
           res.set("Content-Type", "text/html; charset=utf-8");
           res.send(shopHtml(s));
         })
@@ -209,9 +253,17 @@ export default function seoPrerender(req, res, next) {
         Product.findByPk(productId),
       ])
         .then(([s, p]) => {
-          if (!s || !p) return next();
+          if (!s || !p || p.seller_id !== s.id) {
+            res.status(404);
+            res.set("Content-Type", "text/html; charset=utf-8");
+            return res.send(
+              notFoundHtml(
+                "Product not found",
+                "The requested product does not exist in this shop.",
+              ),
+            );
+          }
           // Validate product belongs to this shop
-          if (p.seller_id !== s.id) return next();
           res.set("Content-Type", "text/html; charset=utf-8");
           res.send(productHtml(p, s));
         })
@@ -229,10 +281,18 @@ export default function seoPrerender(req, res, next) {
     if (RESERVED.has(name.toLowerCase()) || name.includes(".")) return next();
 
     return Seller.findOne({ where: { shop_name: name } })
-      .then((s) => {
+      .then(async (s) => {
         if (!s) return next();
+
+        const products = await Product.findAll({
+          where: { seller_id: s.id },
+          attributes: ["id", "titleKu", "titleAr"],
+          order: [["updatedAt", "DESC"]],
+          limit: 80,
+        });
+
         res.set("Content-Type", "text/html; charset=utf-8");
-        res.send(shopHtml(s));
+        res.send(shopHtml(s, products));
       })
       .catch(() => next());
   }
@@ -244,7 +304,13 @@ export default function seoPrerender(req, res, next) {
 
     return Seller.findOne({ where: { shop_name: name } })
       .then((s) => {
-        if (!s) return next();
+        if (!s) {
+          res.status(404);
+          res.set("Content-Type", "text/html; charset=utf-8");
+          return res.send(
+            notFoundHtml("Shop not found", "The requested shop does not exist."),
+          );
+        }
         res.set("Content-Type", "text/html; charset=utf-8");
         res.send(shopHtml(s));
       })
@@ -262,9 +328,17 @@ export default function seoPrerender(req, res, next) {
       Product.findByPk(productId),
     ])
       .then(([s, p]) => {
-        if (!s || !p) return next();
+        if (!s || !p || p.seller_id !== s.id) {
+          res.status(404);
+          res.set("Content-Type", "text/html; charset=utf-8");
+          return res.send(
+            notFoundHtml(
+              "Product not found",
+              "The requested product does not exist in this shop.",
+            ),
+          );
+        }
         // Validate product belongs to this shop
-        if (p.seller_id !== s.id) return next();
         res.set("Content-Type", "text/html; charset=utf-8");
         res.send(productHtml(p, s));
       })

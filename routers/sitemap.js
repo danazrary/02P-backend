@@ -1,73 +1,135 @@
 import { Router } from "express";
+import { Op } from "sequelize";
 import Seller from "../database/seller.js";
 import Product from "../database/products.js";
 
 const router = Router();
 const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
+const CANONICAL_PROTOCOL = process.env.CANONICAL_PROTOCOL || "https";
+const SHOP_URL_MODE =
+  (process.env.SITEMAP_SHOP_URL_MODE || "subdomain").toLowerCase() === "path"
+    ? "path"
+    : "subdomain";
+const ROOT_CANONICAL_URL = (
+  process.env.FRONTEND_ORIGIN || `${CANONICAL_PROTOCOL}://${BASE_DOMAIN}`
+).replace(/\/$/, "");
 
-function encodeShopName(name) {
-  return encodeURIComponent(name).replace(/%20/g, "+");
+/** Format a Date or ISO string as YYYY-MM-DD for <lastmod>. */
+function toLastmod(date) {
+  if (!date) return null;
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+const RESERVED_SUBDOMAINS = new Set([
+  "www",
+  "api",
+  "admin",
+  "static",
+  "assets",
+  "uploads",
+  "mail",
+  "ftp",
+  "smtp",
+  "support",
+  "help",
+  "blog",
+  "news",
+]);
+
+function getRequestHostname(req) {
+  return (req.headers.host || "").split(":")[0].toLowerCase();
+}
+
+function getShopFromHost(hostname) {
+  if (!hostname) return null;
+  if (!hostname.endsWith(`.${BASE_DOMAIN}`)) return null;
+
+  const suffix = `.${BASE_DOMAIN}`;
+  const subdomain = hostname.slice(0, -suffix.length);
+  if (!subdomain || subdomain.includes(".")) return null;
+  if (RESERVED_SUBDOMAINS.has(subdomain.toLowerCase())) return null;
+
+  return subdomain;
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function emptySitemapXml() {
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>`;
+}
+
+function buildShopUrl(shopName) {
+  if (SHOP_URL_MODE === "path") {
+    return `${ROOT_CANONICAL_URL}/shop/${encodeURIComponent(shopName)}`;
+  }
+  return `${CANONICAL_PROTOCOL}://${shopName}.${BASE_DOMAIN}`;
+}
+
+function buildProductUrl(shopName, productId) {
+  if (SHOP_URL_MODE === "path") {
+    return `${ROOT_CANONICAL_URL}/shop/${encodeURIComponent(shopName)}/p/${encodeURIComponent(String(productId))}`;
+  }
+  return `${CANONICAL_PROTOCOL}://${shopName}.${BASE_DOMAIN}/p/${encodeURIComponent(String(productId))}`;
+}
+
+function buildUrlNode({ loc, lastmod, changefreq, priority }) {
+  return `  <url>\n    <loc>${escapeXml(loc)}</loc>${lastmod ? `\n    <lastmod>${lastmod}</lastmod>` : ""}${changefreq ? `\n    <changefreq>${changefreq}</changefreq>` : ""}${priority ? `\n    <priority>${priority}</priority>` : ""}\n  </url>`;
+}
+
+function generateSitemapXml(entries) {
+  const body = entries.map((entry) => buildUrlNode(entry)).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${body}\n</urlset>`;
 }
 
 /**
- * Generates the XML sitemap dynamically.
- * All URLs use subdomain format: https://shopName.dwkanlink.com
- *
- * Structure is kept flat for now but can be split into:
- *   /sitemap-index.xml → /sitemap-sellers.xml + /sitemap-products.xml
+ * Fetches all sitemap rows using minimal columns only.
+ * Runtime-only: data comes from live DB on each request.
  */
-async function generateSitemap() {
+async function fetchGlobalSitemapRows() {
   const [sellers, products] = await Promise.all([
-    Seller.findAll({ attributes: ["id", "shop_name"], raw: true }),
-    Product.findAll({
-      attributes: ["id"],
-      include: [
-        {
-          model: Seller,
-          attributes: ["shop_name"],
-          required: true,
+    Seller.findAll({
+      attributes: ["id", "shop_name", "updatedAt"],
+      where: {
+        shop_name: {
+          [Op.ne]: null,
         },
-      ],
+      },
+      raw: true,
+    }),
+    Product.findAll({
+      attributes: ["id", "seller_id", "updatedAt"],
+      raw: true,
     }),
   ]);
 
-  let xml = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-`;
+  return { sellers, products };
+}
 
-  // Seller URLs
-  for (const seller of sellers) {
-    if (!seller.shop_name) continue;
-    const encoded = encodeShopName(seller.shop_name);
+async function fetchSubdomainSitemapRows(shopName) {
+  const seller = await Seller.findOne({
+    where: { shop_name: shopName },
+    attributes: ["id", "shop_name", "updatedAt"],
+    raw: true,
+  });
 
-    xml += `  <url>
-    <loc>https://${encoded}.${BASE_DOMAIN}</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://${encoded}.${BASE_DOMAIN}/profile</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.6</priority>
-  </url>
-`;
-  }
+  if (!seller) return { seller: null, products: [] };
 
-  // Product URLs
-  for (const product of products) {
-    const shopName = product.Seller?.shop_name;
-    if (!shopName || !product.id) continue;
+  const products = await Product.findAll({
+    where: { seller_id: seller.id },
+    attributes: ["id", "updatedAt"],
+    raw: true,
+  });
 
-    xml += `  <url>
-    <loc>https://${encodeShopName(shopName)}.${BASE_DOMAIN}/p/${product.id}</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.7</priority>
-  </url>
-`;
-  }
-
-  xml += `</urlset>`;
-  return xml;
+  return { seller, products };
 }
 
 /**
@@ -75,15 +137,75 @@ async function generateSitemap() {
  * Sets proper XML content-type header
  */
 router.get("/sitemap.xml", async (req, res) => {
-  try {
-    const sitemap = await generateSitemap();
+  res.header("Content-Type", "application/xml; charset=utf-8");
+  res.set("Cache-Control", "public, max-age=0, must-revalidate");
 
-    // Set proper XML header
-    res.header("Content-Type", "application/xml");
-    res.send(sitemap);
+  try {
+    const hostname = getRequestHostname(req);
+    const shopName = getShopFromHost(hostname);
+
+    // Subdomain-specific sitemap request: include only this shop and its products.
+    if (shopName) {
+      const { seller, products } = await fetchSubdomainSitemapRows(shopName);
+
+      if (!seller) {
+        return res.status(200).send(emptySitemapXml());
+      }
+
+      const entries = [
+        {
+          loc: buildShopUrl(seller.shop_name),
+          lastmod: toLastmod(seller.updatedAt),
+          changefreq: "weekly",
+          priority: "0.9",
+        },
+        ...products
+          .filter((p) => p.id)
+          .map((p) => ({
+            loc: buildProductUrl(seller.shop_name, p.id),
+            lastmod: toLastmod(p.updatedAt),
+            changefreq: "weekly",
+            priority: "0.7",
+          })),
+      ];
+
+      return res.status(200).send(generateSitemapXml(entries));
+    }
+
+    // Global sitemap request: include every shop and every product.
+    const { sellers, products } = await fetchGlobalSitemapRows();
+    const sellerMap = new Map(
+      sellers.filter((s) => s.shop_name).map((s) => [s.id, s]),
+    );
+
+    const sellerEntries = sellers
+      .filter((s) => s.shop_name)
+      .map((s) => ({
+        loc: buildShopUrl(s.shop_name),
+        lastmod: toLastmod(s.updatedAt),
+        changefreq: "weekly",
+        priority: "0.8",
+      }));
+
+    const productEntries = products
+      .map((p) => {
+        const seller = sellerMap.get(p.seller_id);
+        if (!seller || !p.id) return null;
+
+        return {
+          loc: buildProductUrl(seller.shop_name, p.id),
+          lastmod: toLastmod(p.updatedAt),
+          changefreq: "weekly",
+          priority: "0.7",
+        };
+      })
+      .filter(Boolean);
+
+    return res.status(200).send(generateSitemapXml([...sellerEntries, ...productEntries]));
   } catch (error) {
     console.error("❌ Sitemap generation failed:", error);
-    res.status(500).json({ message: "Failed to generate sitemap" });
+    // Production safety: return a valid empty sitemap instead of failing.
+    return res.status(200).send(emptySitemapXml());
   }
 });
 

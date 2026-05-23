@@ -22,7 +22,9 @@ import {
 import { getStoredAssetBytes } from "../../utils/sellerStorageUsage.js";
 import { createR2Multer, uploadToR2, deleteFromR2 } from "../../utils/r2.js";
 import { normalizeUiSettings } from "../../utils/uiSettings.js";
+import { notifyGoogle } from "../../utils/googleIndexing.js";
 
+const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
 const router = Router();
 const sellerImageUpload = createR2Multer({
   fileSize: 2 * 1024 * 1024,
@@ -322,6 +324,9 @@ router.post(
         ...(emailIsMissing(seller.email) && email ? { email } : {}),
       });
 
+      // Fire-and-forget: notify Google to index the new shop homepage.
+      notifyGoogle(`https://${shopName}.${BASE_DOMAIN}`, "URL_UPDATED").catch(() => {});
+
       return res.status(200).json({
         success: true,
         error: false,
@@ -613,6 +618,16 @@ router.post(
       }
 
       await seller.update(updateData);
+
+      // Fire-and-forget: notify Google when shop URL changes (new shop_name creates a new subdomain).
+      if (updateData.shop_name) {
+        const _oldShopName = seller.shop_name;
+        const _newShopName = updateData.shop_name;
+        if (_oldShopName) {
+          notifyGoogle(`https://${_oldShopName}.${BASE_DOMAIN}`, "URL_DELETED").catch(() => {});
+        }
+        notifyGoogle(`https://${_newShopName}.${BASE_DOMAIN}`, "URL_UPDATED").catch(() => {});
+      }
 
       return res.status(200).json({
         success: true,
