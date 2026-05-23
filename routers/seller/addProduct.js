@@ -975,10 +975,16 @@ router.post(
       // Fetches fresh shop_name from DB in case JWT is stale.
       const _createdProductId = product.id;
       const _createdSellerId = id;
-      Seller.findByPk(_createdSellerId, { attributes: ["shop_name"], raw: true })
+      Seller.findByPk(_createdSellerId, {
+        attributes: ["shop_name"],
+        raw: true,
+      })
         .then((s) => {
           if (s?.shop_name) {
-            return notifyGoogle(productUrl(s.shop_name, _createdProductId), "URL_UPDATED");
+            return notifyGoogle(
+              productUrl(s.shop_name, _createdProductId),
+              "URL_UPDATED",
+            );
           }
         })
         .catch(() => {});
@@ -1359,7 +1365,10 @@ router.put(
       Seller.findByPk(_editedSellerId, { attributes: ["shop_name"], raw: true })
         .then((s) => {
           if (s?.shop_name) {
-            return notifyGoogle(productUrl(s.shop_name, _editedProductId), "URL_UPDATED");
+            return notifyGoogle(
+              productUrl(s.shop_name, _editedProductId),
+              "URL_UPDATED",
+            );
           }
         })
         .catch(() => {});
@@ -1446,10 +1455,16 @@ router.delete(
       // Fire-and-forget: notify Google to remove this product URL from the index.
       const _deletedProductId = productId;
       const _deletedSellerId = sellerId;
-      Seller.findByPk(_deletedSellerId, { attributes: ["shop_name"], raw: true })
+      Seller.findByPk(_deletedSellerId, {
+        attributes: ["shop_name"],
+        raw: true,
+      })
         .then((s) => {
           if (s?.shop_name) {
-            return notifyGoogle(productUrl(s.shop_name, _deletedProductId), "URL_DELETED");
+            return notifyGoogle(
+              productUrl(s.shop_name, _deletedProductId),
+              "URL_DELETED",
+            );
           }
         })
         .catch(() => {});

@@ -122,9 +122,7 @@ async function getAccessToken() {
   });
 
   if (!data.access_token) {
-    throw new Error(
-      `Google token exchange failed: ${JSON.stringify(data)}`,
-    );
+    throw new Error(`Google token exchange failed: ${JSON.stringify(data)}`);
   }
 
   _tokenCache = {

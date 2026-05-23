@@ -325,7 +325,9 @@ router.post(
       });
 
       // Fire-and-forget: notify Google to index the new shop homepage.
-      notifyGoogle(`https://${shopName}.${BASE_DOMAIN}`, "URL_UPDATED").catch(() => {});
+      notifyGoogle(`https://${shopName}.${BASE_DOMAIN}`, "URL_UPDATED").catch(
+        () => {},
+      );
 
       return res.status(200).json({
         success: true,
@@ -538,7 +540,10 @@ router.post(
             await decrementSellerStorage(id, oldImageBytes);
           }
         }
-        const { key, sizeBytes } = await uploadSellerImageToR2(shopImageFile, id);
+        const { key, sizeBytes } = await uploadSellerImageToR2(
+          shopImageFile,
+          id,
+        );
         updateData.shop_image = key;
         const newImageBytes = sizeBytes;
         if (newImageBytes > 0) {
@@ -546,7 +551,10 @@ router.post(
         }
       }
 
-      const parsedUiSettings = parseUiSettingsPayload(uiSettings, seller.ui_settings);
+      const parsedUiSettings = parseUiSettingsPayload(
+        uiSettings,
+        seller.ui_settings,
+      );
       if (uiSettings !== undefined && !parsedUiSettings) {
         return res.status(400).json({
           success: false,
@@ -556,8 +564,8 @@ router.post(
       }
 
       if (heroImageFile) {
-        const oldHeroImageKey = normalizeUiSettings(seller.ui_settings).heroSection
-          .imageKey;
+        const oldHeroImageKey = normalizeUiSettings(seller.ui_settings)
+          .heroSection.imageKey;
         if (oldHeroImageKey) {
           const oldHeroBytes = await getStoredAssetBytes(oldHeroImageKey);
           await deleteStoredSellerImage(oldHeroImageKey);
@@ -566,7 +574,10 @@ router.post(
           }
         }
 
-        const { key, sizeBytes } = await uploadSellerHeroImageToR2(heroImageFile, id);
+        const { key, sizeBytes } = await uploadSellerHeroImageToR2(
+          heroImageFile,
+          id,
+        );
         if (parsedUiSettings) {
           parsedUiSettings.heroSection.imageKey = key;
         }
@@ -624,9 +635,15 @@ router.post(
         const _oldShopName = seller.shop_name;
         const _newShopName = updateData.shop_name;
         if (_oldShopName) {
-          notifyGoogle(`https://${_oldShopName}.${BASE_DOMAIN}`, "URL_DELETED").catch(() => {});
+          notifyGoogle(
+            `https://${_oldShopName}.${BASE_DOMAIN}`,
+            "URL_DELETED",
+          ).catch(() => {});
         }
-        notifyGoogle(`https://${_newShopName}.${BASE_DOMAIN}`, "URL_UPDATED").catch(() => {});
+        notifyGoogle(
+          `https://${_newShopName}.${BASE_DOMAIN}`,
+          "URL_UPDATED",
+        ).catch(() => {});
       }
 
       return res.status(200).json({
@@ -706,8 +723,8 @@ router.post(
 
       const heroImageFile = req.files?.hero_image?.[0] || null;
       if (heroImageFile) {
-        const oldHeroImageKey = normalizeUiSettings(seller.ui_settings).heroSection
-          .imageKey;
+        const oldHeroImageKey = normalizeUiSettings(seller.ui_settings)
+          .heroSection.imageKey;
         if (oldHeroImageKey) {
           const oldHeroBytes = await getStoredAssetBytes(oldHeroImageKey);
           await deleteStoredSellerImage(oldHeroImageKey);
@@ -716,7 +733,10 @@ router.post(
           }
         }
 
-        const { key, sizeBytes } = await uploadSellerHeroImageToR2(heroImageFile, id);
+        const { key, sizeBytes } = await uploadSellerHeroImageToR2(
+          heroImageFile,
+          id,
+        );
         parsedUiSettings.heroSection.imageKey = key;
         if (sizeBytes > 0) {
           await incrementSellerStorage(id, sizeBytes);

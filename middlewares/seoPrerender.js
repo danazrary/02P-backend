@@ -1,5 +1,6 @@
 import Seller from "../database/seller.js";
 import Product from "../database/products.js";
+import ProductImage from "../database/productImages.js";
 import { RESERVED_SHOP_NAMES } from "../utils/reservedShopNames.js";
 
 const BOT_AGENTS =
@@ -44,6 +45,146 @@ function imgUrl(image, type) {
     return `${backend}${normalizedPath}`;
   }
   return `${r2PublicUrl}/${image}`;
+}
+
+function slugifyCategorySegment(str) {
+  if (!str) return "";
+  return String(str)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^\w\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function findCategoryBySlug(categories = [], slug) {
+  if (!slug || !Array.isArray(categories)) return null;
+  return (
+    categories.find((item) => slugifyCategorySegment(item) === slug) || null
+  );
+}
+
+function getMainProductImage(product) {
+  const mainRecord = Array.isArray(product?.productImages)
+    ? product.productImages.find((image) => image?.is_main) ||
+      product.productImages[0]
+    : null;
+
+  if (mainRecord?.image_key) {
+    return imgUrl(mainRecord.image_key, "products");
+  }
+
+  const legacyImages = Array.isArray(product?.images) ? product.images : [];
+  if (legacyImages[0]) {
+    return imgUrl(legacyImages[0], "products");
+  }
+
+  return `${process.env.FRONTEND_ORIGIN || "https://dwkanlink.com"}/og-default.png`;
+}
+
+function truncateText(str, max = 180) {
+  if (!str) return "";
+  const value = String(str).trim();
+  if (value.length <= max) return value;
+  return `${value.slice(0, max - 1).trim()}...`;
+}
+
+function categoryHtml({
+  seller,
+  categoryName,
+  subcategoryName = null,
+  products = [],
+}) {
+  const baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com";
+  const shopUrl = `https://${seller.shop_name}.${baseDomain}`;
+  const categorySlug = slugifyCategorySegment(categoryName);
+  const subcategorySlug = subcategoryName
+    ? slugifyCategorySegment(subcategoryName)
+    : null;
+  const categoryUrl = subcategorySlug
+    ? `${shopUrl}/c/${categorySlug}/${subcategorySlug}`
+    : `${shopUrl}/c/${categorySlug}`;
+  const sellerImage = imgUrl(seller.shop_image, "sellers");
+  const categoryLabel = subcategoryName
+    ? `${subcategoryName} - ${categoryName}`
+    : categoryName;
+  const title = esc(`${categoryLabel} - ${seller.shop_name} - ${SITE_NAME}`);
+  const description = esc(
+    truncateText(
+      subcategoryName
+        ? `Browse ${subcategoryName} products in ${categoryName} from ${seller.shop_name}.`
+        : `Browse ${categoryName} products from ${seller.shop_name}.`,
+      160,
+    ),
+  );
+
+  const productCards = Array.isArray(products)
+    ? products
+        .filter((p) => p && p.id)
+        .slice(0, 80)
+        .map((p) => {
+          const productTitle = esc(p.titleKu || p.titleAr || `Product ${p.id}`);
+          const productDescription = esc(
+            truncateText(
+              p.descriptionKu ||
+                p.descriptionAr ||
+                `${productTitle} - ${seller.shop_name}`,
+              180,
+            ),
+          );
+          const productLink = `${shopUrl}/p/${p.id}`;
+          const productImage = getMainProductImage(p);
+
+          return `<article>
+  <a href="${esc(productLink)}">
+    <img src="${esc(productImage)}" alt="${productTitle}" loading="lazy">
+    <h2>${productTitle}</h2>
+    <p>${productDescription}</p>
+  </a>
+</article>`;
+        })
+        .join("\n")
+    : "";
+
+  const ld = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "CollectionPage",
+    name: categoryLabel,
+    url: categoryUrl,
+    isPartOf: shopUrl,
+    about: categoryName,
+  });
+
+  return `<!DOCTYPE html>
+<html lang="ku" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${title}</title>
+<meta name="description" content="${description}">
+<meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large,max-video-preview:-1">
+<link rel="canonical" href="${esc(categoryUrl)}">
+<meta property="og:type" content="website">
+<meta property="og:title" content="${title}">
+<meta property="og:description" content="${description}">
+<meta property="og:image" content="${esc(sellerImage)}">
+<meta property="og:url" content="${esc(categoryUrl)}">
+<meta property="og:site_name" content="${SITE_NAME}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${title}">
+<meta name="twitter:description" content="${description}">
+<meta name="twitter:image" content="${esc(sellerImage)}">
+<script type="application/ld+json">${ld}</script>
+</head>
+<body>
+<header>
+  <h1>${esc(categoryLabel)}</h1>
+  <p>${description}</p>
+</header>
+${productCards ? `<section>${productCards}</section>` : `<section><p>No products found in this category.</p></section>`}
+</body>
+</html>`;
 }
 
 function shopHtml(seller, products = []) {
@@ -117,15 +258,11 @@ function productHtml(product, seller) {
   const frontend = process.env.FRONTEND_ORIGIN || "https://dwkanlink.com";
   const baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com";
   const url = `https://${seller.shop_name}.${baseDomain}/p/${product.id}`;
-  const images = product.images;
-  const image =
-    Array.isArray(images) && images.length
-      ? imgUrl(images[0], "products")
-      : `${frontend}/og-default.png`;
+  const image = getMainProductImage(product) || `${frontend}/og-default.png`;
   const currency = product.priceType === "IQD" ? "IQD" : "USD";
   const price =
     product.hasDiscount && product.discount_percent
-      ? (product.realPrice * (1 - product.discount_percent / 100)).toFixed(2)
+      ? product.realPrice * (1 - product.discount_percent / 100)
       : product.realPrice;
 
   const ld = JSON.stringify({
@@ -236,7 +373,10 @@ export default function seoPrerender(req, res, next) {
             res.status(404);
             res.set("Content-Type", "text/html; charset=utf-8");
             return res.send(
-              notFoundHtml("Shop not found", "The requested shop does not exist."),
+              notFoundHtml(
+                "Shop not found",
+                "The requested shop does not exist.",
+              ),
             );
           }
           res.set("Content-Type", "text/html; charset=utf-8");
@@ -250,7 +390,16 @@ export default function seoPrerender(req, res, next) {
       const productId = parts[1];
       return Promise.all([
         Seller.findOne({ where: { shop_name: shopNameFromSub } }),
-        Product.findByPk(productId),
+        Product.findByPk(productId, {
+          include: [
+            {
+              model: ProductImage,
+              as: "productImages",
+              attributes: ["image_key", "is_main"],
+              required: false,
+            },
+          ],
+        }),
       ])
         .then(([s, p]) => {
           if (!s || !p || p.seller_id !== s.id) {
@@ -266,6 +415,111 @@ export default function seoPrerender(req, res, next) {
           // Validate product belongs to this shop
           res.set("Content-Type", "text/html; charset=utf-8");
           res.send(productHtml(p, s));
+        })
+        .catch(() => next());
+    }
+
+    // /c/:category and /c/:category/:subcategory (on subdomain)
+    if (parts[0] === "c" && (parts.length === 2 || parts.length === 3)) {
+      const categorySlug = parts[1];
+      const subcategorySlug = parts[2] || null;
+
+      return Seller.findOne({
+        where: { shop_name: shopNameFromSub },
+        attributes: [
+          "id",
+          "shop_name",
+          "shop_image",
+          "categories",
+          "subcategories_map",
+        ],
+      })
+        .then(async (seller) => {
+          if (!seller) {
+            res.status(404);
+            res.set("Content-Type", "text/html; charset=utf-8");
+            return res.send(
+              notFoundHtml(
+                "Shop not found",
+                "The requested shop does not exist.",
+              ),
+            );
+          }
+
+          const categoryName = findCategoryBySlug(
+            seller.categories || [],
+            categorySlug,
+          );
+          if (!categoryName) {
+            res.status(404);
+            res.set("Content-Type", "text/html; charset=utf-8");
+            return res.send(
+              notFoundHtml(
+                "Category not found",
+                "The requested category does not exist.",
+              ),
+            );
+          }
+
+          let subcategoryName = null;
+          if (subcategorySlug) {
+            const subcategories = Array.isArray(
+              seller.subcategories_map?.[categoryName],
+            )
+              ? seller.subcategories_map[categoryName]
+              : [];
+            subcategoryName = findCategoryBySlug(
+              subcategories,
+              subcategorySlug,
+            );
+            if (!subcategoryName) {
+              res.status(404);
+              res.set("Content-Type", "text/html; charset=utf-8");
+              return res.send(
+                notFoundHtml(
+                  "Subcategory not found",
+                  "The requested subcategory does not exist.",
+                ),
+              );
+            }
+          }
+
+          const products = await Product.findAll({
+            where: {
+              seller_id: seller.id,
+              category: categoryName,
+              ...(subcategoryName ? { subcategory: subcategoryName } : {}),
+            },
+            attributes: [
+              "id",
+              "titleKu",
+              "titleAr",
+              "descriptionKu",
+              "descriptionAr",
+              "images",
+            ],
+            include: [
+              {
+                model: ProductImage,
+                as: "productImages",
+                attributes: ["image_key", "is_main"],
+                required: false,
+              },
+            ],
+            order: [["updatedAt", "DESC"]],
+            limit: 80,
+          });
+
+          res.status(200);
+          res.set("Content-Type", "text/html; charset=utf-8");
+          return res.send(
+            categoryHtml({
+              seller,
+              categoryName,
+              subcategoryName,
+              products,
+            }),
+          );
         })
         .catch(() => next());
     }
@@ -308,7 +562,10 @@ export default function seoPrerender(req, res, next) {
           res.status(404);
           res.set("Content-Type", "text/html; charset=utf-8");
           return res.send(
-            notFoundHtml("Shop not found", "The requested shop does not exist."),
+            notFoundHtml(
+              "Shop not found",
+              "The requested shop does not exist.",
+            ),
           );
         }
         res.set("Content-Type", "text/html; charset=utf-8");
@@ -325,7 +582,16 @@ export default function seoPrerender(req, res, next) {
 
     return Promise.all([
       Seller.findOne({ where: { shop_name: name } }),
-      Product.findByPk(productId),
+      Product.findByPk(productId, {
+        include: [
+          {
+            model: ProductImage,
+            as: "productImages",
+            attributes: ["image_key", "is_main"],
+            required: false,
+          },
+        ],
+      }),
     ])
       .then(([s, p]) => {
         if (!s || !p || p.seller_id !== s.id) {
@@ -341,6 +607,176 @@ export default function seoPrerender(req, res, next) {
         // Validate product belongs to this shop
         res.set("Content-Type", "text/html; charset=utf-8");
         res.send(productHtml(p, s));
+      })
+      .catch(() => next());
+  }
+
+  // /:shopName/c/:category and /:shopName/c/:category/:subcategory
+  if (parts.length === 3 && parts[1] === "c") {
+    const name = parts[0];
+    const categorySlug = parts[2];
+    if (RESERVED.has(name.toLowerCase())) return next();
+
+    return Seller.findOne({
+      where: { shop_name: name },
+      attributes: [
+        "id",
+        "shop_name",
+        "shop_image",
+        "categories",
+        "subcategories_map",
+      ],
+    })
+      .then(async (seller) => {
+        if (!seller) {
+          res.status(404);
+          res.set("Content-Type", "text/html; charset=utf-8");
+          return res.send(
+            notFoundHtml(
+              "Shop not found",
+              "The requested shop does not exist.",
+            ),
+          );
+        }
+
+        const categoryName = findCategoryBySlug(
+          seller.categories || [],
+          categorySlug,
+        );
+        if (!categoryName) {
+          res.status(404);
+          res.set("Content-Type", "text/html; charset=utf-8");
+          return res.send(
+            notFoundHtml(
+              "Category not found",
+              "The requested category does not exist.",
+            ),
+          );
+        }
+
+        const products = await Product.findAll({
+          where: { seller_id: seller.id, category: categoryName },
+          attributes: [
+            "id",
+            "titleKu",
+            "titleAr",
+            "descriptionKu",
+            "descriptionAr",
+            "images",
+          ],
+          include: [
+            {
+              model: ProductImage,
+              as: "productImages",
+              attributes: ["image_key", "is_main"],
+              required: false,
+            },
+          ],
+          order: [["updatedAt", "DESC"]],
+          limit: 80,
+        });
+
+        res.status(200);
+        res.set("Content-Type", "text/html; charset=utf-8");
+        return res.send(categoryHtml({ seller, categoryName, products }));
+      })
+      .catch(() => next());
+  }
+
+  if (parts.length === 4 && parts[1] === "c") {
+    const name = parts[0];
+    const categorySlug = parts[2];
+    const subcategorySlug = parts[3];
+    if (RESERVED.has(name.toLowerCase())) return next();
+
+    return Seller.findOne({
+      where: { shop_name: name },
+      attributes: [
+        "id",
+        "shop_name",
+        "shop_image",
+        "categories",
+        "subcategories_map",
+      ],
+    })
+      .then(async (seller) => {
+        if (!seller) {
+          res.status(404);
+          res.set("Content-Type", "text/html; charset=utf-8");
+          return res.send(
+            notFoundHtml(
+              "Shop not found",
+              "The requested shop does not exist.",
+            ),
+          );
+        }
+
+        const categoryName = findCategoryBySlug(
+          seller.categories || [],
+          categorySlug,
+        );
+        if (!categoryName) {
+          res.status(404);
+          res.set("Content-Type", "text/html; charset=utf-8");
+          return res.send(
+            notFoundHtml(
+              "Category not found",
+              "The requested category does not exist.",
+            ),
+          );
+        }
+
+        const subcategories = Array.isArray(
+          seller.subcategories_map?.[categoryName],
+        )
+          ? seller.subcategories_map[categoryName]
+          : [];
+        const subcategoryName = findCategoryBySlug(
+          subcategories,
+          subcategorySlug,
+        );
+        if (!subcategoryName) {
+          res.status(404);
+          res.set("Content-Type", "text/html; charset=utf-8");
+          return res.send(
+            notFoundHtml(
+              "Subcategory not found",
+              "The requested subcategory does not exist.",
+            ),
+          );
+        }
+
+        const products = await Product.findAll({
+          where: {
+            seller_id: seller.id,
+            category: categoryName,
+            subcategory: subcategoryName,
+          },
+          attributes: [
+            "id",
+            "titleKu",
+            "titleAr",
+            "descriptionKu",
+            "descriptionAr",
+            "images",
+          ],
+          include: [
+            {
+              model: ProductImage,
+              as: "productImages",
+              attributes: ["image_key", "is_main"],
+              required: false,
+            },
+          ],
+          order: [["updatedAt", "DESC"]],
+          limit: 80,
+        });
+
+        res.status(200);
+        res.set("Content-Type", "text/html; charset=utf-8");
+        return res.send(
+          categoryHtml({ seller, categoryName, subcategoryName, products }),
+        );
       })
       .catch(() => next());
   }

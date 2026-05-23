@@ -67,6 +67,17 @@ function emptySitemapXml() {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>`;
 }
 
+function slugifyCategorySegment(str) {
+  if (!str) return "";
+  return String(str)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^\w\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function buildShopUrl(shopName) {
   if (SHOP_URL_MODE === "path") {
     return `${ROOT_CANONICAL_URL}/shop/${encodeURIComponent(shopName)}`;
@@ -79,6 +90,19 @@ function buildProductUrl(shopName, productId) {
     return `${ROOT_CANONICAL_URL}/shop/${encodeURIComponent(shopName)}/p/${encodeURIComponent(String(productId))}`;
   }
   return `${CANONICAL_PROTOCOL}://${shopName}.${BASE_DOMAIN}/p/${encodeURIComponent(String(productId))}`;
+}
+
+function buildCategoryUrl(shopName, categorySlug, subcategorySlug = null) {
+  const baseUrl =
+    SHOP_URL_MODE === "path"
+      ? `${ROOT_CANONICAL_URL}/shop/${encodeURIComponent(shopName)}`
+      : `${CANONICAL_PROTOCOL}://${shopName}.${BASE_DOMAIN}`;
+
+  if (subcategorySlug) {
+    return `${baseUrl}/c/${categorySlug}/${subcategorySlug}`;
+  }
+
+  return `${baseUrl}/c/${categorySlug}`;
 }
 
 function buildUrlNode({ loc, lastmod, changefreq, priority }) {
@@ -97,7 +121,13 @@ function generateSitemapXml(entries) {
 async function fetchGlobalSitemapRows() {
   const [sellers, products] = await Promise.all([
     Seller.findAll({
-      attributes: ["id", "shop_name", "updatedAt"],
+      attributes: [
+        "id",
+        "shop_name",
+        "updatedAt",
+        "categories",
+        "subcategories_map",
+      ],
       where: {
         shop_name: {
           [Op.ne]: null,
@@ -117,7 +147,13 @@ async function fetchGlobalSitemapRows() {
 async function fetchSubdomainSitemapRows(shopName) {
   const seller = await Seller.findOne({
     where: { shop_name: shopName },
-    attributes: ["id", "shop_name", "updatedAt"],
+    attributes: [
+      "id",
+      "shop_name",
+      "updatedAt",
+      "categories",
+      "subcategories_map",
+    ],
     raw: true,
   });
 
@@ -159,6 +195,43 @@ router.get("/sitemap.xml", async (req, res) => {
           changefreq: "weekly",
           priority: "0.9",
         },
+        ...(Array.isArray(seller.categories) ? seller.categories : [])
+          .map((categoryName) => {
+            const categorySlug = slugifyCategorySegment(categoryName);
+            if (!categorySlug) return null;
+
+            return {
+              loc: buildCategoryUrl(seller.shop_name, categorySlug),
+              lastmod: toLastmod(seller.updatedAt),
+              changefreq: "weekly",
+              priority: "0.7",
+            };
+          })
+          .filter(Boolean),
+        ...Object.entries(seller.subcategories_map || {}).flatMap(
+          ([categoryName, subcategories]) => {
+            const categorySlug = slugifyCategorySegment(categoryName);
+            if (!categorySlug || !Array.isArray(subcategories)) return [];
+
+            return subcategories
+              .map((subcategoryName) => {
+                const subcategorySlug = slugifyCategorySegment(subcategoryName);
+                if (!subcategorySlug) return null;
+
+                return {
+                  loc: buildCategoryUrl(
+                    seller.shop_name,
+                    categorySlug,
+                    subcategorySlug,
+                  ),
+                  lastmod: toLastmod(seller.updatedAt),
+                  changefreq: "weekly",
+                  priority: "0.6",
+                };
+              })
+              .filter(Boolean);
+          },
+        ),
         ...products
           .filter((p) => p.id)
           .map((p) => ({
@@ -187,6 +260,53 @@ router.get("/sitemap.xml", async (req, res) => {
         priority: "0.8",
       }));
 
+    const categoryEntries = sellers.flatMap((seller) => {
+      if (!seller.shop_name) return [];
+
+      const directCategoryEntries = (
+        Array.isArray(seller.categories) ? seller.categories : []
+      )
+        .map((categoryName) => {
+          const categorySlug = slugifyCategorySegment(categoryName);
+          if (!categorySlug) return null;
+
+          return {
+            loc: buildCategoryUrl(seller.shop_name, categorySlug),
+            lastmod: toLastmod(seller.updatedAt),
+            changefreq: "weekly",
+            priority: "0.7",
+          };
+        })
+        .filter(Boolean);
+
+      const subcategoryEntries = Object.entries(
+        seller.subcategories_map || {},
+      ).flatMap(([categoryName, subcategories]) => {
+        const categorySlug = slugifyCategorySegment(categoryName);
+        if (!categorySlug || !Array.isArray(subcategories)) return [];
+
+        return subcategories
+          .map((subcategoryName) => {
+            const subcategorySlug = slugifyCategorySegment(subcategoryName);
+            if (!subcategorySlug) return null;
+
+            return {
+              loc: buildCategoryUrl(
+                seller.shop_name,
+                categorySlug,
+                subcategorySlug,
+              ),
+              lastmod: toLastmod(seller.updatedAt),
+              changefreq: "weekly",
+              priority: "0.6",
+            };
+          })
+          .filter(Boolean);
+      });
+
+      return [...directCategoryEntries, ...subcategoryEntries];
+    });
+
     const productEntries = products
       .map((p) => {
         const seller = sellerMap.get(p.seller_id);
@@ -201,7 +321,15 @@ router.get("/sitemap.xml", async (req, res) => {
       })
       .filter(Boolean);
 
-    return res.status(200).send(generateSitemapXml([...sellerEntries, ...productEntries]));
+    return res
+      .status(200)
+      .send(
+        generateSitemapXml([
+          ...sellerEntries,
+          ...categoryEntries,
+          ...productEntries,
+        ]),
+      );
   } catch (error) {
     console.error("❌ Sitemap generation failed:", error);
     // Production safety: return a valid empty sitemap instead of failing.
