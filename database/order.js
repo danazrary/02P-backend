@@ -35,6 +35,11 @@ const Order = sequelize.define(
       type: DataTypes.TEXT,
       allowNull: true,
     },
+    customer_contact_preference: {
+      type: DataTypes.ENUM("whatsapp", "viber", "call"),
+      allowNull: false,
+      defaultValue: "whatsapp",
+    },
     payment_method: {
       type: DataTypes.ENUM("COD", "Card"),
       defaultValue: "COD",

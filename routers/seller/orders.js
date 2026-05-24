@@ -5,8 +5,84 @@ import Order from "../../database/order.js";
 import OrderItem from "../../database/orderItem.js";
 import Seller from "../../database/seller.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
+import { notifySellerNewOrder } from "../../utils/webPush.js";
+import { normalizeUiSettings } from "../../utils/uiSettings.js";
 
 const router = Router();
+
+const IRAQ_DELIVERY_CITY_KEYS = [
+  "Baghdad",
+  "Basra",
+  "Mosul",
+  "Erbil",
+  "Sulaymaniyah",
+  "Duhok",
+  "Kirkuk",
+  "Halabja",
+  "Karbala",
+  "Najaf",
+  "Anbar",
+  "Babil",
+  "Diyala",
+  "Saladin",
+  "Wasit",
+  "Muthanna",
+  "Qadisiyyah",
+  "Thi Qar",
+  "Maysan",
+];
+
+const IRAQ_DELIVERY_CITY_ALIASES = {
+  بغداد: "Baghdad",
+  بەغدا: "Baghdad",
+  البصرة: "Basra",
+  بەسرە: "Basra",
+  الموصل: "Mosul",
+  مووسڵ: "Mosul",
+  أربيل: "Erbil",
+  هەولێر: "Erbil",
+  السليمانية: "Sulaymaniyah",
+  سلێمانی: "Sulaymaniyah",
+  دهوك: "Duhok",
+  دهۆک: "Duhok",
+  كركوك: "Kirkuk",
+  کەرکووک: "Kirkuk",
+  حلبجة: "Halabja",
+  هەڵەبجە: "Halabja",
+  كربلاء: "Karbala",
+  کەربەلا: "Karbala",
+  النجف: "Najaf",
+  نەجەف: "Najaf",
+  الأنبار: "Anbar",
+  ئەنبار: "Anbar",
+  بابل: "Babil",
+  ديالى: "Diyala",
+  دیالە: "Diyala",
+  "صلاح الدين": "Saladin",
+  سەلاحەدین: "Saladin",
+  واسط: "Wasit",
+  واسیت: "Wasit",
+  المثنى: "Muthanna",
+  موسەنا: "Muthanna",
+  القادسية: "Qadisiyyah",
+  قادسیە: "Qadisiyyah",
+  "ذي قار": "Thi Qar",
+  زیقار: "Thi Qar",
+  ميسان: "Maysan",
+  میسان: "Maysan",
+};
+
+function normalizeDeliveryCityKey(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return "";
+
+  const direct = IRAQ_DELIVERY_CITY_KEYS.find(
+    (city) => city.toLowerCase() === raw.toLowerCase(),
+  );
+  if (direct) return direct;
+
+  return IRAQ_DELIVERY_CITY_ALIASES[raw] || "";
+}
 
 function isMissingOrderItemOptionalColumnError(error) {
   const message = String(error?.message || "").toLowerCase();
@@ -34,6 +110,16 @@ function getMissingOptionalColumns(error) {
   }
 
   return missing;
+}
+
+function isMissingOrderCustomerContactPreferenceColumnError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    message.includes("customer_contact_preference") &&
+    (message.includes("unknown column") ||
+      message.includes("doesn't exist") ||
+      message.includes("no such column"))
+  );
 }
 
 function parseObjectInput(value) {
@@ -91,7 +177,10 @@ async function generateOrderId() {
   const rnd = Math.floor(10 + Math.random() * 90);
   const candidate = `ORD-${ts}${rnd}`;
 
-  const existing = await Order.findOne({ where: { order_id: candidate } });
+  const existing = await Order.findOne({
+    where: { order_id: candidate },
+    attributes: ["id"],
+  });
   if (existing) return generateOrderId(); // retry on collision (extremely rare)
   return candidate;
 }
@@ -159,6 +248,7 @@ router.post("/orders/create", async (req, res) => {
       customer_phone,
       customer_city,
       customer_location_detail,
+      customer_contact_preference,
       currency,
       payment_method = "COD",
       items,
@@ -193,6 +283,16 @@ router.post("/orders/create", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "payment_method must be COD or Card",
+      });
+    }
+
+    if (
+      customer_contact_preference !== undefined &&
+      !["whatsapp", "viber", "call"].includes(customer_contact_preference)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "customer_contact_preference must be whatsapp, viber, or call",
       });
     }
 
@@ -238,9 +338,26 @@ router.post("/orders/create", async (req, res) => {
         .reduce((sum, i) => sum + i.total_price, 0)
         .toFixed(2),
     );
-    const parsedDelivery = Math.max(
+    const normalizedUiSettings = normalizeUiSettings(seller.ui_settings);
+    const normalizedCityKey = normalizeDeliveryCityKey(customer_city);
+    const configuredDelivery = normalizedCityKey
+      ? Number(
+          normalizedUiSettings.deliveryFees?.fees?.[normalizedCityKey] || 0,
+        )
+      : 0;
+    const requestedDelivery = Math.max(
       0,
       parseFloat(Number(delivery_fee).toFixed(2)),
+    );
+    const parsedDelivery = Math.max(
+      0,
+      parseFloat(
+        Number(
+          Number.isFinite(configuredDelivery) && configuredDelivery > 0
+            ? configuredDelivery
+            : requestedDelivery,
+        ).toFixed(2),
+      ),
     );
     const parsedDiscount = Math.max(0, parseFloat(Number(discount).toFixed(2)));
     const total_price = parseFloat(
@@ -253,29 +370,34 @@ router.post("/orders/create", async (req, res) => {
     const createOrderTransaction = async (
       withVariantSnapshot = true,
       withSelectedOptions = true,
+      withCustomerContactPreference = true,
     ) =>
       sequelize.transaction(async (t) => {
-        const newOrder = await Order.create(
-          {
-            order_id,
-            seller_id: Number(seller_id),
-            customer_name: String(customer_name).trim().slice(0, 150),
-            customer_phone: String(customer_phone).trim().slice(0, 30),
-            customer_city: String(customer_city).trim().slice(0, 100),
-            customer_location_detail: customer_location_detail
-              ? String(customer_location_detail).trim()
-              : null,
-            payment_method,
-            currency,
-            subtotal,
-            delivery_fee: parsedDelivery,
-            discount: parsedDiscount,
-            total_price,
-            status: "pending",
-            notes: notes ? String(notes).trim() : null,
-          },
-          { transaction: t },
-        );
+        const createPayload = {
+          order_id,
+          seller_id: Number(seller_id),
+          customer_name: String(customer_name).trim().slice(0, 150),
+          customer_phone: String(customer_phone).trim().slice(0, 30),
+          customer_city: String(customer_city).trim().slice(0, 100),
+          customer_location_detail: customer_location_detail
+            ? String(customer_location_detail).trim()
+            : null,
+          payment_method,
+          currency,
+          subtotal,
+          delivery_fee: parsedDelivery,
+          discount: parsedDiscount,
+          total_price,
+          status: "pending",
+          notes: notes ? String(notes).trim() : null,
+        };
+
+        if (withCustomerContactPreference) {
+          createPayload.customer_contact_preference =
+            customer_contact_preference || "whatsapp";
+        }
+
+        const newOrder = await Order.create(createPayload, { transaction: t });
 
         const itemRows = parsedItems.map((item) => {
           const base = {
@@ -298,16 +420,34 @@ router.post("/orders/create", async (req, res) => {
 
     let order;
     try {
-      order = await createOrderTransaction(true, true);
+      order = await createOrderTransaction(true, true, true);
     } catch (error) {
-      if (!isMissingOrderItemOptionalColumnError(error)) {
+      if (
+        !isMissingOrderItemOptionalColumnError(error) &&
+        !isMissingOrderCustomerContactPreferenceColumnError(error)
+      ) {
         throw error;
       }
+
+      const withoutCustomerContactPreference =
+        isMissingOrderCustomerContactPreferenceColumnError(error);
       const missing = getMissingOptionalColumns(error);
+
       order = await createOrderTransaction(
         !missing.variant_options_snapshot,
         !missing.selected_options,
+        !withoutCustomerContactPreference,
       );
+    }
+
+    try {
+      const pushResult = await notifySellerNewOrder({ seller, order });
+      console.log(
+        `[orders] Push notify result for order=${order.order_id}: ${JSON.stringify(pushResult)}`,
+      );
+    } catch (notifyError) {
+      // Push delivery failure must never block order creation.
+      console.error("Order push notification failed:", notifyError);
     }
 
     return res.status(201).json({
@@ -365,6 +505,26 @@ router.get("/orders", jwtVerifySellerToken, async (req, res) => {
       withSelectedOptions = true,
     ) => ({
       where,
+      attributes: [
+        "id",
+        "order_id",
+        "seller_id",
+        "customer_name",
+        "customer_phone",
+        "customer_city",
+        "customer_location_detail",
+        "customer_contact_preference",
+        "payment_method",
+        "currency",
+        "subtotal",
+        "delivery_fee",
+        "discount",
+        "total_price",
+        "status",
+        "notes",
+        "createdAt",
+        "updatedAt",
+      ],
       include: [
         {
           model: OrderItem,
@@ -532,6 +692,26 @@ router.get("/orders/:orderId", jwtVerifySellerToken, async (req, res) => {
       withSelectedOptions = true,
     ) => ({
       where: { id: orderId, seller_id: sellerId },
+      attributes: [
+        "id",
+        "order_id",
+        "seller_id",
+        "customer_name",
+        "customer_phone",
+        "customer_city",
+        "customer_location_detail",
+        "customer_contact_preference",
+        "payment_method",
+        "currency",
+        "subtotal",
+        "delivery_fee",
+        "discount",
+        "total_price",
+        "status",
+        "notes",
+        "createdAt",
+        "updatedAt",
+      ],
       include: [
         {
           model: OrderItem,
@@ -615,6 +795,7 @@ router.put(
 
       const order = await Order.findOne({
         where: { id: orderId, seller_id: sellerId },
+        attributes: ["id", "order_id", "seller_id", "status"],
       });
 
       if (!order) {

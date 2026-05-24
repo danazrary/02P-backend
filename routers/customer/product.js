@@ -78,6 +78,7 @@ router.post("/cart-products", async (req, res) => {
         "shop_image",
         "phone",
         "brand_color",
+        "ui_settings",
       ],
     });
 

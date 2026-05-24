@@ -19,6 +19,7 @@ import sellerCatalogRouter from "./seller/catalog.js";
 import sellerCategoryProductsRouter from "./seller/categoryProducts.js";
 import sellerOrdersRouter from "./seller/orders.js";
 import sellerShopSectionsRouter from "./seller/shopSections.js";
+import sellerPushNotificationsRouter from "./seller/pushNotifications.js";
 //customer routers
 import customerShopRouter from "./customer/shop.js";
 import customerProductRouter from "./customer/product.js";
@@ -47,6 +48,7 @@ router.use("/seller", sellerCatalogRouter);
 router.use("/seller", sellerCategoryProductsRouter);
 router.use("/seller", sellerOrdersRouter);
 router.use("/seller", sellerShopSectionsRouter);
+router.use("/seller", sellerPushNotificationsRouter);
 //customer routers
 router.use("/customer", customerProductRouter);
 router.use("/customer", customerQuestionsRouter);

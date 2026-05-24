@@ -16,6 +16,7 @@ import ProductImage from "./productImages.js";
 import SellerCategory from "./sellerCategory.js";
 import Order from "./order.js";
 import OrderItem from "./orderItem.js";
+import SellerPushSubscription from "./sellerPushSubscription.js";
 
 /* ============================
    ASSOCIATIONS
@@ -68,6 +69,16 @@ Order.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
 Order.hasMany(OrderItem, { foreignKey: "order_id", as: "items" });
 OrderItem.belongsTo(Order, { foreignKey: "order_id", as: "order" });
 
+// Seller push subscriptions: one seller can have multiple browsers/devices.
+Seller.hasMany(SellerPushSubscription, {
+  foreignKey: "seller_id",
+  as: "pushSubscriptions",
+});
+SellerPushSubscription.belongsTo(Seller, {
+  foreignKey: "seller_id",
+  as: "seller",
+});
+
 /* Seller.hasMany(SellerPlan, { foreignKey: "seller_id" });
 SellerPlan.belongsTo(Seller, { foreignKey: "seller_id" });
 
@@ -97,6 +108,7 @@ export {
   SellerCategory,
   Order,
   OrderItem,
+  SellerPushSubscription,
 };
 
 /* import { Sequelize } from "sequelize";

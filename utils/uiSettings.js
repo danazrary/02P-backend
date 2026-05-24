@@ -20,6 +20,30 @@ export const DEFAULT_UI_SETTINGS = {
     enabled: false,
     imageKey: null,
   },
+  deliveryFees: {
+    scope: "kurdistan_4",
+    fees: {
+      Erbil: 0,
+      Sulaymaniyah: 0,
+      Duhok: 0,
+      Halabja: 0,
+      Baghdad: 0,
+      Basra: 0,
+      Mosul: 0,
+      Kirkuk: 0,
+      Karbala: 0,
+      Najaf: 0,
+      Anbar: 0,
+      Babil: 0,
+      Diyala: 0,
+      Saladin: 0,
+      Wasit: 0,
+      Muthanna: 0,
+      Qadisiyyah: 0,
+      "Thi Qar": 0,
+      Maysan: 0,
+    },
+  },
 };
 
 function clamp(value, min, max) {
@@ -42,9 +66,33 @@ function normalizePages(rawPages) {
         : defaults.productDetails,
     dashboard:
       src.dashboard !== undefined ? Boolean(src.dashboard) : defaults.dashboard,
-    category: src.category !== undefined ? Boolean(src.category) : defaults.category,
+    category:
+      src.category !== undefined ? Boolean(src.category) : defaults.category,
     search: src.search !== undefined ? Boolean(src.search) : defaults.search,
-    profile: src.profile !== undefined ? Boolean(src.profile) : defaults.profile,
+    profile:
+      src.profile !== undefined ? Boolean(src.profile) : defaults.profile,
+  };
+}
+
+function normalizeDeliveryFees(rawDeliveryFees) {
+  const src = rawDeliveryFees || {};
+  const defaults = DEFAULT_UI_SETTINGS.deliveryFees;
+  const srcFees = src.fees || {};
+
+  const fees = Object.keys(defaults.fees).reduce((acc, city) => {
+    acc[city] = clamp(
+      toNumber(srcFees[city], defaults.fees[city]),
+      0,
+      10000000,
+    );
+    return acc;
+  }, {});
+
+  const scope = src.scope === "all_iraq" ? "all_iraq" : "kurdistan_4";
+
+  return {
+    scope,
+    fees,
   };
 }
 
@@ -53,6 +101,7 @@ export function normalizeUiSettings(raw) {
   const flash = src.flashDiscountBanner || {};
   const discounts = src.discountsSection || {};
   const hero = src.heroSection || {};
+  const delivery = src.deliveryFees || {};
 
   return {
     flashDiscountBanner: {
@@ -61,7 +110,10 @@ export function normalizeUiSettings(raw) {
           ? Boolean(flash.enabled)
           : DEFAULT_UI_SETTINGS.flashDiscountBanner.enabled,
       fontSize: clamp(
-        toNumber(flash.fontSize, DEFAULT_UI_SETTINGS.flashDiscountBanner.fontSize),
+        toNumber(
+          flash.fontSize,
+          DEFAULT_UI_SETTINGS.flashDiscountBanner.fontSize,
+        ),
         14,
         40,
       ),
@@ -93,5 +145,6 @@ export function normalizeUiSettings(raw) {
           ? hero.imageKey
           : null,
     },
+    deliveryFees: normalizeDeliveryFees(delivery),
   };
 }

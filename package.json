@@ -13,6 +13,7 @@
     "start:prod": "NODE_ENV=production node server.js --env=https",
     "dev": "nodemon server.js",
     "dev:https": "nodemon server.js --env=https",
+    "push:vapid": "node utils/generateVapidKeys.js",
     "pm2:start": "pm2 start server.js --name backend --node-args=\"--env=https\" --env production",
     "pm2:stop": "pm2 stop backend",
     "pm2:restart": "pm2 restart backend",
@@ -31,8 +32,8 @@
     "dayjs": "^1.11.20",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
-    "express-session": "^1.18.2",
     "express-rate-limit": "^8.2.1",
+    "express-session": "^1.18.2",
     "helmet": "^8.1.0",
     "hpp": "^0.2.3",
     "jsonwebtoken": "^9.0.2",
@@ -49,6 +50,7 @@
     "sequelize": "^6.37.7",
     "sharp": "^0.34.5",
     "tslib": "^2.8.1",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "web-push": "^3.6.7"
   }
 }
