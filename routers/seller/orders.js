@@ -4,6 +4,7 @@ import sequelize from "../../database/sequelize.js";
 import Order from "../../database/order.js";
 import OrderItem from "../../database/orderItem.js";
 import Seller from "../../database/seller.js";
+import Report from "../../database/report.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { notifySellerNewOrder } from "../../utils/webPush.js";
 import { normalizeUiSettings } from "../../utils/uiSettings.js";
@@ -438,6 +439,20 @@ router.post("/orders/create", async (req, res) => {
         !missing.selected_options,
         !withoutCustomerContactPreference,
       );
+    }
+
+    // 📊 Increment orders count in daily report (non-blocking)
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const [report, created] = await Report.findOrCreate({
+        where: { seller_id: Number(seller_id), report_date: today },
+        defaults: { orders: 1 },
+      });
+      if (!created) {
+        await report.increment("orders", { by: 1 });
+      }
+    } catch (reportError) {
+      console.error("Report increment failed:", reportError);
     }
 
     try {

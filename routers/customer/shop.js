@@ -32,12 +32,6 @@ const DEFAULT_CONFIGS = {
   discount: {},
 };
 
-function isNewDay(lastVisit) {
-  const last = new Date(lastVisit).toDateString();
-  const today = new Date().toDateString();
-  return last !== today;
-}
-
 function buildUiSettingsFromSections(shopSections) {
   const sectionMap = {};
 
@@ -119,49 +113,6 @@ router.get("/:shopName", detectSeller, async (req, res) => {
     }
 
     const sellerId = seller.id;
-    const today = new Date().toISOString().split("T")[0];
-
-    const visitCookieName = `shop_visit_${sellerId}`;
-    const lastVisit = req.cookies?.[visitCookieName];
-
-    let shouldIncrease = false;
-
-    if (!req.isSeller) {
-      if (!lastVisit) {
-        shouldIncrease = true;
-      } else if (isNewDay(Number(lastVisit))) {
-        shouldIncrease = true;
-      }
-    }
-
-    if (shouldIncrease) {
-      const [report, created] = await Report.findOrCreate({
-        where: {
-          seller_id: sellerId,
-          report_date: today,
-        },
-        defaults: {
-          shopVisitors: 1,
-        },
-      });
-
-      if (!created) {
-        await report.increment("shopVisitors", { by: 1 });
-      }
-
-      const visitCookieOpts = {
-        maxAge: 24 * 60 * 60 * 1000,
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-      };
-
-      if (process.env.NODE_ENV === "production") {
-        visitCookieOpts.domain = `.${process.env.BASE_DOMAIN || "dwkanlink.com"}`;
-      }
-
-      res.cookie(visitCookieName, Date.now(), visitCookieOpts);
-    }
 
     let sellerPlanRecord = await SellerPlan.findOne({
       where: { seller_id: sellerId },
@@ -393,6 +344,47 @@ router.get("/:shopName/search", async (req, res) => {
       error: true,
       message: "Server error",
     });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────
+   POST /api/customer/track-visit
+   Called by the frontend once per page-load session to record
+   a shop visitor. Deduplication is handled by the frontend
+   using a module-level in-memory Set (resets on page refresh).
+───────────────────────────────────────────────────────────── */
+router.post("/track-visit", detectSeller, async (req, res) => {
+  try {
+    // Skip if the requester is the seller viewing their own shop
+    if (req.isSeller) {
+      return res.status(200).json({ success: true, skipped: true });
+    }
+
+    const { seller_id } = req.body;
+    if (!seller_id || !Number.isInteger(Number(seller_id))) {
+      return res
+        .status(400)
+        .json({ success: false, message: "seller_id is required" });
+    }
+
+    const today = new Date().toISOString().split("T")[0];
+
+    const [report, created] = await Report.findOrCreate({
+      where: {
+        seller_id: Number(seller_id),
+        report_date: today,
+      },
+      defaults: { shopVisitors: 1 },
+    });
+
+    if (!created) {
+      await report.increment("shopVisitors", { by: 1 });
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("track-visit error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
