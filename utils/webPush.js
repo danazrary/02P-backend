@@ -84,7 +84,7 @@ export async function saveSellerPushSubscription({ sellerId, subscription }) {
   try {
     await SellerPushSubscription.upsert({
       seller_id: Number(sellerId),
-      endpoint,
+        endpoint: subscription.endpoint,
       subscription,
     });
   } catch (error) {
