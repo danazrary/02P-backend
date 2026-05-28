@@ -18,6 +18,11 @@ const SellerPushSubscription = sequelize.define(
       allowNull: false,
       unique: true,
     },
+    endpoint_hash: {
+      type: DataTypes.STRING(64),
+      allowNull: false,
+      unique: true,
+    },
     subscription: {
       type: DataTypes.JSON,
       allowNull: false,
@@ -28,6 +33,7 @@ const SellerPushSubscription = sequelize.define(
     indexes: [
       { fields: ["seller_id"] },
       { unique: true, fields: ["endpoint"] },
+      { unique: true, fields: ["endpoint_hash"] },
     ],
   },
 );

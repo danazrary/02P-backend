@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import webpush from "web-push";
 import SellerPushSubscription from "../database/sellerPushSubscription.js";
 
@@ -80,11 +81,16 @@ export async function saveSellerPushSubscription({ sellerId, subscription }) {
   }
 
   const endpoint = subscription.endpoint;
+  const endpoint_hash = crypto
+    .createHash("sha256")
+    .update(endpoint)
+    .digest("hex");
 
   try {
     await SellerPushSubscription.upsert({
       seller_id: Number(sellerId),
-        endpoint: subscription.endpoint,
+      endpoint,
+      endpoint_hash,
       subscription,
     });
   } catch (error) {
