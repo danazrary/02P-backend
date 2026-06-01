@@ -29,6 +29,11 @@ module.exports = {
         allowNull: false,
         unique: true,
       },
+      endpoint_hash: {
+        type: Sequelize.STRING(64),
+        allowNull: false,
+        unique: true,
+      },
       subscription: {
         type: Sequelize.JSON,
         allowNull: false,
