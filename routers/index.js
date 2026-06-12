@@ -2,6 +2,7 @@ import { Router } from "express";
 //admin routers
 import adminControlCenterRouter from "./admin/ControlCenter.js";
 import adminAuthRouter from "./admin/auth.js";
+import adminHelpRouter from "./admin/help.js";
 //seller routers
 import sellerAuthRouter from "./seller/auth.js";
 import sellerSettingsRouter from "./seller/setting.js";
@@ -26,11 +27,13 @@ import customerProductRouter from "./customer/product.js";
 import customerQuestionsRouter from "./customer/questions.js";
 import customerSearchRouter from "./customer/search.js";
 import customerOrdersRouter from "./customer/orders.js";
+import helpRouter from "./help.js";
 
 const router = Router();
 //admin routers
 router.use("/admin/control-center", adminControlCenterRouter);
 router.use("/admin/auth", adminAuthRouter);
+router.use("/admin/help", adminHelpRouter);
 //seller routers
 router.use("/seller/auth", sellerAuthRouter);
 router.use("/seller/setting", sellerSettingsRouter);
@@ -55,5 +58,6 @@ router.use("/customer", customerQuestionsRouter);
 router.use("/customer", customerSearchRouter);
 router.use("/customer", customerOrdersRouter);
 router.use("/customer", customerShopRouter);
+router.use("/help", helpRouter);
 
 export default router;

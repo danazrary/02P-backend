@@ -17,6 +17,10 @@ import SellerCategory from "./sellerCategory.js";
 import Order from "./order.js";
 import OrderItem from "./orderItem.js";
 import SellerPushSubscription from "./sellerPushSubscription.js";
+import HelpItem from "./helpItem.js";
+import HelpTranslation from "./helpTranslation.js";
+import HelpFeedback from "./helpFeedback.js";
+import HelpAnalytics from "./helpAnalytics.js";
 
 /* ============================
    ASSOCIATIONS
@@ -79,6 +83,56 @@ SellerPushSubscription.belongsTo(Seller, {
   as: "seller",
 });
 
+// Help Center: recursive help tree with optional translations per language.
+HelpItem.hasMany(HelpItem, {
+  foreignKey: "parent_id",
+  as: "children",
+});
+HelpItem.belongsTo(HelpItem, {
+  foreignKey: "parent_id",
+  as: "parent",
+});
+HelpItem.hasMany(HelpTranslation, {
+  foreignKey: "help_item_id",
+  as: "translations",
+});
+HelpTranslation.belongsTo(HelpItem, {
+  foreignKey: "help_item_id",
+  as: "item",
+});
+HelpItem.hasMany(HelpFeedback, {
+  foreignKey: "help_item_id",
+  as: "feedback",
+});
+HelpFeedback.belongsTo(HelpItem, {
+  foreignKey: "help_item_id",
+  as: "item",
+});
+HelpItem.hasMany(HelpAnalytics, {
+  foreignKey: "help_item_id",
+  as: "analytics",
+});
+HelpAnalytics.belongsTo(HelpItem, {
+  foreignKey: "help_item_id",
+  as: "item",
+});
+Seller.hasMany(HelpFeedback, {
+  foreignKey: "seller_id",
+  as: "helpFeedback",
+});
+HelpFeedback.belongsTo(Seller, {
+  foreignKey: "seller_id",
+  as: "seller",
+});
+Seller.hasMany(HelpAnalytics, {
+  foreignKey: "seller_id",
+  as: "helpAnalytics",
+});
+HelpAnalytics.belongsTo(Seller, {
+  foreignKey: "seller_id",
+  as: "seller",
+});
+
 /* Seller.hasMany(SellerPlan, { foreignKey: "seller_id" });
 SellerPlan.belongsTo(Seller, { foreignKey: "seller_id" });
 
@@ -109,6 +163,10 @@ export {
   Order,
   OrderItem,
   SellerPushSubscription,
+  HelpItem,
+  HelpTranslation,
+  HelpFeedback,
+  HelpAnalytics,
 };
 
 /* import { Sequelize } from "sequelize";
