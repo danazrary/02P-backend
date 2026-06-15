@@ -796,4 +796,230 @@ router.post("/get-sellers-usage", adminAuth, async (req, res) => {
   }
 });
 
+/* ========================================
+   SUBSCRIPTION EXTENSION MANAGEMENT ROUTES
+======================================== */
+
+// Search sellers by shop_name, seller_name, email, or seller_id
+router.post(
+  "/extend-subscription/search-sellers",
+  adminAuth,
+  async (req, res) => {
+    try {
+      const { query } = req.body;
+
+      if (!query || query.trim() === "") {
+        return res.json({
+          success: true,
+          data: [],
+          count: 0,
+        });
+      }
+
+      const searchTerm = `%${query}%`;
+
+      const sellers = await Seller.findAll({
+        where: {
+          [Op.or]: [
+            { shop_name: { [Op.like]: searchTerm } },
+            { name: { [Op.like]: searchTerm } },
+            { email: { [Op.like]: searchTerm } },
+            { id: isNaN(query) ? undefined : parseInt(query, 10) },
+          ],
+        },
+        attributes: ["id", "name", "shop_name", "email"],
+        limit: 15,
+        raw: true,
+      });
+
+      return res.json({
+        success: true,
+        data: sellers,
+        count: sellers.length,
+      });
+    } catch (err) {
+      console.error("search-sellers error:", err);
+      return res.status(500).json({
+        success: false,
+        error: true,
+        message: "Server error",
+      });
+    }
+  },
+);
+
+// Get seller's subscription details
+router.post(
+  "/extend-subscription/get-seller-subscription",
+  adminAuth,
+  async (req, res) => {
+    try {
+      const { seller_id } = req.body;
+
+      if (!seller_id) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: "Seller ID is required",
+        });
+      }
+
+      const seller = await Seller.findByPk(seller_id, {
+        attributes: ["id", "name", "shop_name", "email"],
+      });
+
+      if (!seller) {
+        return res.status(404).json({
+          success: false,
+          error: true,
+          message: "Seller not found",
+        });
+      }
+
+      // Get latest subscription
+      const sellerPlan = await SellerPlan.findOne({
+        where: { seller_id },
+        include: [
+          {
+            model: Plan,
+            as: "plan",
+            attributes: ["name"],
+          },
+        ],
+        order: [["end_date", "DESC"]],
+      });
+
+      if (!sellerPlan) {
+        return res.json({
+          success: true,
+          seller: seller.toJSON(),
+          subscription: null,
+          hasSubscription: false,
+        });
+      }
+
+      const now = new Date();
+      const isActive = sellerPlan.end_date > now;
+      const remainingDays = isActive
+        ? Math.ceil((sellerPlan.end_date - now) / (1000 * 60 * 60 * 24))
+        : 0;
+
+      return res.json({
+        success: true,
+        seller: seller.toJSON(),
+        subscription: {
+          planName: sellerPlan.plan?.name || "Unknown",
+          startDate: sellerPlan.start_date,
+          endDate: sellerPlan.end_date,
+          isActive,
+          remainingDays: remainingDays < 0 ? 0 : remainingDays,
+        },
+        hasSubscription: true,
+      });
+    } catch (err) {
+      console.error("get-seller-subscription error:", err);
+      return res.status(500).json({
+        success: false,
+        error: true,
+        message: "Server error",
+      });
+    }
+  },
+);
+
+// Extend seller subscription - Just update end_date
+router.post("/extend-subscription/extend-plan", adminAuth, async (req, res) => {
+  try {
+    const { seller_id, days_to_add } = req.body;
+
+    // Validation
+    if (!seller_id || !days_to_add) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Seller ID and days to add are required",
+      });
+    }
+
+    // Validate days_to_add is a positive number
+    const daysNumber = parseInt(days_to_add, 10);
+    if (isNaN(daysNumber) || daysNumber <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Days to add must be a positive number",
+      });
+    }
+
+    const seller = await Seller.findByPk(seller_id, {
+      attributes: ["id", "name", "shop_name"],
+    });
+
+    if (!seller) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "Seller not found",
+      });
+    }
+
+    // Get current subscription
+    const sellerPlan = await SellerPlan.findOne({
+      where: { seller_id },
+      order: [["end_date", "DESC"]],
+    });
+
+    if (!sellerPlan) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Seller has no active subscription",
+      });
+    }
+
+    const now = new Date();
+    const currentEndDate = new Date(sellerPlan.end_date);
+    const isActive = currentEndDate > now;
+
+    let newEndDate;
+
+    if (isActive) {
+      // If active, add days to current expiration
+      newEndDate = new Date(currentEndDate);
+      newEndDate.setDate(newEndDate.getDate() + parseInt(days_to_add, 10));
+    } else {
+      // If expired, add days to today
+      newEndDate = new Date(now);
+      newEndDate.setDate(newEndDate.getDate() + parseInt(days_to_add, 10));
+    }
+
+    newEndDate = toUTC(newEndDate);
+
+    // Update the plan - simple update, no logging table
+    await sellerPlan.update({
+      end_date: newEndDate,
+      status: true,
+    });
+
+    return res.json({
+      success: true,
+      error: false,
+      message: "Subscription extended successfully",
+      data: {
+        sellerName: seller.name,
+        previousExpirationDate: currentEndDate,
+        daysAdded: parseInt(days_to_add, 10),
+        newExpirationDate: newEndDate,
+      },
+    });
+  } catch (err) {
+    console.error("extend-plan error:", err);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
+  }
+});
+
 export default router;
