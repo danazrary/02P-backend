@@ -410,7 +410,23 @@ function normalizePlanValue(planName) {
     .replace(/\s+/g, " ");
 }
 
+function isFreeSellerPlan(plan) {
+  const normalizedPlan = normalizePlanValue(plan?.name);
+  return (
+    plan?.id === 1 ||
+    plan?.id === 30 ||
+    plan?.max_products === 15 ||
+    normalizedPlan === "free" ||
+    normalizedPlan === "free seller"
+  );
+}
+
 function getProductFieldLimit(plan) {
+  // Free plan (ID 30) - max 2 options
+  if (isFreeSellerPlan(plan)) {
+    return 2;
+  }
+
   const normalizedPlan = normalizePlanValue(plan?.name);
   const compactPlan = normalizedPlan.replace(/\s+/g, "");
   const isAdvancedPlan =
@@ -441,12 +457,23 @@ function validateVariantPriceCombinations(plan, variantPrices) {
 }
 
 function getProductImageLimits(plan) {
+  // Free plan (ID 30) - max 3 main images, no color/option images
+  if (isFreeSellerPlan(plan)) {
+    return {
+      mainImages: 3,
+      colorImages: 0,
+      totalImages: 3,
+      maxOptionsValues: 5, // Max 5 values per option
+    };
+  }
+
   const colorImages = getProductFieldLimit(plan);
 
   return {
     mainImages: 5,
     colorImages,
     totalImages: colorImages + 5,
+    maxOptionsValues: 0, // No limit for paid plans
   };
 }
 
@@ -650,6 +677,34 @@ function validateProductFieldLimits({
   throw planLimitError;
 }
 
+function validateProductOptionsLimits(plan, options = []) {
+  const fieldLimit = getProductFieldLimit(plan);
+  const imageLimits = getProductImageLimits(plan);
+  const optionGroups = Array.isArray(options) ? options : [];
+
+  if (optionGroups.length > fieldLimit) {
+    const err = new Error("Option group limit exceeded");
+    err.statusCode = 400;
+    err.clientMessage = `Your current seller plan allows up to ${fieldLimit} product options.`;
+    throw err;
+  }
+
+  if (imageLimits.maxOptionsValues > 0) {
+    const exceededGroup = optionGroups.find(
+      (group) =>
+        Array.isArray(group?.options) &&
+        group.options.length > imageLimits.maxOptionsValues,
+    );
+
+    if (exceededGroup) {
+      const err = new Error("Option values limit exceeded");
+      err.statusCode = 400;
+      err.clientMessage = `Your current seller plan allows up to ${imageLimits.maxOptionsValues} values for each product option.`;
+      throw err;
+    }
+  }
+}
+
 // Route to create product
 router.post(
   "/add-product",
@@ -804,6 +859,7 @@ router.post(
         customInputs: parsedCustomInputs,
         customInputsAr: parsedCustomInputsAr,
       });
+      validateProductOptionsLimits(plan, parsedOptions);
 
       if (parsedVariantPrices.length > 0) {
         validateVariantPriceCombinations(plan, parsedVariantPrices);
@@ -1282,6 +1338,7 @@ router.put(
       let finalOptionsPayload = parsedOptionsInput.provided
         ? parsedOptions
         : existingOptions;
+      validateProductOptionsLimits(plan, finalOptionsPayload);
       const uploadedOptionImages = await uploadFirstOptionGroupImagesToR2({
         sellerId,
         productId,

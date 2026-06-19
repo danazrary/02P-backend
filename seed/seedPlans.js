@@ -12,7 +12,17 @@ async function seedPlans() {
     }
 
     await Plan.bulkCreate([
-      // FREE
+      // FREE (with 15 products)
+      {
+        name: "free_with_15_products",
+        billing_cycle: "free",
+        price: 0,
+        duration_days: 0,
+        max_products: 15,
+        storage_limit_mb: 100,
+      },
+
+      // FREE (legacy - no products)
       {
         name: "free_seller",
         billing_cycle: "free",

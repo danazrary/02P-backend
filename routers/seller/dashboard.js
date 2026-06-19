@@ -549,4 +549,79 @@ router.post("/activate-trial", jwtVerifySellerToken, async (req, res) => {
   }
 });
 
+// Activate free plan for seller (Plan ID 30 only)
+router.post("/activate-free-plan", jwtVerifySellerToken, async (req, res) => {
+  try {
+    const { id } = req.user;
+    const { planId } = req.body;
+
+    // Security: Only allow plan ID 30 (free plan)
+    if (planId !== 30) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message:
+          "Invalid plan ID. Only plan ID 30 is allowed for free activation.",
+      });
+    }
+
+    // Verify plan exists and is the free plan
+    const freePlan = await Plan.findOne({
+      where: { id: 30 },
+    });
+
+    if (!freePlan) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "Free plan not found in database",
+      });
+    }
+
+    // Find seller's current plan
+    let sellerPlanRecord = await SellerPlan.findOne({
+      where: { seller_id: id },
+    });
+
+    if (!sellerPlanRecord) {
+      // Create new seller plan record if it doesn't exist
+      sellerPlanRecord = await SellerPlan.create({
+        seller_id: id,
+        plan_id: 30,
+        start_date: toUTC(new Date()),
+        end_date: toUTC(new Date("2099-12-31")),
+        is_trial: false,
+        status: true,
+      });
+    } else {
+      // Update existing plan record
+      await sellerPlanRecord.update({
+        plan_id: 30,
+        start_date: toUTC(new Date()),
+        end_date: toUTC(new Date("2099-12-31")),
+        is_trial: false,
+        status: true,
+      });
+    }
+
+    console.log(`✅ Activated free plan (ID 30) for seller ${id}`);
+
+    return res.status(200).json({
+      success: true,
+      error: false,
+      message: "Free plan activated successfully",
+      plan_id: 30,
+      plan_name: freePlan.name,
+      max_products: freePlan.max_products,
+    });
+  } catch (error) {
+    console.error("Error activating free plan:", error);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
+  }
+});
+
 export default router;
