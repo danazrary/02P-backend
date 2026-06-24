@@ -465,6 +465,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       storage_limit_mb: planRow?.storage_limit_mb ?? 0,
       storage_used_mb: parseFloat(storageUsedMb ?? 0),
       default_shop_lang: seller.default_shop_lang || "ku",
+      order_type: seller.order_type || "both",
       ui_settings: normalizeUiSettings(seller.ui_settings),
     });
   } catch (error) {

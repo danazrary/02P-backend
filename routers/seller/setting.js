@@ -153,7 +153,7 @@ router.post(
         email,
         bio,
       } = req.body;
-
+console.log("we are here:")
       if (!shopName || !sellerName || !whatsappNumber) {
         return res.status(400).json({
           success: false,
@@ -373,6 +373,7 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
       shopLocation: seller.shop_location || "",
       categories: seller.categories || [],
       defaultShopLang: seller.default_shop_lang || "ku",
+      orderType: seller.order_type || "both",
       uiSettings: normalizeUiSettings(seller.ui_settings),
     });
   } catch (err) {
@@ -402,6 +403,7 @@ router.post(
         bio,
         shopLocation,
         defaultShopLang,
+        orderType,
         uiSettings,
       } = req.body;
 
@@ -610,12 +612,27 @@ router.post(
       }
       // Handle default shop language update
       if (defaultShopLang !== undefined) {
-        const validLangs = ["ku", "ar"];
+        const validLangs = ["ku", "ar", "en"];
         const newLang = validLangs.includes(defaultShopLang)
           ? defaultShopLang
           : "ku";
         if (newLang !== seller.default_shop_lang) {
           updateData.default_shop_lang = newLang;
+        }
+      }
+
+      // Handle order type update
+      if (orderType !== undefined) {
+        const validOrderTypes = ["both", "whatsapp", "websystem"];
+        if (!validOrderTypes.includes(orderType)) {
+          return res.status(400).json({
+            success: false,
+            error: true,
+            message: "Invalid order type",
+          });
+        }
+        if (orderType !== seller.order_type) {
+          updateData.order_type = orderType;
         }
       }
       // 🟡 No changes detected

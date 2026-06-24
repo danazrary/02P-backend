@@ -23,7 +23,7 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 const router = Router();
 
-const SECTION_KEYS = ["hero", "flash_banner", "discount"];
+const SECTION_KEYS = ["hero", "flash_banner", "brands", "discount"];
 
 const DEFAULT_SECTION_CONFIGS = {
   hero: { items: [] },
@@ -33,8 +33,33 @@ const DEFAULT_SECTION_CONFIGS = {
     fontSize: "22px",
     viewMode: "home",
   },
+  brands: {
+    titleKu: "براندەکان",
+    titleAr: "العلامات التجارية",
+    titleEn: "Brands",
+    layout: "slider",
+    items: [],
+  },
   discount: {},
 };
+
+function normalizeBrandItems(items) {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .filter((item) => item?.isActive !== false && item?.logo)
+    .map((item, index) => ({
+      id: typeof item.id === "string" ? item.id : String(index),
+      name: typeof item.name === "string" ? item.name : "",
+      logo: typeof item.logo === "string" ? item.logo : "",
+      link: typeof item.link === "string" ? item.link : "",
+      isActive: true,
+      sortOrder: Number.isFinite(Number(item.sortOrder))
+        ? Number(item.sortOrder)
+        : index,
+    }))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
 
 function buildUiSettingsFromSections(shopSections) {
   const sectionMap = {};
@@ -82,10 +107,26 @@ async function getShopSections(sellerId) {
     const defaultConfig = DEFAULT_SECTION_CONFIGS[key];
 
     if (!row) {
+      if (key === "brands") return null;
       return {
         section_key: key,
         is_visible: true,
         config: defaultConfig,
+      };
+    }
+
+    if (key === "brands") {
+      const activeItems = normalizeBrandItems(row.config?.items);
+      if (row.is_visible !== true || activeItems.length === 0) return null;
+
+      return {
+        section_key: key,
+        is_visible: true,
+        config: {
+          ...defaultConfig,
+          ...(row.config || {}),
+          items: activeItems,
+        },
       };
     }
 
@@ -97,7 +138,7 @@ async function getShopSections(sellerId) {
         ...(row.config || {}),
       },
     };
-  });
+  }).filter(Boolean);
 }
 
 /**
@@ -140,6 +181,7 @@ router.get(
           "shop_location",
           "brand_color",
           "default_shop_lang",
+          "order_type",
           "categories",
           "subcategories_map",
           "category_images",
@@ -278,6 +320,7 @@ router.get(
           brand_color: seller.brand_color || null,
         },
         default_shop_lang: seller.default_shop_lang || "ku",
+        order_type: seller.order_type || "both",
         categories: seller.categories || [],
         subcategories_map: seller.subcategories_map || {},
         category_images: seller.category_images || {},
@@ -626,6 +669,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
         shop_location: seller.shop_location || null,
       },
       default_shop_lang: seller.default_shop_lang || "ku",
+      order_type: seller.order_type || "both",
       sellerPlan: plan ? plan.name : "Free",
       brand_color: seller.brand_color || null,
       categories: seller.categories || [],

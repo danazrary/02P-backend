@@ -130,7 +130,12 @@ const Seller = sequelize.define(
     default_shop_lang: {
       type: DataTypes.STRING,
       allowNull: false,
-      defaultValue: "ku", // "ku" = Kurdish, "ar" = Arabic
+      defaultValue: "ku", // shop/customer language: "ku", "ar", or "en"
+    },
+    order_type: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      defaultValue: "both", // "both" or "whatsapp" or "websystem"
     },
   },
   {
