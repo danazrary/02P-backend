@@ -22,6 +22,7 @@ import {
 import { getStoredAssetBytes } from "../../utils/sellerStorageUsage.js";
 import { createR2Multer, uploadToR2, deleteFromR2 } from "../../utils/r2.js";
 import { normalizeUiSettings } from "../../utils/uiSettings.js";
+import { getCategoryMap } from "../../utils/categoryTranslations.js";
 import { notifyGoogle } from "../../utils/googleIndexing.js";
 
 const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
@@ -371,7 +372,7 @@ router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
       socialLinks: seller.social_links || {},
       bio: seller.bio || "",
       shopLocation: seller.shop_location || "",
-      categories: seller.categories || [],
+      category_translations: getCategoryMap(seller),
       defaultShopLang: seller.default_shop_lang || "ku",
       orderType: seller.order_type || "both",
       uiSettings: normalizeUiSettings(seller.ui_settings),

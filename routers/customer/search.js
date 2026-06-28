@@ -3,8 +3,8 @@ import Product from "../../database/products.js";
 import Seller from "../../database/seller.js";
 import ProductImage from "../../database/productImages.js";
 import { Op } from "sequelize";
-import sequelize from "../../database/sequelize.js";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
+import { getCategoryMap } from "../../utils/categoryTranslations.js";
 
 const router = Router();
 
@@ -37,7 +37,7 @@ router.get("/search", async (req, res) => {
 
     const seller = await Seller.findOne({
       where: { shop_name: shopName },
-      attributes: ["id"],
+      attributes: ["id", "category_translations"],
     });
 
     if (!seller) {
@@ -51,23 +51,20 @@ router.get("/search", async (req, res) => {
 
     // ── Categories type: return distinct categories matching query ──
     if (type === "categories") {
-      const catWhere = { seller_id: sellerId };
-      if (trimmedQ.length >= 2) {
-        catWhere.category = { [Op.like]: `%${trimmedQ}%` };
-      }
-
-      const rows = await Product.findAll({
-        where: catWhere,
-        attributes: [
-          [sequelize.fn("DISTINCT", sequelize.col("category")), "category"],
-        ],
-        raw: true,
-      });
+      const normalizedQuery = trimmedQ.toLocaleLowerCase();
+      const rows = Object.entries(getCategoryMap(seller))
+        .filter(([key, value]) =>
+          !normalizedQuery ||
+          [key, value.ku, value.ar].some((text) =>
+            text?.toLocaleLowerCase().includes(normalizedQuery),
+          ),
+        )
+        .map(([key, value]) => ({ key, ...value }));
 
       return res.json({
         success: true,
         type: "categories",
-        results: rows.filter((r) => r.category).map((r) => r.category),
+        results: rows,
         total: rows.length,
         hasMore: false,
       });

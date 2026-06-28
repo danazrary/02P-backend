@@ -122,6 +122,11 @@ const Seller = sequelize.define(
       allowNull: true,
       defaultValue: null, // Map of category → subcategory[], e.g. {"phones": ["Samsung", "iPhone"]}
     },
+    category_translations: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: null, // Localized map; category/subcategory keys are stored on products.
+    },
     category_images: {
       type: DataTypes.JSON,
       allowNull: true,

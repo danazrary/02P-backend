@@ -13,6 +13,7 @@ import Product from "../database/products.js";
 import Seller from "../database/seller.js";
 import SellerOffer from "../database/sellerOffer.js";
 import { getImageAbsolutePath } from "./uploadHandler.js";
+import { getCategoryMap } from "./categoryTranslations.js";
 
 const BYTES_PER_MB = 1024 * 1024;
 
@@ -135,16 +136,16 @@ export async function ensureSellerStorageUsage(sellerId, plan, options = {}) {
 
   // 3. Seller-level assets (shop image + category images)
   const seller = await Seller.findByPk(sellerId, {
-    attributes: ["shop_image", "category_images"],
+    attributes: ["shop_image", "category_translations"],
   });
 
   if (seller?.shop_image) {
     totalBytes += await getStoredAssetBytes(seller.shop_image);
   }
 
-  const categoryImages = Object.values(seller?.category_images || {}).filter(
-    Boolean,
-  );
+  const categoryImages = Object.values(getCategoryMap(seller))
+    .map((category) => category.image)
+    .filter(Boolean);
   for (const categoryImageKey of categoryImages) {
     totalBytes += await getStoredAssetBytes(categoryImageKey);
   }

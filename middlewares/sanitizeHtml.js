@@ -1,5 +1,11 @@
 import sanitizeHtml from "sanitize-html";
 
+export const sanitizePlainText = (value) =>
+  sanitizeHtml(value, {
+    allowedTags: [],
+    allowedAttributes: {},
+  }).replace(/&amp;/g, "&");
+
 export const sanitizeHtmlMiddleware = (req, res, next) => {
   const sanitizeObject = (obj) => {
     // Ignore null, undefined, or non-objects
@@ -17,10 +23,7 @@ export const sanitizeHtmlMiddleware = (req, res, next) => {
         const value = obj[key];
 
         if (typeof value === "string") {
-          obj[key] = sanitizeHtml(value, {
-            allowedTags: [],
-            allowedAttributes: {},
-          });
+          obj[key] = sanitizePlainText(value);
         } else if (typeof value === "object") {
           sanitizeObject(value); // recursive
         }

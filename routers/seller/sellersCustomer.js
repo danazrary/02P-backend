@@ -15,6 +15,7 @@ import {
   getCurrentTimeBaghdad,
 } from "../../utils/timezoneHandler.js";
 import { normalizeUiSettings } from "../../utils/uiSettings.js";
+import { getCategoryMap } from "../../utils/categoryTranslations.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
@@ -143,7 +144,7 @@ async function getShopSections(sellerId) {
 
 /**
  * Lightweight endpoint for CategoryPage — returns only shop open/close status
- * plus categories, subcategories_map, category_images and minimal seller info.
+ * plus localized categories and minimal seller info.
  * No products, no offers, no red_line.
  * GET /api/seller/sellers-customer/:shopName/category
  */
@@ -182,9 +183,7 @@ router.get(
           "brand_color",
           "default_shop_lang",
           "order_type",
-          "categories",
-          "subcategories_map",
-          "category_images",
+          "category_translations",
           "ui_settings",
         ],
       });
@@ -301,7 +300,7 @@ router.get(
 
       // 3. Shop is open — return categories data
       console.log(
-        `[SHOP CATEGORY] OK — categories: ${(seller.categories || []).length}`,
+        `[SHOP CATEGORY] OK — categories: ${Object.keys(getCategoryMap(seller)).length}`,
       );
 
       return res.status(200).json({
@@ -321,9 +320,7 @@ router.get(
         },
         default_shop_lang: seller.default_shop_lang || "ku",
         order_type: seller.order_type || "both",
-        categories: seller.categories || [],
-        subcategories_map: seller.subcategories_map || {},
-        category_images: seller.category_images || {},
+        category_translations: getCategoryMap(seller),
         ui_settings: normalizeUiSettings(seller.ui_settings),
       });
     } catch (error) {
@@ -672,9 +669,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       order_type: seller.order_type || "both",
       sellerPlan: plan ? plan.name : "Free",
       brand_color: seller.brand_color || null,
-      categories: seller.categories || [],
-      subcategories_map: seller.subcategories_map || {},
-      category_images: seller.category_images || {},
+      category_translations: getCategoryMap(seller),
       products,
       totalProducts,
       hasMoreProducts,

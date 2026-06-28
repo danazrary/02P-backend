@@ -2,6 +2,11 @@ import Seller from "../database/seller.js";
 import Product from "../database/products.js";
 import ProductImage from "../database/productImages.js";
 import { RESERVED_SHOP_NAMES } from "../utils/reservedShopNames.js";
+import {
+  getCategoryLabel,
+  getCategoryMap,
+  getSubcategoryLabel,
+} from "../utils/categoryTranslations.js";
 
 const BOT_AGENTS =
   /googlebot|google-inspectiontool|bingbot|yandexbot|duckduckbot|slurp|baiduspider|facebookexternalhit|twitterbot|linkedinbot|whatsapp|telegrambot|applebot|semrushbot|ahrefsbot|pinterest|discordbot|petalbot|bytespider/i;
@@ -58,10 +63,12 @@ function slugifyCategorySegment(str) {
     .replace(/^-+|-+$/g, "");
 }
 
-function findCategoryBySlug(categories = [], slug) {
-  if (!slug || !Array.isArray(categories)) return null;
+function findCategoryBySlug(categoryMap = {}, slug) {
+  if (!slug) return null;
   return (
-    categories.find((item) => slugifyCategorySegment(item) === slug) || null
+    Object.keys(categoryMap).find(
+      (key) => slugifyCategorySegment(key) === slug,
+    ) || null
   );
 }
 
@@ -92,15 +99,17 @@ function truncateText(str, max = 180) {
 
 function categoryHtml({
   seller,
+  categoryKey,
   categoryName,
+  subcategoryKey = null,
   subcategoryName = null,
   products = [],
 }) {
   const baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com";
   const shopUrl = `https://${seller.shop_name}.${baseDomain}`;
-  const categorySlug = slugifyCategorySegment(categoryName);
-  const subcategorySlug = subcategoryName
-    ? slugifyCategorySegment(subcategoryName)
+  const categorySlug = slugifyCategorySegment(categoryKey);
+  const subcategorySlug = subcategoryKey
+    ? slugifyCategorySegment(subcategoryKey)
     : null;
   const categoryUrl = subcategorySlug
     ? `${shopUrl}/c/${categorySlug}/${subcategorySlug}`
@@ -430,8 +439,8 @@ export default function seoPrerender(req, res, next) {
           "id",
           "shop_name",
           "shop_image",
-          "categories",
-          "subcategories_map",
+          "default_shop_lang",
+          "category_translations",
         ],
       })
         .then(async (seller) => {
@@ -446,11 +455,9 @@ export default function seoPrerender(req, res, next) {
             );
           }
 
-          const categoryName = findCategoryBySlug(
-            seller.categories || [],
-            categorySlug,
-          );
-          if (!categoryName) {
+          const categoryMap = getCategoryMap(seller);
+          const categoryKey = findCategoryBySlug(categoryMap, categorySlug);
+          if (!categoryKey) {
             res.status(404);
             res.set("Content-Type", "text/html; charset=utf-8");
             return res.send(
@@ -461,18 +468,20 @@ export default function seoPrerender(req, res, next) {
             );
           }
 
+          const category = categoryMap[categoryKey];
+          const categoryName = getCategoryLabel(
+            category,
+            categoryKey,
+            seller.default_shop_lang,
+          );
+          let subcategoryKey = null;
           let subcategoryName = null;
           if (subcategorySlug) {
-            const subcategories = Array.isArray(
-              seller.subcategories_map?.[categoryName],
-            )
-              ? seller.subcategories_map[categoryName]
-              : [];
-            subcategoryName = findCategoryBySlug(
-              subcategories,
+            subcategoryKey = findCategoryBySlug(
+              category.subcategories,
               subcategorySlug,
             );
-            if (!subcategoryName) {
+            if (!subcategoryKey) {
               res.status(404);
               res.set("Content-Type", "text/html; charset=utf-8");
               return res.send(
@@ -482,13 +491,18 @@ export default function seoPrerender(req, res, next) {
                 ),
               );
             }
+            subcategoryName = getSubcategoryLabel(
+              category.subcategories[subcategoryKey],
+              subcategoryKey,
+              seller.default_shop_lang,
+            );
           }
 
           const products = await Product.findAll({
             where: {
               seller_id: seller.id,
-              category: categoryName,
-              ...(subcategoryName ? { subcategory: subcategoryName } : {}),
+              category: categoryKey,
+              ...(subcategoryKey ? { subcategory: subcategoryKey } : {}),
             },
             attributes: [
               "id",
@@ -515,7 +529,9 @@ export default function seoPrerender(req, res, next) {
           return res.send(
             categoryHtml({
               seller,
+              categoryKey,
               categoryName,
+              subcategoryKey,
               subcategoryName,
               products,
             }),
@@ -623,8 +639,8 @@ export default function seoPrerender(req, res, next) {
         "id",
         "shop_name",
         "shop_image",
-        "categories",
-        "subcategories_map",
+        "default_shop_lang",
+        "category_translations",
       ],
     })
       .then(async (seller) => {
@@ -639,11 +655,9 @@ export default function seoPrerender(req, res, next) {
           );
         }
 
-        const categoryName = findCategoryBySlug(
-          seller.categories || [],
-          categorySlug,
-        );
-        if (!categoryName) {
+        const categoryMap = getCategoryMap(seller);
+        const categoryKey = findCategoryBySlug(categoryMap, categorySlug);
+        if (!categoryKey) {
           res.status(404);
           res.set("Content-Type", "text/html; charset=utf-8");
           return res.send(
@@ -655,7 +669,7 @@ export default function seoPrerender(req, res, next) {
         }
 
         const products = await Product.findAll({
-          where: { seller_id: seller.id, category: categoryName },
+          where: { seller_id: seller.id, category: categoryKey },
           attributes: [
             "id",
             "titleKu",
@@ -678,7 +692,14 @@ export default function seoPrerender(req, res, next) {
 
         res.status(200);
         res.set("Content-Type", "text/html; charset=utf-8");
-        return res.send(categoryHtml({ seller, categoryName, products }));
+        const categoryName = getCategoryLabel(
+          categoryMap[categoryKey],
+          categoryKey,
+          seller.default_shop_lang,
+        );
+        return res.send(
+          categoryHtml({ seller, categoryKey, categoryName, products }),
+        );
       })
       .catch(() => next());
   }
@@ -695,8 +716,8 @@ export default function seoPrerender(req, res, next) {
         "id",
         "shop_name",
         "shop_image",
-        "categories",
-        "subcategories_map",
+        "default_shop_lang",
+        "category_translations",
       ],
     })
       .then(async (seller) => {
@@ -711,11 +732,9 @@ export default function seoPrerender(req, res, next) {
           );
         }
 
-        const categoryName = findCategoryBySlug(
-          seller.categories || [],
-          categorySlug,
-        );
-        if (!categoryName) {
+        const categoryMap = getCategoryMap(seller);
+        const categoryKey = findCategoryBySlug(categoryMap, categorySlug);
+        if (!categoryKey) {
           res.status(404);
           res.set("Content-Type", "text/html; charset=utf-8");
           return res.send(
@@ -726,16 +745,12 @@ export default function seoPrerender(req, res, next) {
           );
         }
 
-        const subcategories = Array.isArray(
-          seller.subcategories_map?.[categoryName],
-        )
-          ? seller.subcategories_map[categoryName]
-          : [];
-        const subcategoryName = findCategoryBySlug(
-          subcategories,
+        const category = categoryMap[categoryKey];
+        const subcategoryKey = findCategoryBySlug(
+          category.subcategories,
           subcategorySlug,
         );
-        if (!subcategoryName) {
+        if (!subcategoryKey) {
           res.status(404);
           res.set("Content-Type", "text/html; charset=utf-8");
           return res.send(
@@ -749,8 +764,8 @@ export default function seoPrerender(req, res, next) {
         const products = await Product.findAll({
           where: {
             seller_id: seller.id,
-            category: categoryName,
-            subcategory: subcategoryName,
+            category: categoryKey,
+            subcategory: subcategoryKey,
           },
           attributes: [
             "id",
@@ -774,8 +789,25 @@ export default function seoPrerender(req, res, next) {
 
         res.status(200);
         res.set("Content-Type", "text/html; charset=utf-8");
+        const categoryName = getCategoryLabel(
+          category,
+          categoryKey,
+          seller.default_shop_lang,
+        );
+        const subcategoryName = getSubcategoryLabel(
+          category.subcategories[subcategoryKey],
+          subcategoryKey,
+          seller.default_shop_lang,
+        );
         return res.send(
-          categoryHtml({ seller, categoryName, subcategoryName, products }),
+          categoryHtml({
+            seller,
+            categoryKey,
+            categoryName,
+            subcategoryKey,
+            subcategoryName,
+            products,
+          }),
         );
       })
       .catch(() => next());

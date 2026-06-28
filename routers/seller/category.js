@@ -9,601 +9,398 @@ import {
 import Seller from "../../database/seller.js";
 import Product from "../../database/products.js";
 import { getStoredAssetBytes } from "../../utils/sellerStorageUsage.js";
-
-const catImageUpload = r2Multer.single("image");
+import { getCategoryMap } from "../../utils/categoryTranslations.js";
 
 const router = Router();
+const catImageUpload = r2Multer.single("image");
 
-/**
- * GET /categories - Get seller's categories (flat list, backward-compat)
- */
+const cleanText = (value) =>
+  typeof value === "string" ? value.replace(/&amp;/g, "&").trim() : "";
+
+function makeKey(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^\p{L}\p{N}_-]/gu, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function findKey(map, requestedKey) {
+  const decoded = decodeURIComponent(requestedKey || "");
+  return Object.keys(map).find(
+    (key) => key.toLocaleLowerCase() === decoded.toLocaleLowerCase(),
+  );
+}
+
+function categoryPayload(categoryTranslations) {
+  return { category_translations: categoryTranslations };
+}
+
+async function findSeller(id) {
+  return Seller.findByPk(id, { attributes: ["id", "category_translations"] });
+}
+
 router.get("/categories", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id } = req.user;
-    const seller = await Seller.findByPk(id, {
-      attributes: ["categories"],
-    });
-
+    const seller = await findSeller(req.user.id);
     if (!seller) {
-      return res.status(404).json({
-        success: false,
-        error: true,
-        message: "Seller not found",
-      });
+      return res.status(404).json({ success: false, error: true, message: "Seller not found" });
     }
-
     return res.status(200).json({
       success: true,
       error: false,
-      categories: seller.categories || [],
+      ...categoryPayload(getCategoryMap(seller)),
     });
   } catch (error) {
     console.error("Error fetching categories:", error);
-    return res.status(500).json({
-      success: false,
-      error: true,
-      message: "Server error",
-    });
+    return res.status(500).json({ success: false, error: true, message: "Server error" });
   }
 });
 
-/**
- * GET /categories-full - Get categories + subcategories_map together
- */
 router.get("/categories-full", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id } = req.user;
-    const seller = await Seller.findByPk(id, {
-      attributes: ["categories", "subcategories_map", "category_images"],
-    });
-
+    const seller = await findSeller(req.user.id);
     if (!seller) {
-      return res
-        .status(404)
-        .json({ success: false, error: true, message: "Seller not found" });
+      return res.status(404).json({ success: false, error: true, message: "Seller not found" });
     }
-
     return res.status(200).json({
       success: true,
       error: false,
-      categories: seller.categories || [],
-      subcategories_map: seller.subcategories_map || {},
-      category_images: seller.category_images || {},
+      ...categoryPayload(getCategoryMap(seller)),
     });
   } catch (error) {
     console.error("Error fetching categories-full:", error);
-    return res
-      .status(500)
-      .json({ success: false, error: true, message: "Server error" });
+    return res.status(500).json({ success: false, error: true, message: "Server error" });
   }
 });
 
-/**
- * POST /categories - Add a new category
- */
 router.post("/categories", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id } = req.user;
-    const { category } = req.body;
+    const source =
+      req.body?.category && typeof req.body.category === "object"
+        ? req.body.category
+        : req.body || {};
+    const ku = cleanText(source.ku || (typeof req.body?.category === "string" ? req.body.category : ""));
+    const ar = cleanText(source.ar);
+    const requestedKey = cleanText(source.key || source.categoryKey);
 
-    if (!category || typeof category !== "string" || !category.trim()) {
+    if (!ku && !ar) {
       return res.status(400).json({
         success: false,
         error: true,
-        message: "Category name is required",
+        message: "A Kurdish or Arabic category name is required",
       });
     }
 
-    const trimmedCategory = category.trim();
-
-    const seller = await Seller.findByPk(id);
+    const seller = await findSeller(req.user.id);
     if (!seller) {
-      return res.status(404).json({
-        success: false,
-        error: true,
-        message: "Seller not found",
-      });
+      return res.status(404).json({ success: false, error: true, message: "Seller not found" });
     }
 
-    const currentCategories = seller.categories || [];
-
-    // Check if category already exists (case-insensitive)
-    if (
-      currentCategories.some(
-        (c) => c.toLowerCase() === trimmedCategory.toLowerCase(),
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: true,
-        message: "Category already exists",
-      });
+    const map = getCategoryMap(seller);
+    const key = makeKey(requestedKey || ku || ar);
+    if (!key) {
+      return res.status(400).json({ success: false, error: true, message: "Invalid category key" });
+    }
+    if (findKey(map, key)) {
+      return res.status(400).json({ success: false, error: true, message: "Category already exists" });
     }
 
-    const updatedCategories = [...currentCategories, trimmedCategory];
-    await seller.update({ categories: updatedCategories });
-
+    map[key] = { ku, ar, image: "", subcategories: {} };
+    await seller.update({ category_translations: map });
     return res.status(201).json({
       success: true,
       error: false,
-      categories: updatedCategories,
+      key,
+      ...categoryPayload(map),
       message: "Category added successfully",
     });
   } catch (error) {
     console.error("Error adding category:", error);
-    return res.status(500).json({
-      success: false,
-      error: true,
-      message: "Server error",
-    });
+    return res.status(500).json({ success: false, error: true, message: "Server error" });
   }
 });
 
-/**
- * PUT /categories/:categoryName - Rename a category (also updates all products using it)
- */
-router.put(
-  "/categories/:categoryName",
-  jwtVerifySellerToken,
-  async (req, res) => {
-    try {
-      const { id } = req.user;
-      const { categoryName } = req.params;
-      const { newName } = req.body;
-
-      if (!newName || typeof newName !== "string" || !newName.trim()) {
-        return res.status(400).json({
-          success: false,
-          error: true,
-          message: "New category name is required",
-        });
-      }
-
-      const decodedCategory = decodeURIComponent(categoryName);
-      const trimmedNew = newName.trim();
-
-      const seller = await Seller.findByPk(id);
-      if (!seller) {
-        return res
-          .status(404)
-          .json({ success: false, error: true, message: "Seller not found" });
-      }
-
-      const currentCategories = seller.categories || [];
-      const idx = currentCategories.findIndex(
-        (c) => c.toLowerCase() === decodedCategory.toLowerCase(),
-      );
-
-      if (idx === -1) {
-        return res
-          .status(404)
-          .json({ success: false, error: true, message: "Category not found" });
-      }
-
-      // Check new name doesn't already exist
-      if (
-        currentCategories.some(
-          (c, i) => i !== idx && c.toLowerCase() === trimmedNew.toLowerCase(),
-        )
-      ) {
-        return res.status(400).json({
-          success: false,
-          error: true,
-          message: "A category with that name already exists",
-        });
-      }
-
-      const oldName = currentCategories[idx];
-      const updatedCategories = [...currentCategories];
-      updatedCategories[idx] = trimmedNew;
-
-      // Also update subcategories_map key if it existed
-      const subsMap = { ...(seller.subcategories_map || {}) };
-      if (subsMap[oldName]) {
-        subsMap[trimmedNew] = subsMap[oldName];
-        delete subsMap[oldName];
-      }
-
-      // Also update category_images map key if it existed
-      const catImages = { ...(seller.category_images || {}) };
-      if (catImages[oldName] !== undefined) {
-        catImages[trimmedNew] = catImages[oldName];
-        delete catImages[oldName];
-      }
-
-      await seller.update({
-        categories: updatedCategories,
-        subcategories_map: subsMap,
-        category_images: catImages,
-      });
-
-      // Update all products that had this category
-      await Product.update(
-        { category: trimmedNew },
-        { where: { seller_id: id, category: oldName } },
-      );
-
-      return res.status(200).json({
-        success: true,
-        error: false,
-        categories: updatedCategories,
-        subcategories_map: subsMap,
-        category_images: catImages,
-        message: "Category renamed successfully",
-      });
-    } catch (error) {
-      console.error("Error renaming category:", error);
-      return res
-        .status(500)
-        .json({ success: false, error: true, message: "Server error" });
+router.put("/categories/:categoryKey", jwtVerifySellerToken, async (req, res) => {
+  try {
+    const seller = await findSeller(req.user.id);
+    if (!seller) {
+      return res.status(404).json({ success: false, error: true, message: "Seller not found" });
     }
-  },
-);
 
-/**
- * DELETE /categories/:categoryName - Remove a category
- * Only if no products are using it
- */
-router.delete(
-  "/categories/:categoryName",
-  jwtVerifySellerToken,
-  async (req, res) => {
-    try {
-      const { id } = req.user;
-      const { categoryName } = req.params;
+    const map = getCategoryMap(seller);
+    const key = findKey(map, req.params.categoryKey);
+    if (!key) {
+      return res.status(404).json({ success: false, error: true, message: "Category not found" });
+    }
 
-      const decodedCategory = decodeURIComponent(categoryName);
-
-      const seller = await Seller.findByPk(id);
-      if (!seller) {
-        return res.status(404).json({
-          success: false,
-          error: true,
-          message: "Seller not found",
-        });
-      }
-
-      const currentCategories = seller.categories || [];
-
-      // Check if category exists
-      const categoryIndex = currentCategories.findIndex(
-        (c) => c.toLowerCase() === decodedCategory.toLowerCase(),
-      );
-
-      if (categoryIndex === -1) {
-        return res.status(404).json({
-          success: false,
-          error: true,
-          message: "Category not found",
-        });
-      }
-
-      // Check if any products use this category
-      const productsUsingCategory = await Product.count({
-        where: {
-          seller_id: id,
-          category: currentCategories[categoryIndex],
-        },
-      });
-
-      if (productsUsingCategory > 0) {
-        return res.status(400).json({
-          success: false,
-          error: true,
-          message:
-            "Cannot delete category. There are products using this category.",
-          productsCount: productsUsingCategory,
-        });
-      }
-
-      const categoryName_ = currentCategories[categoryIndex];
-      const updatedCategories = currentCategories.filter(
-        (_, i) => i !== categoryIndex,
-      );
-
-      // Remove from subcategories_map too
-      const subsMap = { ...(seller.subcategories_map || {}) };
-      delete subsMap[categoryName_];
-
-      // Delete category image from R2 if exists
-      const catImages = { ...(seller.category_images || {}) };
-      if (catImages[categoryName_]) {
-        await deleteFromR2(catImages[categoryName_]).catch(() => {});
-        delete catImages[categoryName_];
-      }
-
-      await seller.update({
-        categories: updatedCategories,
-        subcategories_map: subsMap,
-        category_images: catImages,
-      });
-
-      return res.status(200).json({
-        success: true,
-        error: false,
-        categories: updatedCategories,
-        subcategories_map: subsMap,
-        category_images: catImages,
-        message: "Category deleted successfully",
-      });
-    } catch (error) {
-      console.error("Error deleting category:", error);
-      return res.status(500).json({
+    const ku = cleanText(req.body?.ku ?? req.body?.newName ?? map[key].ku);
+    const ar = cleanText(req.body?.ar ?? map[key].ar);
+    if (!ku && !ar) {
+      return res.status(400).json({
         success: false,
         error: true,
-        message: "Server error",
+        message: "A Kurdish or Arabic category name is required",
       });
     }
-  },
-);
 
-/**
- * POST /subcategories - Add a subcategory under an existing category
- * Body: { category: string, subcategory: string }
- */
+    map[key] = { ...map[key], ku, ar };
+    await seller.update({ category_translations: map });
+    return res.status(200).json({
+      success: true,
+      error: false,
+      key,
+      ...categoryPayload(map),
+      message: "Category updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating category:", error);
+    return res.status(500).json({ success: false, error: true, message: "Server error" });
+  }
+});
+
+router.delete("/categories/:categoryKey", jwtVerifySellerToken, async (req, res) => {
+  try {
+    const seller = await findSeller(req.user.id);
+    if (!seller) {
+      return res.status(404).json({ success: false, error: true, message: "Seller not found" });
+    }
+
+    const map = getCategoryMap(seller);
+    const key = findKey(map, req.params.categoryKey);
+    if (!key) {
+      return res.status(404).json({ success: false, error: true, message: "Category not found" });
+    }
+
+    const productsCount = await Product.count({
+      where: { seller_id: req.user.id, category: key },
+    });
+    if (productsCount > 0) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Cannot delete category. There are products using this category.",
+        productsCount,
+      });
+    }
+
+    const image = map[key].image;
+    if (image) {
+      const bytes = await getStoredAssetBytes(image);
+      await deleteFromR2(image).catch(() => {});
+      if (bytes > 0) await decrementSellerStorage(req.user.id, bytes);
+    }
+    delete map[key];
+    await seller.update({ category_translations: map });
+    return res.status(200).json({
+      success: true,
+      error: false,
+      ...categoryPayload(map),
+      message: "Category deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting category:", error);
+    return res.status(500).json({ success: false, error: true, message: "Server error" });
+  }
+});
+
 router.post("/subcategories", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id } = req.user;
-    const { category, subcategory } = req.body;
-
-    if (
-      !category ||
-      !subcategory ||
-      typeof category !== "string" ||
-      typeof subcategory !== "string"
-    ) {
+    const categoryKey = cleanText(req.body?.categoryKey || req.body?.category);
+    const source =
+      req.body?.subcategory && typeof req.body.subcategory === "object"
+        ? req.body.subcategory
+        : req.body || {};
+    const ku = cleanText(source.ku || (typeof req.body?.subcategory === "string" ? req.body.subcategory : ""));
+    const ar = cleanText(source.ar);
+    const requestedSubKey = cleanText(source.key || source.subcategoryKey);
+    if (!categoryKey || (!ku && !ar)) {
       return res.status(400).json({
         success: false,
         error: true,
-        message: "category and subcategory are required",
+        message: "Category key and a Kurdish or Arabic subcategory name are required",
       });
     }
 
-    const trimmedCat = category.trim();
-    const trimmedSub = subcategory.trim();
-
-    if (!trimmedCat || !trimmedSub) {
-      return res.status(400).json({
-        success: false,
-        error: true,
-        message: "category and subcategory cannot be empty",
-      });
-    }
-
-    const seller = await Seller.findByPk(id, {
-      attributes: ["id", "categories", "subcategories_map"],
-    });
+    const seller = await findSeller(req.user.id);
     if (!seller) {
-      return res
-        .status(404)
-        .json({ success: false, error: true, message: "Seller not found" });
+      return res.status(404).json({ success: false, error: true, message: "Seller not found" });
+    }
+    const map = getCategoryMap(seller);
+    const key = findKey(map, categoryKey);
+    if (!key) {
+      return res.status(404).json({ success: false, error: true, message: "Parent category not found" });
     }
 
-    const currentCategories = seller.categories || [];
-    if (!currentCategories.includes(trimmedCat)) {
-      return res.status(400).json({
-        success: false,
-        error: true,
-        message: "Parent category not found",
-      });
+    const subKey = makeKey(requestedSubKey || ku || ar);
+    const subcategories = map[key].subcategories;
+    if (!subKey || findKey(subcategories, subKey)) {
+      return res.status(400).json({ success: false, error: true, message: "Subcategory already exists or has an invalid key" });
     }
 
-    const subsMap = { ...(seller.subcategories_map || {}) };
-    const currentSubs = subsMap[trimmedCat] || [];
-
-    if (currentSubs.some((s) => s.toLowerCase() === trimmedSub.toLowerCase())) {
-      return res.status(400).json({
-        success: false,
-        error: true,
-        message: "Subcategory already exists",
-      });
-    }
-
-    subsMap[trimmedCat] = [...currentSubs, trimmedSub];
-    await seller.update({ subcategories_map: subsMap });
-
+    subcategories[subKey] = { ku, ar };
+    await seller.update({ category_translations: map });
     return res.status(201).json({
       success: true,
       error: false,
-      subcategories_map: subsMap,
+      key: subKey,
+      ...categoryPayload(map),
       message: "Subcategory added successfully",
     });
   } catch (error) {
     console.error("Error adding subcategory:", error);
-    return res
-      .status(500)
-      .json({ success: false, error: true, message: "Server error" });
+    return res.status(500).json({ success: false, error: true, message: "Server error" });
   }
 });
 
-/**
- * DELETE /subcategories - Remove a subcategory
- * Body: { category: string, subcategory: string }
- */
-router.delete("/subcategories", jwtVerifySellerToken, async (req, res) => {
+router.put("/subcategories/:categoryKey/:subcategoryKey", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id } = req.user;
-    const { category, subcategory } = req.body;
-
-    if (!category || !subcategory) {
-      return res.status(400).json({
-        success: false,
-        error: true,
-        message: "category and subcategory are required",
-      });
-    }
-
-    const trimmedCat = category.trim();
-    const trimmedSub = subcategory.trim();
-
-    const seller = await Seller.findByPk(id, {
-      attributes: ["id", "subcategories_map"],
-    });
+    const seller = await findSeller(req.user.id);
     if (!seller) {
-      return res
-        .status(404)
-        .json({ success: false, error: true, message: "Seller not found" });
+      return res.status(404).json({ success: false, error: true, message: "Seller not found" });
+    }
+    const map = getCategoryMap(seller);
+    const categoryKey = findKey(map, req.params.categoryKey);
+    const subcategoryKey = categoryKey
+      ? findKey(map[categoryKey].subcategories, req.params.subcategoryKey)
+      : null;
+    if (!categoryKey || !subcategoryKey) {
+      return res.status(404).json({ success: false, error: true, message: "Subcategory not found" });
     }
 
-    const subsMap = { ...(seller.subcategories_map || {}) };
-    const currentSubs = subsMap[trimmedCat] || [];
-    const idx = currentSubs.findIndex(
-      (s) => s.toLowerCase() === trimmedSub.toLowerCase(),
-    );
-
-    if (idx === -1) {
-      return res.status(404).json({
-        success: false,
-        error: true,
-        message: "Subcategory not found",
-      });
+    const current = map[categoryKey].subcategories[subcategoryKey];
+    const ku = cleanText(req.body?.ku ?? current.ku);
+    const ar = cleanText(req.body?.ar ?? current.ar);
+    if (!ku && !ar) {
+      return res.status(400).json({ success: false, error: true, message: "A Kurdish or Arabic subcategory name is required" });
     }
-
-    subsMap[trimmedCat] = currentSubs.filter((_, i) => i !== idx);
-    if (subsMap[trimmedCat].length === 0) delete subsMap[trimmedCat];
-
-    await seller.update({ subcategories_map: subsMap });
-
+    map[categoryKey].subcategories[subcategoryKey] = { ku, ar };
+    await seller.update({ category_translations: map });
     return res.status(200).json({
       success: true,
       error: false,
-      subcategories_map: subsMap,
+      ...categoryPayload(map),
+      message: "Subcategory updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating subcategory:", error);
+    return res.status(500).json({ success: false, error: true, message: "Server error" });
+  }
+});
+
+router.delete("/subcategories", jwtVerifySellerToken, async (req, res) => {
+  try {
+    const requestedCategory = cleanText(req.body?.categoryKey || req.body?.category);
+    const requestedSubcategory = cleanText(req.body?.subcategoryKey || req.body?.subcategory);
+    const seller = await findSeller(req.user.id);
+    if (!seller) {
+      return res.status(404).json({ success: false, error: true, message: "Seller not found" });
+    }
+    const map = getCategoryMap(seller);
+    const categoryKey = findKey(map, requestedCategory);
+    const subcategoryKey = categoryKey
+      ? findKey(map[categoryKey].subcategories, requestedSubcategory)
+      : null;
+    if (!categoryKey || !subcategoryKey) {
+      return res.status(404).json({ success: false, error: true, message: "Subcategory not found" });
+    }
+
+    delete map[categoryKey].subcategories[subcategoryKey];
+    await seller.update({ category_translations: map });
+    return res.status(200).json({
+      success: true,
+      error: false,
+      ...categoryPayload(map),
       message: "Subcategory deleted successfully",
     });
   } catch (error) {
     console.error("Error deleting subcategory:", error);
-    return res
-      .status(500)
-      .json({ success: false, error: true, message: "Server error" });
+    return res.status(500).json({ success: false, error: true, message: "Server error" });
   }
 });
 
-/**
- * PUT /categories/:categoryName/image - Upload or replace a category image
- */
 router.put(
-  "/categories/:categoryName/image",
+  "/categories/:categoryKey/image",
   jwtVerifySellerToken,
   (req, res, next) => {
-    catImageUpload(req, res, (err) => {
-      if (err)
-        return res
-          .status(400)
-          .json({ success: false, error: true, message: err.message });
+    catImageUpload(req, res, (error) => {
+      if (error) return res.status(400).json({ success: false, error: true, message: error.message });
       next();
     });
   },
   async (req, res) => {
     try {
-      const { id } = req.user;
-      const decodedCategory = decodeURIComponent(req.params.categoryName);
-
       if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          error: true,
-          message: "No image file provided",
-        });
+        return res.status(400).json({ success: false, error: true, message: "No image file provided" });
       }
-
-      const seller = await Seller.findByPk(id, {
-        attributes: ["id", "categories", "category_images"],
-      });
+      const seller = await findSeller(req.user.id);
       if (!seller) {
-        return res
-          .status(404)
-          .json({ success: false, error: true, message: "Seller not found" });
+        return res.status(404).json({ success: false, error: true, message: "Seller not found" });
+      }
+      const map = getCategoryMap(seller);
+      const key = findKey(map, req.params.categoryKey);
+      if (!key) {
+        return res.status(404).json({ success: false, error: true, message: "Category not found" });
       }
 
-      const currentCategories = seller.categories || [];
-      if (!currentCategories.includes(decodedCategory)) {
-        return res
-          .status(404)
-          .json({ success: false, error: true, message: "Category not found" });
+      const oldImage = map[key].image;
+      if (oldImage) {
+        const bytes = await getStoredAssetBytes(oldImage);
+        await deleteFromR2(oldImage).catch(() => {});
+        if (bytes > 0) await decrementSellerStorage(req.user.id, bytes);
       }
 
-      const catImages = { ...(seller.category_images || {}) };
-
-      // Delete old image from R2 if exists
-      if (catImages[decodedCategory]) {
-        const oldImageBytes = await getStoredAssetBytes(catImages[decodedCategory]);
-        await deleteFromR2(catImages[decodedCategory]).catch(() => {});
-        if (oldImageBytes > 0) {
-          await decrementSellerStorage(id, oldImageBytes);
-        }
-      }
-
-      // Upload new image to R2
-      const catKey = `shops/${id}/categories/${uuidv4()}.webp`;
-      const { sizeBytes } = await uploadToR2(req.file.buffer, catKey);
-      catImages[decodedCategory] = catKey;
-
-      await seller.update({ category_images: catImages });
-      if (sizeBytes > 0) {
-        await incrementSellerStorage(id, sizeBytes);
-      }
+      const image = `shops/${req.user.id}/categories/${uuidv4()}.webp`;
+      const { sizeBytes } = await uploadToR2(req.file.buffer, image);
+      map[key].image = image;
+      await seller.update({ category_translations: map });
+      if (sizeBytes > 0) await incrementSellerStorage(req.user.id, sizeBytes);
 
       return res.status(200).json({
         success: true,
         error: false,
-        category_images: catImages,
+        ...categoryPayload(map),
         message: "Category image updated",
       });
     } catch (error) {
       console.error("Error uploading category image:", error);
-      return res.status(500).json({
-        success: false,
-        error: true,
-        message: error.message || "Server error",
-      });
+      return res.status(500).json({ success: false, error: true, message: error.message || "Server error" });
     }
   },
 );
 
-/**
- * DELETE /categories/:categoryName/image - Remove a category image
- */
-router.delete(
-  "/categories/:categoryName/image",
-  jwtVerifySellerToken,
-  async (req, res) => {
-    try {
-      const { id } = req.user;
-      const decodedCategory = decodeURIComponent(req.params.categoryName);
-
-      const seller = await Seller.findByPk(id, {
-        attributes: ["id", "category_images"],
-      });
-      if (!seller) {
-        return res
-          .status(404)
-          .json({ success: false, error: true, message: "Seller not found" });
-      }
-
-      const catImages = { ...(seller.category_images || {}) };
-      if (catImages[decodedCategory]) {
-        const removedBytes = await getStoredAssetBytes(catImages[decodedCategory]);
-        await deleteFromR2(catImages[decodedCategory]).catch(() => {});
-        delete catImages[decodedCategory];
-        await seller.update({ category_images: catImages });
-        if (removedBytes > 0) {
-          await decrementSellerStorage(id, removedBytes);
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        error: false,
-        category_images: catImages,
-        message: "Category image removed",
-      });
-    } catch (error) {
-      console.error("Error deleting category image:", error);
-      return res
-        .status(500)
-        .json({ success: false, error: true, message: "Server error" });
+router.delete("/categories/:categoryKey/image", jwtVerifySellerToken, async (req, res) => {
+  try {
+    const seller = await findSeller(req.user.id);
+    if (!seller) {
+      return res.status(404).json({ success: false, error: true, message: "Seller not found" });
     }
-  },
-);
+    const map = getCategoryMap(seller);
+    const key = findKey(map, req.params.categoryKey);
+    if (!key) {
+      return res.status(404).json({ success: false, error: true, message: "Category not found" });
+    }
+
+    const image = map[key].image;
+    if (image) {
+      const bytes = await getStoredAssetBytes(image);
+      await deleteFromR2(image).catch(() => {});
+      map[key].image = "";
+      await seller.update({ category_translations: map });
+      if (bytes > 0) await decrementSellerStorage(req.user.id, bytes);
+    }
+
+    return res.status(200).json({
+      success: true,
+      error: false,
+      ...categoryPayload(map),
+      message: "Category image removed",
+    });
+  } catch (error) {
+    console.error("Error deleting category image:", error);
+    return res.status(500).json({ success: false, error: true, message: "Server error" });
+  }
+});
 
 export default router;

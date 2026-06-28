@@ -18,6 +18,7 @@ import {
   toUTC,
 } from "../../utils/timezoneHandler.js";
 import { normalizeUiSettings } from "../../utils/uiSettings.js";
+import { getCategoryMap } from "../../utils/categoryTranslations.js";
 
 const router = Router();
 
@@ -447,9 +448,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       show_plan_selection: sellerPlanRecord.plan_id === FREE_PLAN_ID,
       selected_plan_info: selectedPlan,
       brand_color: seller.brand_color ?? null,
-      categories: seller.categories || [],
-      subcategories_map: seller.subcategories_map || {},
-      category_images: seller.category_images || {},
+      category_translations: getCategoryMap(seller),
       red_line: redLine,
       products,
       totalProducts: totalProductsCount,

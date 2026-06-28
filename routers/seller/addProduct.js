@@ -781,13 +781,15 @@ router.post(
         customInputs,
         customInputsAr,
         category,
+        subcategory,
         colors: colorsBody,
         sizes: sizesBody,
         stock: stockBody,
         isAvailable: isAvailableBody,
       } = req.body;
 
-      console.log("[add-product] req.body:", req.body);
+
+      console.log("[add-product] req.body:", req.body,"--------------------------");
 
       // --- Validate stock ---
       let parsedStock = null;
@@ -921,6 +923,7 @@ router.post(
         stock: hasColorsOrSizes ? null : parsedStock,
         isAvailable: isAvailablePost,
         category: category || null,
+        subcategory: subcategory || null,
       };
 
       console.log("FINAL DB PAYLOAD", createPayload);

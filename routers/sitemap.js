@@ -2,6 +2,7 @@ import { Router } from "express";
 import { Op } from "sequelize";
 import Seller from "../database/seller.js";
 import Product from "../database/products.js";
+import { getCategoryMap } from "../utils/categoryTranslations.js";
 
 const router = Router();
 const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
@@ -125,8 +126,7 @@ async function fetchGlobalSitemapRows() {
         "id",
         "shop_name",
         "updatedAt",
-        "categories",
-        "subcategories_map",
+        "category_translations",
       ],
       where: {
         shop_name: {
@@ -151,8 +151,7 @@ async function fetchSubdomainSitemapRows(shopName) {
       "id",
       "shop_name",
       "updatedAt",
-      "categories",
-      "subcategories_map",
+      "category_translations",
     ],
     raw: true,
   });
@@ -195,9 +194,9 @@ router.get("/sitemap.xml", async (req, res) => {
           changefreq: "weekly",
           priority: "0.9",
         },
-        ...(Array.isArray(seller.categories) ? seller.categories : [])
-          .map((categoryName) => {
-            const categorySlug = slugifyCategorySegment(categoryName);
+        ...Object.keys(getCategoryMap(seller))
+          .map((categoryKey) => {
+            const categorySlug = slugifyCategorySegment(categoryKey);
             if (!categorySlug) return null;
 
             return {
@@ -208,14 +207,14 @@ router.get("/sitemap.xml", async (req, res) => {
             };
           })
           .filter(Boolean),
-        ...Object.entries(seller.subcategories_map || {}).flatMap(
-          ([categoryName, subcategories]) => {
-            const categorySlug = slugifyCategorySegment(categoryName);
-            if (!categorySlug || !Array.isArray(subcategories)) return [];
+        ...Object.entries(getCategoryMap(seller)).flatMap(
+          ([categoryKey, category]) => {
+            const categorySlug = slugifyCategorySegment(categoryKey);
+            if (!categorySlug) return [];
 
-            return subcategories
-              .map((subcategoryName) => {
-                const subcategorySlug = slugifyCategorySegment(subcategoryName);
+            return Object.keys(category.subcategories || {})
+              .map((subcategoryKey) => {
+                const subcategorySlug = slugifyCategorySegment(subcategoryKey);
                 if (!subcategorySlug) return null;
 
                 return {
@@ -263,11 +262,9 @@ router.get("/sitemap.xml", async (req, res) => {
     const categoryEntries = sellers.flatMap((seller) => {
       if (!seller.shop_name) return [];
 
-      const directCategoryEntries = (
-        Array.isArray(seller.categories) ? seller.categories : []
-      )
-        .map((categoryName) => {
-          const categorySlug = slugifyCategorySegment(categoryName);
+      const directCategoryEntries = Object.keys(getCategoryMap(seller))
+        .map((categoryKey) => {
+          const categorySlug = slugifyCategorySegment(categoryKey);
           if (!categorySlug) return null;
 
           return {
@@ -279,15 +276,14 @@ router.get("/sitemap.xml", async (req, res) => {
         })
         .filter(Boolean);
 
-      const subcategoryEntries = Object.entries(
-        seller.subcategories_map || {},
-      ).flatMap(([categoryName, subcategories]) => {
-        const categorySlug = slugifyCategorySegment(categoryName);
-        if (!categorySlug || !Array.isArray(subcategories)) return [];
+      const subcategoryEntries = Object.entries(getCategoryMap(seller)).flatMap(
+        ([categoryKey, category]) => {
+        const categorySlug = slugifyCategorySegment(categoryKey);
+        if (!categorySlug) return [];
 
-        return subcategories
-          .map((subcategoryName) => {
-            const subcategorySlug = slugifyCategorySegment(subcategoryName);
+        return Object.keys(category.subcategories || {})
+          .map((subcategoryKey) => {
+            const subcategorySlug = slugifyCategorySegment(subcategoryKey);
             if (!subcategorySlug) return null;
 
             return {
