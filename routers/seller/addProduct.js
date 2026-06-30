@@ -951,7 +951,7 @@ router.post(
 
       const imageUploadResults = await Promise.all(
         imageFiles.map((file, i) =>
-          uploadToR2WithThumb(file.buffer, basePath).then((result) => ({
+          uploadToR2WithThumb(file.buffer, basePath, titleKu || titleAr).then((result) => ({
             ...result,
             isMain: i === 0,
           })),
@@ -1280,7 +1280,7 @@ router.put(
           const file = imageFiles[i];
           const basePath = `shops/${sellerId}/products/${productId}`;
           const { mainKey, thumbKey, sizeBytes, totalSizeBytes } =
-            await uploadToR2WithThumb(file.buffer, basePath);
+            await uploadToR2WithThumb(file.buffer, basePath, titleKu || titleAr);
           totalUploadedBytes += totalSizeBytes;
           await ProductImage.create({
             product_id: productId,

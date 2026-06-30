@@ -2,7 +2,9 @@ import { Router } from "express";
 import { Op } from "sequelize";
 import Seller from "../database/seller.js";
 import Product from "../database/products.js";
+import ProductImage from "../database/productImages.js";
 import { getCategoryMap } from "../utils/categoryTranslations.js";
+import { getProductImageUrls, stripHtml, truncateMetaDescription } from "../utils/seo.js";
 
 const router = Router();
 const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
@@ -106,13 +108,14 @@ function buildCategoryUrl(shopName, categorySlug, subcategorySlug = null) {
   return `${baseUrl}/c/${categorySlug}`;
 }
 
-function buildUrlNode({ loc, lastmod, changefreq, priority }) {
-  return `  <url>\n    <loc>${escapeXml(loc)}</loc>${lastmod ? `\n    <lastmod>${lastmod}</lastmod>` : ""}${changefreq ? `\n    <changefreq>${changefreq}</changefreq>` : ""}${priority ? `\n    <priority>${priority}</priority>` : ""}\n  </url>`;
+function buildUrlNode({ loc, lastmod, changefreq, priority, images = [] }) {
+  const imageNodes = images.map((image) => `\n    <image:image>\n      <image:loc>${escapeXml(image.loc)}</image:loc>${image.title ? `\n      <image:title>${escapeXml(image.title)}</image:title>` : ""}${image.caption ? `\n      <image:caption>${escapeXml(image.caption)}</image:caption>` : ""}\n    </image:image>`).join("");
+  return `  <url>\n    <loc>${escapeXml(loc)}</loc>${lastmod ? `\n    <lastmod>${lastmod}</lastmod>` : ""}${changefreq ? `\n    <changefreq>${changefreq}</changefreq>` : ""}${priority ? `\n    <priority>${priority}</priority>` : ""}${imageNodes}\n  </url>`;
 }
 
 function generateSitemapXml(entries) {
   const body = entries.map((entry) => buildUrlNode(entry)).join("\n");
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${body}\n</urlset>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n${body}\n</urlset>`;
 }
 
 /**
@@ -136,8 +139,8 @@ async function fetchGlobalSitemapRows() {
       raw: true,
     }),
     Product.findAll({
-      attributes: ["id", "seller_id", "updatedAt"],
-      raw: true,
+      attributes: ["id", "seller_id", "updatedAt", "titleKu", "titleAr", "descriptionKu", "descriptionAr", "images"],
+      include: [{ model: ProductImage, as: "productImages", attributes: ["image_key", "is_main"], required: false }],
     }),
   ]);
 
@@ -160,8 +163,8 @@ async function fetchSubdomainSitemapRows(shopName) {
 
   const products = await Product.findAll({
     where: { seller_id: seller.id },
-    attributes: ["id", "updatedAt"],
-    raw: true,
+    attributes: ["id", "updatedAt", "titleKu", "titleAr", "descriptionKu", "descriptionAr", "images"],
+    include: [{ model: ProductImage, as: "productImages", attributes: ["image_key", "is_main"], required: false }],
   });
 
   return { seller, products };
@@ -238,6 +241,7 @@ router.get("/sitemap.xml", async (req, res) => {
             lastmod: toLastmod(p.updatedAt),
             changefreq: "weekly",
             priority: "0.7",
+            images: getProductImageUrls(p).map((loc) => ({ loc, title: stripHtml(p.titleKu || p.titleAr || `Product ${p.id}`), caption: truncateMetaDescription(p.descriptionKu || p.descriptionAr || "") })),
           })),
       ];
 
@@ -313,6 +317,7 @@ router.get("/sitemap.xml", async (req, res) => {
           lastmod: toLastmod(p.updatedAt),
           changefreq: "weekly",
           priority: "0.7",
+          images: getProductImageUrls(p).map((loc) => ({ loc, title: stripHtml(p.titleKu || p.titleAr || `Product ${p.id}`), caption: truncateMetaDescription(p.descriptionKu || p.descriptionAr || "") })),
         };
       })
       .filter(Boolean);

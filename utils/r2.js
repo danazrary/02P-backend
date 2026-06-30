@@ -434,7 +434,7 @@ export async function uploadColorImageToR2(buffer, key) {
  * @param {string} basePath - Key prefix, e.g. "shops/14/products/123"
  * @returns {Promise<{mainKey: string, thumbKey: string, sizeBytes: number, thumbSizeBytes: number, totalSizeBytes: number}>}
  */
-export async function uploadToR2WithThumb(buffer, basePath) {
+export async function uploadToR2WithThumb(buffer, basePath, filenamePrefix = "product") {
   // ── Defensive buffer validation ──────────────────────────────────────────
   if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
     throw new Error("uploadToR2WithThumb: invalid or empty buffer");
@@ -446,8 +446,16 @@ export async function uploadToR2WithThumb(buffer, basePath) {
   }
 
   const fileId = uuidv4();
-  const mainKey = `${basePath}/main/${fileId}.webp`;
-  const thumbKey = `${basePath}/thumb/${fileId}.webp`;
+  const safePrefix = String(filenamePrefix || "product")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9\u0600-\u06ff-]/g, "")
+    .replace(/-+/g, "-")
+    .slice(0, 80) || "product";
+  const filename = `${safePrefix}-${fileId}.webp`;
+  const mainKey = `${basePath}/main/${filename}`;
+  const thumbKey = `${basePath}/thumb/${filename}`;
 
   // ── Concurrency-limited compression (both variants in one slot) ──────────
   const t0 = Date.now();

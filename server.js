@@ -229,6 +229,8 @@ app.get("/robots.txt", (req, res) => {
 
   const robotsTxt = `User-agent: *
 Allow: /
+Allow: /p/
+Allow: /c/
 
 # Keep private/auth/account pages out of the index
 Disallow: /login
@@ -273,6 +275,7 @@ User-agent: meta-externalagent
 Disallow: /
 
 Sitemap: ${sitemapUrl}
+# Images are hosted on images.dwkanlink.com; that CDN must allow crawlers too.
 `;
 
   res.type("text/plain; charset=utf-8").send(robotsTxt);
