@@ -1,5 +1,46 @@
 const DEFAULT_ORIGIN = "https://dwkanlink.com";
 const DEFAULT_IMAGE_ORIGIN = "https://images.dwkanlink.com";
+const RESERVED_SUBDOMAINS = new Set([
+  "www", "api", "admin", "static", "assets", "uploads", "mail", "ftp",
+  "smtp", "support", "help", "blog", "news",
+]);
+
+function normalizeHost(host = "") {
+  return String(host).trim().toLowerCase().split(":")[0].replace(/\.$/, "");
+}
+
+export function getCleanHost(req) {
+  return normalizeHost(req?.headers?.host || req?.get?.("host") || "");
+}
+
+export function getSubdomain(host, baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com") {
+  const hostname = normalizeHost(host);
+  const base = normalizeHost(baseDomain);
+  if (!hostname.endsWith(`.${base}`)) return null;
+  const subdomain = hostname.slice(0, -(base.length + 1));
+  return subdomain && !subdomain.includes(".") ? subdomain : null;
+}
+
+export function isMainDomain(host, baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com") {
+  const hostname = normalizeHost(host);
+  const base = normalizeHost(baseDomain);
+  return hostname === base || hostname === `www.${base}`;
+}
+
+export function getShopNameFromHost(host, baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com") {
+  const hostname = normalizeHost(host);
+  const base = normalizeHost(baseDomain);
+  if (isMainDomain(hostname, base)) return null;
+  const shopName = getSubdomain(hostname, base);
+  if (!shopName || RESERVED_SUBDOMAINS.has(shopName) || !/^[a-z0-9_-]+$/.test(shopName)) return null;
+  return shopName;
+}
+
+export function isShopSubdomain(host, baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com") {
+  return Boolean(getShopNameFromHost(host, baseDomain));
+}
+
+export const isValidShopSubdomain = isShopSubdomain;
 
 export function stripHtml(value = "") {
   return String(value)
@@ -90,11 +131,13 @@ export function buildShopSeo(seller) {
   const canonicalUrl = `https://${seller.shop_name}.${baseDomain}/`;
   const image = getAbsoluteImageUrl(seller?.shop_image);
   return {
-    title: shopName, ogTitle: shopName,
+    title: `${shopName} | Dwkan Link`, ogTitle: shopName,
     description, canonicalUrl, image, type: "website",
     jsonLd: buildJsonLd("shop", { shopName, description, canonicalUrl, image }),
   };
 }
+
+export const buildShopHomeSeo = buildShopSeo;
 
 export function buildJsonLd(type, data) {
   if (type === "product") {

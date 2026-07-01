@@ -25,7 +25,7 @@ import { apiLimiter, corsOptions } from "./utils/helper.js";
 import { adminToken, adminRefreshToken } from "./utils/addingToken.js";
 import { sequelize } from "./database/index.js";
 import { scheduleCleanup } from "./utils/cleanupExpired.js";
-import seoPrerender from "./middlewares/seoPrerender.js";
+import seoPrerender, { serveHomepageSeo } from "./middlewares/seoPrerender.js";
 
 // Load environment variables based on mode
 // Check if --env=https argument is passed
@@ -61,6 +61,11 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 app.set("trust proxy", 1);
+
+// This must be the first application route. Nginx proxies `location = /`
+// here for the apex domain and every seller subdomain.
+app.get("/", serveHomepageSeo);
+
 app.use(
   session({
     name: process.env.SESSION_COOKIE_NAME || "dwkanlink.sid",
@@ -101,23 +106,6 @@ app.use(passport.initialize());
 // Apply CORS before static file serving
 app.use(cors(corsOptions));
 
-// Serve static uploads based on environment
-// In development: serve from backend/uploads
-// In production: serve from VPS_UPLOAD_PATH (e.g., /var/www/uploads)
-const uploadsPath =
-  process.env.NODE_ENV === "production"
-    ? process.env.VPS_UPLOAD_PATH || "/var/www/uploads"
-    : path.join(process.cwd(), "uploads");
-app.use(
-  "/uploads",
-  express.static(uploadsPath, {
-    maxAge: "30d",
-    immutable: true,
-    etag: true,
-  }),
-);
-
-app.use("/", apiLimiter); // Apply to all routes
 app.use("/api", apiLimiter); // Extra protection for API routes
 app.use(helmet());
 app.use(hpp());
@@ -221,6 +209,9 @@ app.use((req, res, next) => {
   return res.redirect(301, newUrl);
 });
 
+// API routes precede SEO discovery/static routes and retain JSON semantics.
+app.use("/api", allRouters);
+
 // Host-aware robots.txt so each subdomain advertises its own sitemap URL.
 app.get("/robots.txt", (req, res) => {
   const hostname = (req.headers.host || "").split(":")[0];
@@ -281,15 +272,25 @@ Sitemap: ${sitemapUrl}
   res.type("text/plain; charset=utf-8").send(robotsTxt);
 });
 
-// --- SEO PRE-RENDER FOR BOTS ---
-// Must be BEFORE routers so crawlers get HTML with meta tags
-app.use(seoPrerender);
-
-// --- ROUTERS ---
-app.use("/api", allRouters);
-
 // Sitemap route - served at root level for SEO
 app.use("/", sitemapRouter);
+
+// Product/category crawler HTML must run before frontend static fallback.
+app.use(seoPrerender);
+
+// Static uploads come after API and SEO discovery routes.
+const uploadsPath =
+  process.env.NODE_ENV === "production"
+    ? process.env.VPS_UPLOAD_PATH || "/var/www/uploads"
+    : path.join(process.cwd(), "uploads");
+app.use(
+  "/uploads",
+  express.static(uploadsPath, {
+    maxAge: "30d",
+    immutable: true,
+    etag: true,
+  }),
+);
 
 app.get("/profile", (req, res) => {
   const token = req.cookies.token || req.headers.authorization?.split(" ")[1];

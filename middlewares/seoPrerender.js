@@ -5,7 +5,7 @@ import Product from "../database/products.js";
 import ProductImage from "../database/productImages.js";
 import { RESERVED_SHOP_NAMES } from "../utils/reservedShopNames.js";
 import { getCategoryLabel, getCategoryMap, getSubcategoryLabel } from "../utils/categoryTranslations.js";
-import { buildProductSeo, buildShopSeo, getAbsoluteImageUrl, stripHtml, truncateMetaDescription } from "../utils/seo.js";
+import { buildProductSeo, buildShopHomeSeo, getAbsoluteImageUrl, getCleanHost, getShopNameFromHost, isMainDomain, isValidShopSubdomain, stripHtml, truncateMetaDescription } from "../utils/seo.js";
 
 const BOT_AGENTS = /googlebot|google-inspectiontool|bingbot|yandexbot|duckduckbot|slurp|baiduspider|facebookexternalhit|twitterbot|linkedinbot|whatsapp|telegrambot|applebot|semrushbot|ahrefsbot|pinterest|discordbot|petalbot|bytespider/i;
 const RESERVED = new Set(RESERVED_SHOP_NAMES.map((name) => name.toLowerCase()));
@@ -40,27 +40,52 @@ function seoTags(seo) {
 let indexTemplate;
 function getIndexTemplate() {
   if (indexTemplate) return indexTemplate;
+  const configuredPath = process.env.FRONTEND_DIST_PATH
+    ? path.resolve(process.env.FRONTEND_DIST_PATH, "index.html")
+    : null;
   const candidates = [
-    process.env.FRONTEND_DIST_PATH && path.join(process.env.FRONTEND_DIST_PATH, "index.html"),
+    configuredPath,
     path.join(process.cwd(), "..", "frontend", "dist", "index.html"),
     path.join(process.cwd(), "frontend", "dist", "index.html"),
     path.join(process.cwd(), "..", "frontend", "index.html"),
     path.join(process.cwd(), "frontend", "index.html"),
   ].filter(Boolean);
   const file = candidates.find((candidate) => fs.existsSync(candidate));
-  indexTemplate = file ? fs.readFileSync(file, "utf8") : "<!doctype html><html><head></head><body><div id=\"root\"></div></body></html>";
+  if (!file) {
+    throw new Error(
+      `Frontend index.html not found. Set FRONTEND_DIST_PATH (expected ${configuredPath || "/var/www/02P-frontend/dist/index.html"}).`,
+    );
+  }
+  indexTemplate = fs.readFileSync(file, "utf8");
+  if (!/<\/head>/i.test(indexTemplate) || !/<div\s+id=["']root["'][^>]*>/i.test(indexTemplate)) {
+    throw new Error(`Invalid Vite index template: ${file}`);
+  }
   return indexTemplate;
 }
 
-function renderHtml(seo, visibleHtml) {
+export function injectSeoIntoHtml(seo, visibleHtml = "") {
   let html = getIndexTemplate();
-  html = html.replace(/<title>[\s\S]*?<\/title>/i, "");
+  html = html.replace(/<title\b[^>]*>[\s\S]*?<\/title>/gi, "");
   html = html.replace(/<meta\s+(?:name|property)=["'](?:description|robots|og:[^"']+|twitter:[^"']+)["'][^>]*>/gi, "");
   html = html.replace(/<link\s+rel=["']canonical["'][^>]*>/gi, "");
   html = html.replace(/<script\s+type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi, "");
   html = html.replace(/<\/head>/i, `${seoTags(seo)}\n</head>`);
   const crawlable = `<noscript><main>${visibleHtml}</main></noscript>`;
-  return html.replace(/<div\s+id=["']root["'][^>]*><\/div>/i, `<div id="root"></div>${crawlable}`);
+  return html.replace(/<div\s+id=["']root["'][^>]*><\/div>/i, (root) => `${root}${crawlable}`);
+}
+
+function sendHtml(res, status, html, cacheControl = "no-cache, no-store, must-revalidate") {
+  return res
+    .status(status)
+    .set("Content-Type", "text/html; charset=utf-8")
+    .set("Cache-Control", cacheControl)
+    .set("Vary", "Host")
+    .set("X-Content-Type-Options", "nosniff")
+    .send(html);
+}
+
+function errorHtml(title, description) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}"><meta name="robots" content="noindex,follow"></head><body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></main></body></html>`;
 }
 
 function slugify(value) {
@@ -94,15 +119,15 @@ function productLinks(products, seller, includeDescriptions = false) {
 
 async function renderShop(res, seller) {
   const products = await Product.findAll({ where: { seller_id: seller.id }, attributes: ["id", "titleKu", "titleAr"], order: [["updatedAt", "DESC"]], limit: 80 });
-  const seo = buildShopSeo(seller);
-  return res.type("html").send(renderHtml(seo, `<h1>${escapeHtml(seo.ogTitle)}</h1><p>${escapeHtml(seo.description)}</p>${productLinks(products, seller)}`));
+  const seo = buildShopHomeSeo(seller);
+  return sendHtml(res, 200, injectSeoIntoHtml(seo, `<h1>${escapeHtml(seo.ogTitle)}</h1><p>${escapeHtml(seo.description)}</p>${productLinks(products, seller)}`));
 }
 
 async function renderProduct(res, seller, productId) {
   const product = await Product.findOne({ where: { id: productId, seller_id: seller.id }, include: PRODUCT_INCLUDE });
   if (!product) return res.status(404).type("html").send("<!doctype html><title>Product not found</title><meta name=\"robots\" content=\"noindex\"><h1>Product not found</h1>");
   const seo = buildProductSeo(product, seller);
-  return res.type("html").send(renderHtml(seo, `<h1>${escapeHtml(seo.ogTitle)}</h1><img src="${escapeHtml(seo.image)}" alt="${escapeHtml(`${seo.ogTitle} - ${seller.shop_name}`)}"><p>${escapeHtml(seo.description)}</p>`));
+  return res.type("html").send(injectSeoIntoHtml(seo, `<h1>${escapeHtml(seo.ogTitle)}</h1><img src="${escapeHtml(seo.image)}" alt="${escapeHtml(`${seo.ogTitle} - ${seller.shop_name}`)}"><p>${escapeHtml(seo.description)}</p>`));
 }
 
 async function renderCategory(res, seller, categorySlug, subcategorySlug) {
@@ -118,7 +143,51 @@ async function renderCategory(res, seller, categorySlug, subcategorySlug) {
     attributes: ["id", "titleKu", "titleAr", "descriptionKu", "descriptionAr"], order: [["updatedAt", "DESC"]], limit: 80,
   });
   const seo = categorySeo(seller, categoryName, subcategoryName, [categorySlug, subcategorySlug].filter(Boolean).join("/"));
-  return res.type("html").send(renderHtml(seo, `<h1>${escapeHtml(seo.ogTitle)}</h1><p>${escapeHtml(seo.description)}</p>${productLinks(products, seller, true)}`));
+  return res.type("html").send(injectSeoIntoHtml(seo, `<h1>${escapeHtml(seo.ogTitle)}</h1><p>${escapeHtml(seo.description)}</p>${productLinks(products, seller, true)}`));
+}
+
+function mainSiteSeo() {
+  const canonicalUrl = `https://${process.env.BASE_DOMAIN || "dwkanlink.com"}/`;
+  const description = truncateMetaDescription(
+    "Create your online shop and sell products with Dwkan Link.",
+  );
+  const image = getAbsoluteImageUrl(null);
+  return {
+    title: "Dwkan Link", ogTitle: "Dwkan Link", description, canonicalUrl,
+    image, type: "website",
+    jsonLd: {
+      "@context": "https://schema.org", "@type": "Organization",
+      name: "Dwkan Link", description, url: canonicalUrl, logo: image, image,
+    },
+  };
+}
+
+export async function serveHomepageSeo(req, res) {
+  const host = getCleanHost(req);
+  try {
+    if (isMainDomain(host)) {
+      return sendHtml(res, 200, injectSeoIntoHtml(mainSiteSeo(), "<h1>Dwkan Link</h1>"));
+    }
+
+    if (!isValidShopSubdomain(host)) {
+      return sendHtml(res, 404, errorHtml("Shop Not Found", "The requested shop does not exist."));
+    }
+    const shopName = getShopNameFromHost(host);
+
+    const seller = await Seller.findOne({ where: { shop_name: shopName } });
+    if (!seller) {
+      return sendHtml(res, 404, errorHtml("Shop Not Found", "The requested shop does not exist."));
+    }
+
+    return renderShop(res, seller);
+  } catch (error) {
+    console.error("Shop homepage SEO failed:", error);
+    return sendHtml(
+      res,
+      500,
+      errorHtml("Page Unavailable", "The shop page is temporarily unavailable."),
+    );
+  }
 }
 
 export default async function seoPrerender(req, res, next) {
