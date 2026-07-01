@@ -27,6 +27,12 @@ function extractPrices(variants) {
     .filter((price) => price !== null);
 }
 
+export function getCurrency(product) {
+  if (product?.priceType === "IQD") return "IQD";
+  if (product?.priceType === "USD") return "USD";
+  return "IQD";
+}
+
 function calculateProductSeoPricing(product = {}) {
   // Parse both independently. Never concatenate them: they are localized
   // representations of the same variants, not two separate price catalogs.
@@ -39,9 +45,7 @@ function calculateProductSeoPricing(product = {}) {
   const variantPrices = primaryPrices.length ? primaryPrices : arabicPrices;
   const distinctVariantPrices = [...new Set(variantPrices)];
   const realPrice = validPositiveNumber(product.realPrice);
-  const currency = ["IQD", "USD"].includes(product.priceType)
-    ? product.priceType
-    : "IQD";
+  const currency = getCurrency(product);
 
   return {
     price: realPrice ?? (variantPrices.length ? Math.min(...variantPrices) : 0),
