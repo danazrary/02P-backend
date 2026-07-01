@@ -30,6 +30,8 @@ function seoTags(seo) {
 <meta property="og:image" content="${escapeHtml(seo.image)}">
 <meta property="og:url" content="${escapeHtml(seo.canonicalUrl)}">
 <meta property="og:site_name" content="Dwkan Link">
+${seo.type === "product" ? `<meta property="product:price:amount" content="${escapeHtml(seo.price)}">
+<meta property="product:price:currency" content="${escapeHtml(seo.currency)}">` : ""}
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="${escapeHtml(seo.ogTitle)}">
 <meta name="twitter:description" content="${escapeHtml(seo.description)}">

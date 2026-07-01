@@ -1,3 +1,8 @@
+import {
+  getProductSeoPrice,
+  getProductSeoPriceRange,
+} from "./productSeoPrice.js";
+
 const DEFAULT_ORIGIN = "https://dwkanlink.com";
 const DEFAULT_IMAGE_ORIGIN = "https://images.dwkanlink.com";
 const RESERVED_SUBDOMAINS = new Set([
@@ -93,13 +98,6 @@ function inStock(product) {
   return product?.stock == null || Number(product.stock) > 0;
 }
 
-function effectivePrice(product) {
-  const raw = Number(product?.realPrice ?? 0);
-  return product?.hasDiscount && Number(product?.discount_percent) > 0
-    ? raw * (1 - Number(product.discount_percent) / 100)
-    : raw;
-}
-
 export function buildProductSeo(product, seller) {
   const shopName = stripHtml(seller?.shop_name || seller?.name || "Shop");
   const productTitle = localized(product?.titleKu, product?.titleAr, `Product ${product?.id || ""}`);
@@ -110,6 +108,8 @@ export function buildProductSeo(product, seller) {
   const canonicalUrl = `https://${seller.shop_name}.${baseDomain}/p/${product.id}`;
   const images = productImages(product);
   if (!images.length) images.push(getAbsoluteImageUrl(null));
+  const seoPrice = getProductSeoPrice(product);
+  const seoPriceRange = getProductSeoPriceRange(product);
   return {
     title: `${productTitle} | ${shopName}`,
     ogTitle: productTitle,
@@ -117,9 +117,12 @@ export function buildProductSeo(product, seller) {
     canonicalUrl,
     image: images[0],
     images,
+    price: seoPrice.price,
+    currency: seoPrice.currency,
     type: "product",
     jsonLd: buildJsonLd("product", {
       product, shopName, productTitle, description, canonicalUrl, images,
+      seoPrice, seoPriceRange,
     }),
   };
 }
@@ -141,16 +144,24 @@ export const buildShopHomeSeo = buildShopSeo;
 
 export function buildJsonLd(type, data) {
   if (type === "product") {
-    const currency = data.product?.priceType === "USD" ? "USD" : "IQD";
+    const priceSpecification = data.seoPriceRange
+      ? {
+          "@type": "PriceSpecification",
+          minPrice: data.seoPriceRange.lowPrice,
+          maxPrice: data.seoPriceRange.highPrice,
+          priceCurrency: data.seoPrice.currency,
+        }
+      : null;
     return {
       "@context": "https://schema.org", "@type": "Product",
       name: data.productTitle, description: data.description, image: data.images,
       sku: String(data.product.id), brand: { "@type": "Brand", name: data.shopName },
       offers: {
-        "@type": "Offer", price: effectivePrice(data.product).toFixed(2),
-        priceCurrency: currency,
+        "@type": "Offer", price: data.seoPrice.price,
+        priceCurrency: data.seoPrice.currency,
         availability: `https://schema.org/${inStock(data.product) ? "InStock" : "OutOfStock"}`,
         url: data.canonicalUrl,
+        ...(priceSpecification ? { priceSpecification } : {}),
       },
     };
   }
