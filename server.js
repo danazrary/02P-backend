@@ -401,6 +401,7 @@ if (fs.existsSync(frontendDistPath)) {
         .status(404)
         .json({ error: "API route not found", path: req.path });
     }
+    res.set("Cache-Control", "no-cache, no-store, must-revalidate");
     res.sendFile(path.join(frontendDistPath, "index.html"));
   });
 }
