@@ -39,9 +39,8 @@ ${seo.type === "product" ? `<meta property="product:price:amount" content="${esc
 <script type="application/ld+json">${safeJson(seo.jsonLd)}</script>`;
 }
 
-let indexTemplate;
+let indexTemplateCache = null;
 function getIndexTemplate() {
-  if (indexTemplate) return indexTemplate;
   const configuredPath = process.env.FRONTEND_DIST_PATH
     ? path.resolve(process.env.FRONTEND_DIST_PATH, "index.html")
     : null;
@@ -58,11 +57,26 @@ function getIndexTemplate() {
       `Frontend index.html not found. Set FRONTEND_DIST_PATH (expected ${configuredPath || "/var/www/02P-frontend/dist/index.html"}).`,
     );
   }
-  indexTemplate = fs.readFileSync(file, "utf8");
-  if (!/<\/head>/i.test(indexTemplate) || !/<div\s+id=["']root["'][^>]*>/i.test(indexTemplate)) {
+  const stats = fs.statSync(file);
+  if (
+    indexTemplateCache?.file === file &&
+    indexTemplateCache.mtimeMs === stats.mtimeMs &&
+    indexTemplateCache.size === stats.size
+  ) {
+    return indexTemplateCache.html;
+  }
+
+  const html = fs.readFileSync(file, "utf8");
+  if (!/<\/head>/i.test(html) || !/<div\s+id=["']root["'][^>]*>/i.test(html)) {
     throw new Error(`Invalid Vite index template: ${file}`);
   }
-  return indexTemplate;
+  indexTemplateCache = {
+    file,
+    mtimeMs: stats.mtimeMs,
+    size: stats.size,
+    html,
+  };
+  return html;
 }
 
 export function injectSeoIntoHtml(seo, visibleHtml = "") {

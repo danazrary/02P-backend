@@ -107,7 +107,40 @@ app.use(passport.initialize());
 app.use(cors(corsOptions));
 
 app.use("/api", apiLimiter); // Extra protection for API routes
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'self'"],
+        objectSrc: ["'none'"],
+        scriptSrc: [
+          "'self'",
+          "https://connect.facebook.net",
+          "https://www.googletagmanager.com",
+          "https://www.google-analytics.com",
+        ],
+        connectSrc: [
+          "'self'",
+          "https://dwkanlink.com",
+          "https://www.googletagmanager.com",
+          "https://www.google-analytics.com",
+          "https://region1.google-analytics.com",
+          "https://www.facebook.com",
+          "https://graph.facebook.com",
+        ],
+        workerSrc: ["'self'", "blob:"],
+        imgSrc: ["'self'", "https:", "data:", "blob:"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        fontSrc: ["'self'", "data:"],
+        manifestSrc: ["'self'"],
+        frameSrc: ["https://www.googletagmanager.com"],
+        formAction: ["'self'"],
+        frameAncestors: ["'self'"],
+      },
+    },
+  }),
+);
 app.use(hpp());
 app.use(bodyParser.json({ limit: process.env.BODY_LIMIT || "10mb" }));
 app.use(
