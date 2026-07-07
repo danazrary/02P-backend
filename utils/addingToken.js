@@ -8,7 +8,11 @@ const isSecure =
 
 // Centralized cookie options for subdomain support
 // In production, cookies are shared across *.dwkanlink.com via domain attribute
-const baseDomain = process.env.BASE_DOMAIN || "dwkanlink.com";
+const baseDomain = (process.env.BASE_DOMAIN || "dwkanlink.com")
+  .trim()
+  .replace(/^https?:\/\//, "")
+  .replace(/^\./, "")
+  .split(":")[0];
 function cookieOpts(maxAge) {
   const opts = {
     httpOnly: true,
@@ -18,7 +22,7 @@ function cookieOpts(maxAge) {
     path: "/",
   };
   if (isSecure) {
-    opts.domain = `.${baseDomain}`;
+    opts.domain = baseDomain;
   }
   return opts;
 }
@@ -32,7 +36,7 @@ export function clearCookieOpts() {
     path: "/",
   };
   if (isSecure) {
-    opts.domain = `.${baseDomain}`;
+    opts.domain = baseDomain;
   }
   return opts;
 }

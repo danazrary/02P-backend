@@ -384,6 +384,13 @@ const frontendDistPath =
   path.join(process.cwd(), "..", "frontend", "dist");
 
 if (fs.existsSync(frontendDistPath)) {
+  // The worker must always be revalidated; caching it as an immutable asset
+  // prevents clients from discovering new cache versions after a deploy.
+  app.get("/sw.js", (req, res) => {
+    res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.sendFile(path.join(frontendDistPath, "sw.js"));
+  });
+
   // Serve hashed assets (CSS, JS, images) with long-term caching
   app.use(
     express.static(frontendDistPath, {

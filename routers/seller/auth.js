@@ -211,15 +211,9 @@ router.post("/login", async (req, res) => {
       await seller.update({ deletion_requested_at: null });
     }
 
-    const token = jwt.sign(
-      { id: seller.id, email: seller.email, isSeller: true },
-      process.env.JWT_SECRET,
-      { expiresIn: "24h" },
-    );
-
     sellerToken(seller.id, seller.email, seller.shop_name, res);
 
-    return res.json({ success: true, token, message: "Login successful" });
+    return res.json({ success: true, message: "Login successful" });
   } catch (err) {
     console.error("/login error", err);
     return res.status(500).json({ success: false, message: "Server error" });
