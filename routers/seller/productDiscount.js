@@ -222,7 +222,6 @@ router.put("/products-discount/add", jwtVerifySellerToken, async (req, res) => {
       whereClause.id = { [Op.in]: productIds };
     }
 
-    // âš ï¸ IMPORTANT: Convert dates to UTC before storing in database
     const utcStartDate = toUTC(startDate);
     const utcEndDate = toUTC(endDate);
 

@@ -516,7 +516,7 @@ router.post(
         }
       }
 
-      // � Handle social media links update
+      // Handle social media links update
       if (socialLinks) {
         const parsedSocialLinks =
           typeof socialLinks === "string"

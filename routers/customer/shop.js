@@ -400,12 +400,12 @@ router.get("/:shopName/search", async (req, res) => {
   }
 });
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* -------------------------------------------------------------
    POST /api/customer/track-visit
    Called by the frontend once per page-load session to record
    a shop visitor. Deduplication is handled by the frontend
    using a module-level in-memory Set (resets on page refresh).
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+------------------------------------------------------------- */
 router.post("/track-visit", detectSeller, async (req, res) => {
   try {
     // Skip if the requester is the seller viewing their own shop

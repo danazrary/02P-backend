@@ -21,7 +21,7 @@ router.get("/category-products/:sellerId", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
   const offset = parseInt(req.query.offset) || 0;
 
-  // â”€â”€ LOG: incoming request â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // LOG: incoming request
   console.log("\n========== [CATEGORY PRODUCTS] INCOMING REQUEST ==========");
   console.log(`  Method : GET`);
   console.log(`  URL    : /api/seller/category-products/${sellerId}`);
@@ -111,7 +111,7 @@ router.get("/category-products/:sellerId", async (req, res) => {
 
     const hasMore = offset + limit < total;
 
-    // â”€â”€ LOG: outgoing response â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // LOG: outgoing response
     console.log(
       "\n========== [CATEGORY PRODUCTS] OUTGOING RESPONSE ==========",
     );
@@ -141,7 +141,7 @@ router.get("/category-products/:sellerId", async (req, res) => {
       hasMore,
     });
   } catch (error) {
-    console.error("\n[CATEGORY PRODUCTS] âŒ ERROR:", error.message);
+    console.error("\n[CATEGORY PRODUCTS] SERVER ERROR:", error.message);
     console.error(error.stack);
     return res.status(500).json({
       success: false,

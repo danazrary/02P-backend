@@ -22,7 +22,7 @@ import { getCategoryMap } from "../../utils/categoryTranslations.js";
 
 const router = Router();
 
-// â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Constants
 const FREE_PLAN_ID = 1;
 const TRIAL_PLAN_ID = 9;
 const FREE_PLAN_END_DATE = new Date("2099-12-31");
@@ -31,7 +31,7 @@ const DELETION_PERIOD_DAYS = 16;
 const MAX_PRODUCT_LIMIT = 100;
 const DEFAULT_PRODUCT_LIMIT = 30;
 
-// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Helpers
 
 /**
  * Safely parse a JSON string or return the value as-is if already an object.
@@ -207,14 +207,14 @@ function parseRedLine(raw) {
   };
 }
 
-// â”€â”€â”€ Route â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Route
 
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
   try {
     const { id } = req.user;
     const now = new Date();
 
-    // â”€â”€ Validate & parse query params â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Validate & parse query params
     const selectedPlan = parseSelectedPlan(req.query.selectedPlan);
     const productLimit = Math.min(
       Math.max(
@@ -228,7 +228,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       0,
     );
 
-    // â”€â”€ 1. Fetch seller (READ) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // 1. Fetch seller (READ)
     const seller = await Seller.findByPk(id);
     if (!seller) {
       res.clearCookie("s_t", clearCookieOpts());
@@ -285,7 +285,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       }
     }
 
-    // â”€â”€ 4. Fetch plan details (READ) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // 4. Fetch plan details (READ)
     const planRow = await Plan.findByPk(sellerPlanRecord.plan_id);
     const planName = planRow?.name ?? "Free";
 
@@ -293,7 +293,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
     const isFree = sellerPlanRecord.plan_id === FREE_PLAN_ID;
     const isPaid = !isTrial && !isFree;
 
-    // â”€â”€ 6. Expiry checks (writes isolated inside handleExpiredPlan) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // 6. Expiry checks (writes isolated inside handleExpiredPlan)
     if (isTrial) {
       const expiredResponse = await handleExpiredPlan(
         seller,
@@ -316,7 +316,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       if (expiredResponse) return res.status(200).json(expiredResponse);
     }
 
-    // â”€â”€ 7. Parallel reads: counts, offers, products, storage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // 7. Parallel reads: counts, offers, products, storage
     const [
       currentProductCount,
       currentOfferCount,
@@ -433,7 +433,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       };
     }
 
-    // â”€â”€ 11. Success response â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // 11. Success response
     return res.status(200).json({
       success: true,
       error: false,
@@ -603,7 +603,7 @@ router.post("/activate-free-plan", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    console.log(`âœ… Activated free plan (ID 30) for seller ${id}`);
+    console.log(`OK Activated free plan (ID 30) for seller ${id}`);
 
     return res.status(200).json({
       success: true,

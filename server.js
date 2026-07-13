@@ -34,7 +34,7 @@ const envFile = isHttpsMode ? ".env.https" : ".env";
 dotenv.config({ path: envFile });
 console.log(`🔧 Loading environment from: ${envFile}`);
 
-// --- CREATE EXPRESS APP ---
+// CREATE EXPRESS APP
 const app = express();
 
 const isProductionEnvironment =
@@ -89,7 +89,7 @@ app.use(passport.initialize());
 
 // place BEFORE server start (near end of app file, but after routers)
 
-// --- MIDDLEWARE ---
+// MIDDLEWARE
 /* app.use((req, res, next) => {
   const origin = process.env.CORS_ORIGIN || "";
   if (origin) res.header("Access-Control-Allow-Origin", origin);
@@ -154,7 +154,7 @@ if (typeof sanitizeHtmlMiddleware === "function")
 app.use(cookieParser(process.env.COOKIE_SECRET_PARSER || ""));
 app.use(csrfMiddleware);
 
-// --- SUBDOMAIN DETECTION ---
+// SUBDOMAIN DETECTION
 // Extract shopName from subdomain (e.g. easy_store.dwkanlink.com → shopName = "easy_store")
 const RESERVED_SUBDOMAINS = new Set([
   "www",
@@ -186,7 +186,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- OLD URL → SUBDOMAIN REDIRECT ---
+// OLD URL → SUBDOMAIN REDIRECT
 // Redirect path-based shop URLs to subdomain format (301 permanent)
 import { RESERVED_SHOP_NAMES } from "./utils/reservedShopNames.js";
 const RESERVED_PATHS = new Set([
@@ -376,7 +376,7 @@ app.post("/test", async (req, res) => {
 app.get("/test", (req, res) => res.send("Check your console for cookies."));
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
-// --- FRONTEND STATIC FILES + SPA FALLBACK ---
+// FRONTEND STATIC FILES + SPA FALLBACK
 // Serve the built React app so the VPS works without a separate Nginx static config.
 // In production the frontend dist lives one level up: ../frontend/dist
 const frontendDistPath =
@@ -413,7 +413,7 @@ if (fs.existsSync(frontendDistPath)) {
   });
 }
 
-// --- ERROR HANDLERS ---
+// ERROR HANDLERS
 // 404 handler - must be after all routes
 app.use((req, res) => {
   res.status(404).json({
@@ -438,7 +438,7 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json(errorResponse);
 });
 
-// --- DATABASE INITIALIZATION ---
+// DATABASE INITIALIZATION
 async function initializeDatabase() {
   try {
     await sequelize.authenticate();
@@ -454,12 +454,12 @@ async function initializeDatabase() {
   }
 }
 
-// --- SERVER CONFIG ---
+// SERVER CONFIG
 const port = Number(process.env.PORT || 3001);
 const mode = process.env.ENVIRONMENT?.trim() || "product";
 const bindHost = process.env.BIND_HOST || "0.0.0.0";
 
-// --- SERVER START FUNCTIONS ---
+// SERVER START FUNCTIONS
 function startHttpsServer() {
   try {
     const privateKey = fs.readFileSync(process.env.HTTPS_KEY_PATH, "utf8");
@@ -487,7 +487,7 @@ function startHttpServer() {
   });
 }
 
-// --- START SERVER ---
+// START SERVER
 async function startServer() {
   // Initialize database first
   await initializeDatabase();
@@ -506,7 +506,7 @@ startServer().catch((err) => {
   process.exit(1);
 });
 
-// --- CLEAN SHUTDOWN ---
+// CLEAN SHUTDOWN
 process.on("SIGINT", () => {
   console.log("🛑 Received SIGINT — shutting down server...");
   process.exit(0);

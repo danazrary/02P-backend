@@ -21,7 +21,7 @@ const Product = sequelize.define(
 
     language: {
       type: DataTypes.ENUM("arabic", "kurdish", "both"),
-      defaultValue: "kurdish", // âœ… default is kurdish now
+      defaultValue: "kurdish", // OK default is kurdish now
     },
     titleKu: {
       type: DataTypes.STRING,

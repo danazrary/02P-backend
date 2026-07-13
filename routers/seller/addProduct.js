@@ -445,7 +445,7 @@ function normalizeCashbackPayload(body = {}) {
   }
 
   const cashbackType = body.cashbackType || "percentage";
-  if (!(["percentage", "fixed"].includes(cashbackType))) {
+  if (!["percentage", "fixed"].includes(cashbackType)) {
     const err = new Error("Invalid cashbackType");
     err.statusCode = 400;
     err.clientMessage = "cashbackType must be percentage or fixed.";
@@ -462,7 +462,10 @@ function normalizeCashbackPayload(body = {}) {
     err.clientMessage = "cashbackValue is required when cashback is enabled.";
     throw err;
   }
-  if (cashbackType === "percentage" && (cashbackValue < 1 || cashbackValue > 100)) {
+  if (
+    cashbackType === "percentage" &&
+    (cashbackValue < 1 || cashbackValue > 100)
+  ) {
     const err = new Error("Invalid cashback percentage");
     err.statusCode = 400;
     err.clientMessage = "Percentage cashback must be between 1 and 100.";
@@ -551,8 +554,8 @@ function getProductFieldLimit(plan) {
 
 /**
  * Returns max allowed price combinations for the plan:
- *   Basic/Pro  â†’ 25   (5Ã—5)
- *   Plus/Business Pro â†’ 225 (15Ã—15)
+ *   Basic/Pro  -> 25   (5—5)
+ *   Plus/Business Pro -> 225 (15—15)
  */
 function getMaxVariantPriceCombinations(plan) {
   return getProductFieldLimit(plan) === 15 ? 225 : 125;
@@ -900,10 +903,13 @@ router.post(
         isAvailable: isAvailableBody,
       } = req.body;
 
+      console.log(
+        "[add-product] req.body:",
+        req.body,
+        "--------------------------",
+      );
 
-      console.log("[add-product] req.body:", req.body,"--------------------------");
-
-      // --- Validate stock ---
+      // Validate stock
       let parsedStock = null;
       if (stockBody !== undefined && stockBody !== "" && stockBody !== null) {
         const rawStock = Number(stockBody);
@@ -917,7 +923,7 @@ router.post(
         parsedStock = rawStock;
       }
 
-      // --- Validate isAvailable ---
+      // Validate isAvailable
       const isAvailablePost =
         isAvailableBody === "false" || isAvailableBody === false ? false : true;
 
@@ -1066,10 +1072,12 @@ router.post(
 
       const imageUploadResults = await Promise.all(
         imageFiles.map((file, i) =>
-          uploadToR2WithThumb(file.buffer, basePath, titleKu || titleAr).then((result) => ({
-            ...result,
-            isMain: i === 0,
-          })),
+          uploadToR2WithThumb(file.buffer, basePath, titleKu || titleAr).then(
+            (result) => ({
+              ...result,
+              isMain: i === 0,
+            }),
+          ),
         ),
       );
 
@@ -1184,7 +1192,7 @@ router.put(
       const sellerId = req.user.id;
       const { productId } = req.params;
       console.log(
-        `âœï¸  Edit-product ${productId} seller ${sellerId}  env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
+        `[Edit-product] ${productId} seller ${sellerId}  env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
       );
 
       const product = await Product.findOne({
@@ -1235,7 +1243,7 @@ router.put(
         isAvailable: isAvailableBody,
       } = req.body;
 
-      // --- Validate stock ---
+      // Validate stock
       let parsedStockEdit = null;
       if (stockBody !== undefined && stockBody !== "" && stockBody !== null) {
         const rawStock = Number(stockBody);
@@ -1249,7 +1257,7 @@ router.put(
         parsedStockEdit = rawStock;
       }
 
-      // --- Validate isAvailable ---
+      // Validate isAvailable
       const isAvailableEdit =
         isAvailableBody === "false" || isAvailableBody === false ? false : true;
 
@@ -1397,7 +1405,11 @@ router.put(
           const file = imageFiles[i];
           const basePath = `shops/${sellerId}/products/${productId}`;
           const { mainKey, thumbKey, sizeBytes, totalSizeBytes } =
-            await uploadToR2WithThumb(file.buffer, basePath, titleKu || titleAr);
+            await uploadToR2WithThumb(
+              file.buffer,
+              basePath,
+              titleKu || titleAr,
+            );
           totalUploadedBytes += totalSizeBytes;
           await ProductImage.create({
             product_id: productId,
@@ -1743,7 +1755,3 @@ router.get("/products/shop/:shopName", async (req, res) => {
 });
 
 export default router;
-
-
-
-

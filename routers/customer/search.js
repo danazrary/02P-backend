@@ -8,10 +8,10 @@ import { getCategoryMap } from "../../utils/categoryTranslations.js";
 
 const router = Router();
 
-// ---------------------------------------------------------------------------
+// 
 // GET /api/customer/search
 // Query: q, shopName, type, hasDiscount, freeDelivery, sort, limit, offset
-// ---------------------------------------------------------------------------
+// 
 router.get("/search", async (req, res) => {
   try {
     const {
@@ -49,7 +49,7 @@ router.get("/search", async (req, res) => {
     const sellerId = seller.id;
     const trimmedQ = q.trim();
 
-    // â”€â”€ Categories type: return distinct categories matching query â”€â”€
+    // Categories type: return distinct categories matching query
     if (type === "categories") {
       const normalizedQuery = trimmedQ.toLocaleLowerCase();
       const rows = Object.entries(getCategoryMap(seller))
@@ -70,7 +70,7 @@ router.get("/search", async (req, res) => {
       });
     }
 
-    // â”€â”€ Products type â”€â”€
+    // Products type
     const where = { seller_id: sellerId };
 
     if (trimmedQ.length >= 2) {
@@ -161,11 +161,11 @@ router.get("/search", async (req, res) => {
   }
 });
 
-// ---------------------------------------------------------------------------
+// 
 // GET /api/customer/search/suggestions
 // Fast title-only suggestions for live dropdown
 // Query: q, shopName
-// ---------------------------------------------------------------------------
+// 
 router.get("/search/suggestions", async (req, res) => {
   try {
     const { q = "", shopName } = req.query;
@@ -211,11 +211,11 @@ router.get("/search/suggestions", async (req, res) => {
   }
 });
 
-// ---------------------------------------------------------------------------
+// 
 // GET /api/customer/search/trending
 // Most viewed products in a shop
 // Query: shopName
-// ---------------------------------------------------------------------------
+// 
 router.get("/search/trending", async (req, res) => {
   try {
     const { shopName } = req.query;

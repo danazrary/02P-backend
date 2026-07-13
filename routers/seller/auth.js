@@ -117,7 +117,7 @@ function generateCodeChallenge(verifier) {
 // Temporary in-memory store (use Redis in production)
 const pkceStore = {};
 
-// --- 1) REGISTER ---
+// 1) REGISTER
 router.post("/register", async (req, res) => {
   try {
     const { email, password, confirmPassword, lang = "en" } = req.body;
@@ -175,7 +175,7 @@ router.post("/register", async (req, res) => {
   }
 });
 
-// --- 2) LOGIN ---
+// 2) LOGIN
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -220,7 +220,7 @@ router.post("/login", async (req, res) => {
   }
 });
 
-// --- 3) FORGOT PASSWORD ---
+// 3) FORGOT PASSWORD
 router.post("/forgot-password", async (req, res) => {
   try {
     const { email, lang = "en" } = req.body;
@@ -251,7 +251,7 @@ router.post("/forgot-password", async (req, res) => {
   }
 });
 
-// --- 4) VERIFY CODE ---
+// 4) VERIFY CODE
 router.post("/verify-code", async (req, res) => {
   try {
     const { email, code, purpose = "register" } = req.body;
@@ -316,7 +316,7 @@ router.post("/verify-code", async (req, res) => {
   }
 });
 
-// --- 5) RESET PASSWORD ---
+// 5) RESET PASSWORD
 router.post("/reset-password", async (req, res) => {
   try {
     const { email, code, newPassword, confirmPassword } = req.body;
@@ -370,7 +370,7 @@ router.post("/reset-password", async (req, res) => {
   }
 });
 
-// --- 6) CHANGE PASSWORD (settings) ---
+// 6) CHANGE PASSWORD (settings)
 router.post("/change-password", checkMe, async (req, res) => {
   try {
     const { oldPassword, newPassword, confirmPassword } = req.body;
