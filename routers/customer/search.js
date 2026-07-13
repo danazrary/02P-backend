@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import Product from "../../database/products.js";
 import Seller from "../../database/seller.js";
 import ProductImage from "../../database/productImages.js";
@@ -49,7 +49,7 @@ router.get("/search", async (req, res) => {
     const sellerId = seller.id;
     const trimmedQ = q.trim();
 
-    // ── Categories type: return distinct categories matching query ──
+    // â”€â”€ Categories type: return distinct categories matching query â”€â”€
     if (type === "categories") {
       const normalizedQuery = trimmedQ.toLocaleLowerCase();
       const rows = Object.entries(getCategoryMap(seller))
@@ -70,7 +70,7 @@ router.get("/search", async (req, res) => {
       });
     }
 
-    // ── Products type ──
+    // â”€â”€ Products type â”€â”€
     const where = { seller_id: sellerId };
 
     if (trimmedQ.length >= 2) {
@@ -124,6 +124,12 @@ router.get("/search", async (req, res) => {
         "discountType",
         "discountEndDate",
         "free_delivery",
+        "hasCashback",
+        "cashbackType",
+        "cashbackValue",
+        "cashbackStartDate",
+        "cashbackEndDate",
+        "cashbackMinOrderAmount",
         "hasRealPrice",
         "options",
         "variants",
@@ -245,3 +251,4 @@ router.get("/search/trending", async (req, res) => {
 });
 
 export default router;
+

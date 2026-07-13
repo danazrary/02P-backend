@@ -1,5 +1,5 @@
-/**
- * Check and clean expired discounts and free delivery for products
+﻿/**
+ * Check and clean expired discounts, free delivery, and cashback for products
  * @param {Array} products - Array of product objects from database
  * @returns {Promise<Array>} - Array of products with expired data cleaned
  */
@@ -37,11 +37,26 @@ export async function checkAndCleanProductExpiration(products) {
       }
     }
 
+    // Check cashback expiration
+    if (product.hasCashback && product.cashbackEndDate) {
+      const cashbackEndDate = new Date(product.cashbackEndDate);
+      if (cashbackEndDate < currentDate) {
+        updates.hasCashback = false;
+        updates.cashbackEndDate = null;
+        updates.cashbackStartDate = null;
+        updates.cashbackValue = null;
+        updates.cashbackMinOrderAmount = null;
+        needsUpdate = true;
+      }
+    }
+
+
     // Update product in database if needed
+
     if (needsUpdate) {
       await product.update(updates);
       console.log(
-        `🗑️ Cleaned expired data for product ${product.id} - Discount: ${updates.hasDiscount !== undefined}, Free Delivery: ${updates.free_delivery !== undefined}`,
+        `ðŸ—‘ï¸ Cleaned expired data for product ${product.id} - Discount: ${updates.hasDiscount !== undefined}, Free Delivery: ${updates.free_delivery !== undefined}`,
       );
     }
 
@@ -87,13 +102,28 @@ export async function checkAndCleanSingleProduct(product) {
     }
   }
 
+  // Check cashback expiration
+  if (product.hasCashback && product.cashbackEndDate) {
+    const cashbackEndDate = new Date(product.cashbackEndDate);
+    if (cashbackEndDate < currentDate) {
+      updates.hasCashback = false;
+      updates.cashbackEndDate = null;
+      updates.cashbackStartDate = null;
+      updates.cashbackValue = null;
+      updates.cashbackMinOrderAmount = null;
+      needsUpdate = true;
+    }
+  }
+
   // Update product in database if needed
   if (needsUpdate) {
     await product.update(updates);
     console.log(
-      `🗑️ Cleaned expired data for product ${product.id} - Discount: ${updates.hasDiscount !== undefined}, Free Delivery: ${updates.free_delivery !== undefined}`,
+      `ðŸ—‘ï¸ Cleaned expired data for product ${product.id} - Discount: ${updates.hasDiscount !== undefined}, Free Delivery: ${updates.free_delivery !== undefined}`,
     );
   }
 
   return product;
 }
+
+

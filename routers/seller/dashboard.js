@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { Op } from "sequelize";
 import sequelize from "../../database/sequelize.js";
 
@@ -22,7 +22,7 @@ import { getCategoryMap } from "../../utils/categoryTranslations.js";
 
 const router = Router();
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const FREE_PLAN_ID = 1;
 const TRIAL_PLAN_ID = 9;
 const FREE_PLAN_END_DATE = new Date("2099-12-31");
@@ -31,7 +31,7 @@ const DELETION_PERIOD_DAYS = 16;
 const MAX_PRODUCT_LIMIT = 100;
 const DEFAULT_PRODUCT_LIMIT = 30;
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Safely parse a JSON string or return the value as-is if already an object.
@@ -63,7 +63,7 @@ function parseSelectedPlan(raw) {
       return { name: parsed.name };
     }
   } catch {
-    // malformed input — ignore
+    // malformed input ignore
   }
   return null;
 }
@@ -183,7 +183,7 @@ async function handleExpiredPlan(
     };
   }
 
-  // phase === "deleted" — no write needed; admin cleanup handles actual deletion
+  // phase === "deleted" no write needed; admin cleanup handles actual deletion
   return {
     ...base,
     yourShopClose: true,
@@ -207,14 +207,14 @@ function parseRedLine(raw) {
   };
 }
 
-// ─── Route ────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Route â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
   try {
     const { id } = req.user;
     const now = new Date();
 
-    // ── Validate & parse query params ─────────────────────────────────────────
+    // â”€â”€ Validate & parse query params â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const selectedPlan = parseSelectedPlan(req.query.selectedPlan);
     const productLimit = Math.min(
       Math.max(
@@ -228,7 +228,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       0,
     );
 
-    // ── 1. Fetch seller (READ) ─────────────────────────────────────────────────
+    // â”€â”€ 1. Fetch seller (READ) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const seller = await Seller.findByPk(id);
     if (!seller) {
       res.clearCookie("s_t", clearCookieOpts());
@@ -240,12 +240,10 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // ── 2. Fetch existing seller plan (READ) ───────────────────────────────────
     let sellerPlanRecord = await SellerPlan.findOne({
       where: { seller_id: id },
     });
 
-    // ── 3. Create plan if missing (WRITE — isolated transaction) ──────────────
     if (!sellerPlanRecord) {
       const wantsTrial = selectedPlan?.name === "trial";
       let newPlanData;
@@ -287,16 +285,15 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       }
     }
 
-    // ── 4. Fetch plan details (READ) ───────────────────────────────────────────
+    // â”€â”€ 4. Fetch plan details (READ) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const planRow = await Plan.findByPk(sellerPlanRecord.plan_id);
     const planName = planRow?.name ?? "Free";
 
-    // ── 5. Plan type flags — derived exclusively from plan_id ─────────────────
     const isTrial = sellerPlanRecord.plan_id === TRIAL_PLAN_ID;
     const isFree = sellerPlanRecord.plan_id === FREE_PLAN_ID;
     const isPaid = !isTrial && !isFree;
 
-    // ── 6. Expiry checks (writes isolated inside handleExpiredPlan) ────────────
+    // â”€â”€ 6. Expiry checks (writes isolated inside handleExpiredPlan) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (isTrial) {
       const expiredResponse = await handleExpiredPlan(
         seller,
@@ -319,7 +316,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       if (expiredResponse) return res.status(200).json(expiredResponse);
     }
 
-    // ── 7. Parallel reads: counts, offers, products, storage ─────────────────
+    // â”€â”€ 7. Parallel reads: counts, offers, products, storage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const [
       currentProductCount,
       currentOfferCount,
@@ -368,6 +365,12 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
           "freeDeliveryStartDate",
           "freeDeliveryEndDate",
           "free_delivery",
+        "hasCashback",
+        "cashbackType",
+        "cashbackValue",
+        "cashbackStartDate",
+        "cashbackEndDate",
+        "cashbackMinOrderAmount",
           "options",
           "variants",
           "variantPrices",
@@ -388,22 +391,18 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       ensureSellerStorageUsage(id, planRow, { force: false }),
     ]);
 
-    // ── 8. Expired offer cleanup (WRITE — fire-and-forget, non-blocking) ──────
     SellerOffer.destroy({
       where: { seller_id: id, end_date: { [Op.lt]: now } },
     }).catch((err) =>
       console.error("[dashboard] Failed to delete expired offers:", err),
     );
 
-    // ── 9. Clean expired product discounts / free delivery ────────────────────
     const products = await checkAndCleanProductExpiration(rawProducts);
     const hasMoreProducts = productOffset + productLimit < totalProductsCount;
 
-    // ── 10. Red line processing (Baghdad timezone) ───────────────────────────
     const ku = parseRedLine(seller.red_line);
     const ar = parseRedLine(seller.red_lineAr);
 
-    // WRITE: clean up expired/invalid red_line fields in one call (fire-and-forget)
     if (ku.needsCleanup || ar.needsCleanup) {
       const updateObj = {};
       if (ku.needsCleanup) updateObj.red_line = null;
@@ -434,7 +433,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       };
     }
 
-    // ── 11. Success response ──────────────────────────────────────────────────
+    // â”€â”€ 11. Success response â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     return res.status(200).json({
       success: true,
       error: false,
@@ -604,7 +603,7 @@ router.post("/activate-free-plan", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    console.log(`✅ Activated free plan (ID 30) for seller ${id}`);
+    console.log(`âœ… Activated free plan (ID 30) for seller ${id}`);
 
     return res.status(200).json({
       success: true,
@@ -625,3 +624,4 @@ router.post("/activate-free-plan", jwtVerifySellerToken, async (req, res) => {
 });
 
 export default router;
+

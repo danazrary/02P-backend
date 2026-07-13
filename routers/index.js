@@ -3,6 +3,7 @@ import { Router } from "express";
 import adminControlCenterRouter from "./admin/ControlCenter.js";
 import adminAuthRouter from "./admin/auth.js";
 import adminHelpRouter from "./admin/help.js";
+import adminAiProductImportRouter from "../routes/adminAiProductImportRoutes.js";
 //seller routers
 import sellerAuthRouter from "./seller/auth.js";
 import sellerSettingsRouter from "./seller/setting.js";
@@ -21,6 +22,7 @@ import sellerCategoryProductsRouter from "./seller/categoryProducts.js";
 import sellerOrdersRouter from "./seller/orders.js";
 import sellerShopSectionsRouter from "./seller/shopSections.js";
 import sellerPushNotificationsRouter from "./seller/pushNotifications.js";
+import sellerAiProductRouter from "../routes/sellerAiProductRoutes.js";
 //customer routers
 import customerShopRouter from "./customer/shop.js";
 import customerProductRouter from "./customer/product.js";
@@ -34,6 +36,7 @@ const router = Router();
 router.use("/admin/control-center", adminControlCenterRouter);
 router.use("/admin/auth", adminAuthRouter);
 router.use("/admin/help", adminHelpRouter);
+router.use("/admin", adminAiProductImportRouter);
 //seller routers
 router.use("/seller/auth", sellerAuthRouter);
 router.use("/seller/setting", sellerSettingsRouter);
@@ -52,6 +55,7 @@ router.use("/seller", sellerCategoryProductsRouter);
 router.use("/seller", sellerOrdersRouter);
 router.use("/seller", sellerShopSectionsRouter);
 router.use("/seller", sellerPushNotificationsRouter);
+router.use("/seller", sellerAiProductRouter);
 //customer routers
 router.use("/customer", customerProductRouter);
 router.use("/customer", customerQuestionsRouter);

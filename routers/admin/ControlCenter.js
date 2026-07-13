@@ -7,6 +7,7 @@ import Product from "../../database/products.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import Question from "../../database/questions.js";
 import SellerUsage from "../../database/sellerUsage.js";
+import SellerAiUsage from "../../database/sellerAiUsage.js";
 import { checkMe, adminAuth } from "../../middlewares/jwtVerify.js";
 import { toUTC } from "../../utils/timezoneHandler.js";
 import { clearCookieOpts } from "../../utils/addingToken.js";
@@ -1015,6 +1016,118 @@ router.post("/extend-subscription/extend-plan", adminAuth, async (req, res) => {
   } catch (err) {
     console.error("extend-plan error:", err);
     return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error",
+    });
+  }
+});
+
+// Get AI usage statistics for all sellers or a specific seller
+router.post("/get-ai-usage", adminAuth, async (req, res) => {
+  try {
+    const { seller_id = null, timeframe = "all" } = req.body;
+    // timeframe: "daily", "monthly", "all"
+
+    let whereClause = { success: true };
+
+    // Calculate date range based on timeframe
+    let startDate = null;
+    const now = new Date();
+
+    if (timeframe === "daily") {
+      startDate = new Date(now);
+      startDate.setHours(0, 0, 0, 0);
+    } else if (timeframe === "monthly") {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+
+    if (startDate) {
+      whereClause.createdAt = { [Op.gte]: startDate };
+    }
+
+    if (seller_id) {
+      whereClause.seller_id = seller_id;
+    }
+
+    // Get AI usage records
+    const aiUsageRecords = await SellerAiUsage.findAll({
+      where: whereClause,
+      include: [
+        {
+          model: Seller,
+          as: "seller",
+          attributes: ["id", "name", "shop_name"],
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    });
+
+    // Group by seller and calculate statistics
+    const sellerStatsMap = {};
+
+    aiUsageRecords.forEach((record) => {
+      const sellerId = record.seller_id;
+      if (!sellerStatsMap[sellerId]) {
+        sellerStatsMap[sellerId] = {
+          sellerId,
+          sellerName: record.seller?.name,
+          shopName: record.seller?.shop_name,
+          totalRequests: 0,
+          successfulRequests: 0,
+          failedRequests: 0,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          estimatedTotalCost: 0,
+          actions: {},
+        };
+      }
+
+      const stats = sellerStatsMap[sellerId];
+      stats.totalRequests += 1;
+
+      if (record.success) {
+        stats.successfulRequests += 1;
+      } else {
+        stats.failedRequests += 1;
+      }
+
+      if (record.input_tokens) {
+        stats.totalInputTokens += record.input_tokens;
+      }
+      if (record.output_tokens) {
+        stats.totalOutputTokens += record.output_tokens;
+      }
+      if (record.total_tokens) {
+        stats.totalTokens += record.total_tokens;
+      }
+
+      if (record.estimated_input_cost_usd || record.estimated_output_cost_usd) {
+        const inputCost = parseFloat(record.estimated_input_cost_usd) || 0;
+        const outputCost = parseFloat(record.estimated_output_cost_usd) || 0;
+        stats.estimatedTotalCost += inputCost + outputCost;
+      }
+
+      // Track by action
+      const action = record.action || "unknown";
+      if (!stats.actions[action]) {
+        stats.actions[action] = 0;
+      }
+      stats.actions[action] += 1;
+    });
+
+    const sellerStats = Object.values(sellerStatsMap);
+
+    res.json({
+      success: true,
+      timeframe,
+      totalSellers: sellerStats.length,
+      data: sellerStats,
+    });
+  } catch (error) {
+    console.error("get-ai-usage error:", error);
+    res.status(500).json({
       success: false,
       error: true,
       message: "Server error",

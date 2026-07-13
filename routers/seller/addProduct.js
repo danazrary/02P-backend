@@ -1,4 +1,4 @@
-import express from "express";
+﻿import express from "express";
 import { v4 as uuidv4 } from "uuid";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
@@ -402,6 +402,118 @@ async function normalizeVideoLinks(videoLinks) {
   return normalizedLinks;
 }
 
+function parseBooleanInput(value) {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function parseOptionalDecimal(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    const err = new Error(`Invalid ${fieldName}`);
+    err.statusCode = 400;
+    err.clientMessage = `${fieldName} must be a valid number.`;
+    throw err;
+  }
+  return parsed;
+}
+
+function parseOptionalDate(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    const err = new Error(`Invalid ${fieldName}`);
+    err.statusCode = 400;
+    err.clientMessage = `${fieldName} must be a valid date.`;
+    throw err;
+  }
+  return parsed;
+}
+
+function normalizeCashbackPayload(body = {}) {
+  const hasCashback = parseBooleanInput(body.hasCashback);
+
+  if (!hasCashback) {
+    return {
+      hasCashback: false,
+      cashbackType: "percentage",
+      cashbackValue: null,
+      cashbackStartDate: null,
+      cashbackEndDate: null,
+      cashbackMinOrderAmount: null,
+    };
+  }
+
+  const cashbackType = body.cashbackType || "percentage";
+  if (!(["percentage", "fixed"].includes(cashbackType))) {
+    const err = new Error("Invalid cashbackType");
+    err.statusCode = 400;
+    err.clientMessage = "cashbackType must be percentage or fixed.";
+    throw err;
+  }
+
+  const cashbackValue = parseOptionalDecimal(
+    body.cashbackValue,
+    "cashbackValue",
+  );
+  if (cashbackValue === null) {
+    const err = new Error("Missing cashbackValue");
+    err.statusCode = 400;
+    err.clientMessage = "cashbackValue is required when cashback is enabled.";
+    throw err;
+  }
+  if (cashbackType === "percentage" && (cashbackValue < 1 || cashbackValue > 100)) {
+    const err = new Error("Invalid cashback percentage");
+    err.statusCode = 400;
+    err.clientMessage = "Percentage cashback must be between 1 and 100.";
+    throw err;
+  }
+  if (cashbackType === "fixed" && cashbackValue <= 0) {
+    const err = new Error("Invalid fixed cashback");
+    err.statusCode = 400;
+    err.clientMessage = "Fixed cashback must be positive.";
+    throw err;
+  }
+
+  const cashbackStartDate = parseOptionalDate(
+    body.cashbackStartDate,
+    "cashbackStartDate",
+  );
+  const cashbackEndDate = parseOptionalDate(
+    body.cashbackEndDate,
+    "cashbackEndDate",
+  );
+  if (
+    cashbackStartDate &&
+    cashbackEndDate &&
+    cashbackEndDate.getTime() <= cashbackStartDate.getTime()
+  ) {
+    const err = new Error("Invalid cashback date range");
+    err.statusCode = 400;
+    err.clientMessage = "cashbackEndDate must be after cashbackStartDate.";
+    throw err;
+  }
+
+  const cashbackMinOrderAmount = parseOptionalDecimal(
+    body.cashbackMinOrderAmount,
+    "cashbackMinOrderAmount",
+  );
+  if (cashbackMinOrderAmount !== null && cashbackMinOrderAmount < 0) {
+    const err = new Error("Invalid cashbackMinOrderAmount");
+    err.statusCode = 400;
+    err.clientMessage = "cashbackMinOrderAmount must be zero or greater.";
+    throw err;
+  }
+
+  return {
+    hasCashback: true,
+    cashbackType,
+    cashbackValue,
+    cashbackStartDate,
+    cashbackEndDate,
+    cashbackMinOrderAmount,
+  };
+}
 function normalizePlanValue(planName) {
   return String(planName || "")
     .trim()
@@ -439,8 +551,8 @@ function getProductFieldLimit(plan) {
 
 /**
  * Returns max allowed price combinations for the plan:
- *   Basic/Pro  → 25   (5×5)
- *   Plus/Business Pro → 225 (15×15)
+ *   Basic/Pro  â†’ 25   (5Ã—5)
+ *   Plus/Business Pro â†’ 225 (15Ã—15)
  */
 function getMaxVariantPriceCombinations(plan) {
   return getProductFieldLimit(plan) === 15 ? 225 : 125;
@@ -717,7 +829,7 @@ router.post(
       const tRequest = Date.now();
       const { id } = req.user;
       console.log(
-        `🛒 Add-product — seller ${id} — env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
+        `ðŸ›’ Add-product  seller ${id} env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
       );
 
       // Check seller plan and product limit
@@ -808,6 +920,8 @@ router.post(
       // --- Validate isAvailable ---
       const isAvailablePost =
         isAvailableBody === "false" || isAvailableBody === false ? false : true;
+
+      const cashbackPayload = normalizeCashbackPayload(req.body);
 
       const parsedYoutubeLinks = youtubeLinks ? JSON.parse(youtubeLinks) : [];
       const normalizedYoutubeLinks =
@@ -924,6 +1038,7 @@ router.post(
         isAvailable: isAvailablePost,
         category: category || null,
         subcategory: subcategory || null,
+        ...cashbackPayload,
       };
 
       console.log("FINAL DB PAYLOAD", createPayload);
@@ -943,7 +1058,7 @@ router.post(
         );
       }
 
-      // Upload product images to R2 (main 1400px + thumbnail 300px) — parallel
+      // Upload product images to R2 (main 1400px + thumbnail 300px)  parallel
       const tUploadStart = Date.now();
       let totalUploadedBytes = uploadedOptionImages.uploadedBytes;
       const imageFiles = req.files?.images || [];
@@ -1006,7 +1121,7 @@ router.post(
         `[Upload] ${colorCount} color images uploaded in ${Date.now() - tColorStart}ms`,
       );
       if (finalColors.length > 0) {
-        // Use static update — instance .update() on a JSON column may skip the
+        // Use static update  instance .update() on a JSON column may skip the
         // SQL write if Sequelize thinks the value hasn't changed after create().
         await Product.update(
           { colors: finalColors },
@@ -1069,7 +1184,7 @@ router.put(
       const sellerId = req.user.id;
       const { productId } = req.params;
       console.log(
-        `✏️  Edit-product ${productId} — seller ${sellerId} — env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
+        `âœï¸  Edit-product ${productId} seller ${sellerId}  env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
       );
 
       const product = await Product.findOne({
@@ -1137,6 +1252,8 @@ router.put(
       // --- Validate isAvailable ---
       const isAvailableEdit =
         isAvailableBody === "false" || isAvailableBody === false ? false : true;
+
+      const cashbackPayload = normalizeCashbackPayload(req.body);
 
       const parsedYoutubeLinks = youtubeLinks ? JSON.parse(youtubeLinks) : [];
       const normalizedYoutubeLinks =
@@ -1297,7 +1414,7 @@ router.put(
       for (let i = 0; i < finalColors.length; i++) {
         const colorFile = req.files?.[`colorImage_${i}`]?.[0];
         if (colorFile) {
-          // Always read the old key from the DB record by index — never trust
+          // Always read the old key from the DB record by index never trust
           // what the frontend sends, as it may have already cleared imageKey.
           const oldImageKey = dbColors[i]?.imageKey || null;
           const filename = `${uuidv4()}.webp`;
@@ -1306,7 +1423,7 @@ router.put(
           );
           const key = `shops/${sellerId}/products/${productId}/colors/${colorSegment}/${filename}`;
 
-          // Upload new image FIRST — only delete old after confirmed success
+          // Upload new image FIRST only delete old after confirmed success
           const { sizeBytes } = await uploadColorImageToR2(
             colorFile.buffer,
             key,
@@ -1323,7 +1440,7 @@ router.put(
             await deleteFromR2(oldImageKey);
           }
         } else {
-          // No new file — keep existing imageKey and imageSizeBytes from DB
+          // No new file  keep existing imageKey and imageSizeBytes from DB
           if (dbColors[i]?.imageKey) {
             finalColors[i].imageKey = dbColors[i].imageKey;
             finalColors[i].imageSizeBytes = dbColors[i].imageSizeBytes || 0;
@@ -1371,7 +1488,7 @@ router.put(
       console.log("variantPrices BEFORE SAVE", finalVariantPricesPayload);
       console.log("variantPricesAr BEFORE SAVE", finalVariantPricesArPayload);
 
-      // Use static update — instance .update() on JSON columns can silently
+      // Use static update  instance .update() on JSON columns can silently
       // skip writing if Sequelize's change-detection gives a false negative.
       const updatePayload = {
         language,
@@ -1403,6 +1520,7 @@ router.put(
         // stock only tracked when product has no variants
         stock: hasColorsOrSizesEdit ? null : parsedStockEdit,
         isAvailable: isAvailableEdit,
+        ...cashbackPayload,
       };
 
       console.log("FINAL DB PAYLOAD", updatePayload);
@@ -1480,7 +1598,7 @@ router.delete(
       }
 
       // Delete color images from R2 and decrement their storage
-      // Safely parse colors — Sequelize may return a raw string for JSON columns
+      // Safely parse colors  Sequelize may return a raw string for JSON columns
       const _rawProductColors = product.colors;
       const _parsedProductColors = Array.isArray(_rawProductColors)
         ? _rawProductColors
@@ -1577,6 +1695,12 @@ router.get("/products/shop/:shopName", async (req, res) => {
         "variantPrices",
         "variantPricesAr",
         "category",
+        "hasCashback",
+        "cashbackType",
+        "cashbackValue",
+        "cashbackStartDate",
+        "cashbackEndDate",
+        "cashbackMinOrderAmount",
       ],
       include: [
         {
@@ -1619,3 +1743,7 @@ router.get("/products/shop/:shopName", async (req, res) => {
 });
 
 export default router;
+
+
+
+

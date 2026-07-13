@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
@@ -7,10 +7,10 @@ const router = Router();
 
 /**
  * GET /category-products/:sellerId
- * Public endpoint — fetch products for a shop's category page.
+ * Public endpoint  fetch products for a shop's category page.
  * Query params:
- *   category    {string}  required — category name (exact match)
- *   subcategory {string}  optional — subcategory name filter
+ *   category    {string}  required category name (exact match)
+ *   subcategory {string}  optional subcategory name filter
  *   limit       {number}  default 20, max 100
  *   offset      {number}  default 0
  */
@@ -21,7 +21,7 @@ router.get("/category-products/:sellerId", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
   const offset = parseInt(req.query.offset) || 0;
 
-  // ── LOG: incoming request ──────────────────────────────────────────────────
+  // â”€â”€ LOG: incoming request â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   console.log("\n========== [CATEGORY PRODUCTS] INCOMING REQUEST ==========");
   console.log(`  Method : GET`);
   console.log(`  URL    : /api/seller/category-products/${sellerId}`);
@@ -37,7 +37,7 @@ router.get("/category-products/:sellerId", async (req, res) => {
   );
 
   if (!rawCategory) {
-    console.warn("[CATEGORY PRODUCTS] No category provided — returning 400");
+    console.warn("[CATEGORY PRODUCTS] No category provided  returning 400");
     return res.status(400).json({
       success: false,
       message: "category query param is required",
@@ -74,6 +74,12 @@ router.get("/category-products/:sellerId", async (req, res) => {
         "freeDeliveryStartDate",
         "freeDeliveryEndDate",
         "free_delivery",
+        "hasCashback",
+        "cashbackType",
+        "cashbackValue",
+        "cashbackStartDate",
+        "cashbackEndDate",
+        "cashbackMinOrderAmount",
         "options",
         "variants",
         "variantPrices",
@@ -105,7 +111,7 @@ router.get("/category-products/:sellerId", async (req, res) => {
 
     const hasMore = offset + limit < total;
 
-    // ── LOG: outgoing response ───────────────────────────────────────────────
+    // â”€â”€ LOG: outgoing response â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     console.log(
       "\n========== [CATEGORY PRODUCTS] OUTGOING RESPONSE ==========",
     );
@@ -135,7 +141,7 @@ router.get("/category-products/:sellerId", async (req, res) => {
       hasMore,
     });
   } catch (error) {
-    console.error("\n[CATEGORY PRODUCTS] ❌ ERROR:", error.message);
+    console.error("\n[CATEGORY PRODUCTS] âŒ ERROR:", error.message);
     console.error(error.stack);
     return res.status(500).json({
       success: false,
@@ -145,3 +151,4 @@ router.get("/category-products/:sellerId", async (req, res) => {
 });
 
 export default router;
+

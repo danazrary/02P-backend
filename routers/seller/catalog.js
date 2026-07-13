@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { Op } from "sequelize";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
@@ -45,6 +45,12 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
         "category",
         "subcategory",
         "language",
+        "hasCashback",
+        "cashbackType",
+        "cashbackValue",
+        "cashbackStartDate",
+        "cashbackEndDate",
+        "cashbackMinOrderAmount",
         "options",
         "variants",
         "createdAt",
@@ -266,3 +272,5 @@ router.delete(
 );
 
 export default router;
+
+

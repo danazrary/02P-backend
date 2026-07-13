@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import Product from "../../database/products.js";
 import Seller from "../../database/seller.js";
@@ -30,8 +30,8 @@ const DEFAULT_CONFIGS = {
     viewMode: "home",
   },
   brands: {
-    titleKu: "براندەکان",
-    titleAr: "العلامات التجارية",
+    titleKu: "Ø¨Ø±Ø§Ù†Ø¯Û•Ú©Ø§Ù†",
+    titleAr: "Ø§Ù„Ø¹Ù„Ø§Ù…Ø§Øª Ø§Ù„ØªØ¬Ø§Ø±ÙŠØ©",
     titleEn: "Brands",
     layout: "slider",
     items: [],
@@ -210,6 +210,12 @@ router.get("/:shopName", detectSeller, async (req, res) => {
         "freeDeliveryStartDate",
         "freeDeliveryEndDate",
         "free_delivery",
+        "hasCashback",
+        "cashbackType",
+        "cashbackValue",
+        "cashbackStartDate",
+        "cashbackEndDate",
+        "cashbackMinOrderAmount",
         "options",
         "variants",
         "variantPrices",
@@ -349,6 +355,12 @@ router.get("/:shopName/search", async (req, res) => {
         "freeDeliveryStartDate",
         "freeDeliveryEndDate",
         "free_delivery",
+        "hasCashback",
+        "cashbackType",
+        "cashbackValue",
+        "cashbackStartDate",
+        "cashbackEndDate",
+        "cashbackMinOrderAmount",
         "options",
         "variants",
         "variantPrices",
@@ -388,12 +400,12 @@ router.get("/:shopName/search", async (req, res) => {
   }
 });
 
-/* ─────────────────────────────────────────────────────────────
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    POST /api/customer/track-visit
    Called by the frontend once per page-load session to record
    a shop visitor. Deduplication is handled by the frontend
    using a module-level in-memory Set (resets on page refresh).
-───────────────────────────────────────────────────────────── */
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 router.post("/track-visit", detectSeller, async (req, res) => {
   try {
     // Skip if the requester is the seller viewing their own shop
@@ -430,3 +442,4 @@ router.post("/track-visit", detectSeller, async (req, res) => {
 });
 
 export default router;
+

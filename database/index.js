@@ -21,6 +21,11 @@ import HelpItem from "./helpItem.js";
 import HelpTranslation from "./helpTranslation.js";
 import HelpFeedback from "./helpFeedback.js";
 import HelpAnalytics from "./helpAnalytics.js";
+import SellerAiUsage from "./sellerAiUsage.js";
+import SellerAiBalance from "./sellerAiBalance.js";
+import AiCreditPlan from "./aiCreditPlan.js";
+import AiCreditPurchaseRequest from "./aiCreditPurchaseRequest.js";
+import AiFeatureSetting from "./aiFeatureSetting.js";
 
 /* ============================
    ASSOCIATIONS
@@ -83,6 +88,40 @@ SellerPushSubscription.belongsTo(Seller, {
   as: "seller",
 });
 
+// Seller AI credits and product import usage.
+Seller.hasOne(SellerAiBalance, {
+  foreignKey: "seller_id",
+  as: "aiBalance",
+});
+SellerAiBalance.belongsTo(Seller, {
+  foreignKey: "seller_id",
+  as: "seller",
+});
+Seller.hasMany(AiCreditPurchaseRequest, {
+  foreignKey: "seller_id",
+  as: "aiCreditPurchaseRequests",
+});
+AiCreditPurchaseRequest.belongsTo(Seller, {
+  foreignKey: "seller_id",
+  as: "seller",
+});
+AiCreditPlan.hasMany(AiCreditPurchaseRequest, {
+  foreignKey: "plan_id",
+  as: "purchaseRequests",
+});
+AiCreditPurchaseRequest.belongsTo(AiCreditPlan, {
+  foreignKey: "plan_id",
+  as: "plan",
+});
+// Seller AI product import usage history.
+Seller.hasMany(SellerAiUsage, {
+  foreignKey: "seller_id",
+  as: "aiUsage",
+});
+SellerAiUsage.belongsTo(Seller, {
+  foreignKey: "seller_id",
+  as: "seller",
+});
 // Help Center: recursive help tree with optional translations per language.
 HelpItem.hasMany(HelpItem, {
   foreignKey: "parent_id",
@@ -167,6 +206,11 @@ export {
   HelpTranslation,
   HelpFeedback,
   HelpAnalytics,
+  SellerAiUsage,
+  SellerAiBalance,
+  AiCreditPlan,
+  AiCreditPurchaseRequest,
+  AiFeatureSetting,
 };
 
 /* import { Sequelize } from "sequelize";

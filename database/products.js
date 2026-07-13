@@ -1,4 +1,4 @@
-import { DataTypes } from "sequelize";
+﻿import { DataTypes } from "sequelize";
 import sequelize from "./sequelize.js";
 
 // Generate random 6-digit ID
@@ -21,7 +21,7 @@ const Product = sequelize.define(
 
     language: {
       type: DataTypes.ENUM("arabic", "kurdish", "both"),
-      defaultValue: "kurdish", // ✅ default is kurdish now
+      defaultValue: "kurdish", // âœ… default is kurdish now
     },
     titleKu: {
       type: DataTypes.STRING,
@@ -81,6 +81,31 @@ const Product = sequelize.define(
     },
     freeDeliveryEndDate: {
       type: DataTypes.DATE,
+      allowNull: true,
+    },
+
+    hasCashback: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    cashbackType: {
+      type: DataTypes.ENUM("percentage", "fixed"),
+      defaultValue: "percentage",
+    },
+    cashbackValue: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+    },
+    cashbackStartDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    cashbackEndDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    cashbackMinOrderAmount: {
+      type: DataTypes.DECIMAL(10, 2),
       allowNull: true,
     },
 
