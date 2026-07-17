@@ -4,6 +4,7 @@ import sequelize from "../../database/sequelize.js";
 import Order from "../../database/order.js";
 import OrderItem from "../../database/orderItem.js";
 import Seller from "../../database/seller.js";
+import Product from "../../database/products.js";
 import Report from "../../database/report.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { notifySellerNewOrder } from "../../utils/webPush.js";
@@ -144,6 +145,128 @@ function parseObjectInput(value) {
   return null;
 }
 
+
+function isProductCashbackActive(product, lineSubtotal, atTime = Date.now()) {
+  if (!product?.hasCashback) return false;
+
+  const value = Number(product.cashbackValue);
+  if (!Number.isFinite(value) || value <= 0) return false;
+
+  const now = new Date(atTime).getTime();
+  if (product.cashbackStartDate) {
+    const start = new Date(product.cashbackStartDate).getTime();
+    if (Number.isNaN(start) || now < start) return false;
+  }
+
+  if (product.cashbackEndDate) {
+    const end = new Date(product.cashbackEndDate).getTime();
+    if (Number.isNaN(end) || now > end) return false;
+  }
+
+  const minOrderAmount = Number(product.cashbackMinOrderAmount || 0);
+  if (Number.isFinite(minOrderAmount) && minOrderAmount > 0) {
+    return Number(lineSubtotal || 0) >= minOrderAmount;
+  }
+
+  return true;
+}
+
+function calculateProductCashback(
+  product,
+  lineSubtotal,
+  quantity = 1,
+  atTime = Date.now(),
+) {
+  if (!isProductCashbackActive(product, lineSubtotal, atTime)) return 0;
+
+  const value = Number(product.cashbackValue);
+  const calculated =
+    product.cashbackType === "percentage"
+      ? lineSubtotal * (value / 100)
+      : value * Math.max(1, Number(quantity) || 1);
+
+  return Math.min(Number(lineSubtotal) || 0, Math.max(0, calculated));
+}
+
+const CASHBACK_ORDER_SNAPSHOT_START = new Date(
+  "2026-07-12T00:00:00.000Z",
+).getTime();
+
+async function buildOrderResponseWithLegacyCashback(order) {
+  const plainOrder = order.toJSON();
+  const items = plainOrder.items || [];
+  const createdAt = new Date(plainOrder.createdAt).getTime();
+  const hasCashbackSnapshot =
+    Number(plainOrder.cashback || 0) > 0 ||
+    items.some((item) => Number(item.cashback_amount || 0) > 0);
+
+  if (
+    hasCashbackSnapshot ||
+    !Number.isFinite(createdAt) ||
+    createdAt < CASHBACK_ORDER_SNAPSHOT_START
+  ) {
+    return plainOrder;
+  }
+
+  const productIds = [
+    ...new Set(
+      items
+        .map((item) => Number(item.product_id))
+        .filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  ];
+  if (!productIds.length) return plainOrder;
+
+  const products = await Product.findAll({
+    where: {
+      id: productIds,
+      seller_id: Number(plainOrder.seller_id),
+    },
+    attributes: [
+      "id",
+      "hasCashback",
+      "cashbackType",
+      "cashbackValue",
+      "cashbackStartDate",
+      "cashbackEndDate",
+      "cashbackMinOrderAmount",
+    ],
+  });
+  const productById = new Map(
+    products.map((product) => [Number(product.id), product]),
+  );
+
+  items.forEach((item) => {
+    const product = productById.get(Number(item.product_id));
+    item.cashback_amount = parseFloat(
+      calculateProductCashback(
+        product,
+        Number(item.total_price || 0),
+        item.quantity,
+        createdAt,
+      ).toFixed(2),
+    );
+  });
+
+  const primaryCurrency =
+    plainOrder.currency === "MIXED" ? "IQD" : plainOrder.currency || "IQD";
+  const primaryCashback = parseFloat(
+    items
+      .filter((item) => (item.currency || primaryCurrency) === primaryCurrency)
+      .reduce((sum, item) => sum + Number(item.cashback_amount || 0), 0)
+      .toFixed(2),
+  );
+  const storedDiscount = Number(plainOrder.discount || 0);
+
+  plainOrder.cashback = primaryCashback;
+  if (primaryCashback > 0 && storedDiscount >= primaryCashback) {
+    plainOrder.discount = parseFloat(
+      (storedDiscount - primaryCashback).toFixed(2),
+    );
+  }
+
+  return plainOrder;
+}
 function buildSelectedOptions(item) {
   const selectedFromPayload =
     parseObjectInput(item?.selected_options) ||
@@ -330,15 +453,45 @@ router.post("/orders/create", async (req, res) => {
       );
     });
 
-    // For MIXED currency orders, subtotal/total only track the primary (IQD) portion
-    // Per-currency breakdowns come from the items' own currency field
-    const primaryCurrency = currency === "MIXED" ? "IQD" : currency;
-    const subtotal = parseFloat(
-      parsedItems
-        .filter((i) => i.currency === primaryCurrency)
-        .reduce((sum, i) => sum + i.total_price, 0)
-        .toFixed(2),
+    const productIds = [
+      ...new Set(
+        parsedItems
+          .map((item) => Number(item.product_id))
+          .filter((id) => Number.isInteger(id) && id > 0),
+      ),
+    ];
+    const orderedProducts = productIds.length
+      ? await Product.findAll({
+          where: {
+            id: productIds,
+            seller_id: Number(seller_id),
+          },
+          attributes: [
+            "id",
+            "hasCashback",
+            "cashbackType",
+            "cashbackValue",
+            "cashbackStartDate",
+            "cashbackEndDate",
+            "cashbackMinOrderAmount",
+          ],
+        })
+      : [];
+    const productById = new Map(
+      orderedProducts.map((product) => [Number(product.id), product]),
     );
+
+    parsedItems.forEach((item) => {
+      const product = productById.get(Number(item.product_id));
+      item.cashback_amount = parseFloat(
+        calculateProductCashback(
+          product,
+          item.total_price,
+          item.quantity,
+        ).toFixed(2),
+      );
+    });
+
     const normalizedUiSettings = normalizeUiSettings(seller.ui_settings);
     const normalizedCityKey = normalizeDeliveryCityKey(customer_city);
     const configuredDelivery = normalizedCityKey
@@ -360,9 +513,35 @@ router.post("/orders/create", async (req, res) => {
         ).toFixed(2),
       ),
     );
-    const parsedDiscount = Math.max(0, parseFloat(Number(discount).toFixed(2)));
+    const itemCurrencies = new Set(parsedItems.map((item) => item.currency));
+    const effectiveCurrency =
+      itemCurrencies.size > 1 ||
+      (itemCurrencies.has("USD") && parsedDelivery > 0)
+        ? "MIXED"
+        : itemCurrencies.values().next().value || currency || "IQD";
+    const primaryCurrency =
+      effectiveCurrency === "MIXED" ? "IQD" : effectiveCurrency;
+    const subtotal = parseFloat(
+      parsedItems
+        .filter((item) => item.currency === primaryCurrency)
+        .reduce((sum, item) => sum + item.total_price, 0)
+        .toFixed(2),
+    );
+    const serverCashback = parseFloat(
+      parsedItems
+        .filter((item) => item.currency === primaryCurrency)
+        .reduce((sum, item) => sum + item.cashback_amount, 0)
+        .toFixed(2),
+    );
+    const parsedDiscount = Math.max(
+      0,
+      parseFloat(Number(discount).toFixed(2)),
+    );
     const total_price = parseFloat(
-      (subtotal + parsedDelivery - parsedDiscount).toFixed(2),
+      Math.max(
+        0,
+        subtotal + parsedDelivery - parsedDiscount - serverCashback,
+      ).toFixed(2),
     );
 
     const order_id = await generateOrderId();
@@ -384,10 +563,11 @@ router.post("/orders/create", async (req, res) => {
             ? String(customer_location_detail).trim()
             : null,
           payment_method,
-          currency,
+          currency: effectiveCurrency,
           subtotal,
           delivery_fee: parsedDelivery,
           discount: parsedDiscount,
+          cashback: serverCashback,
           total_price,
           status: "pending",
           notes: notes ? String(notes).trim() : null,
@@ -534,6 +714,7 @@ router.get("/orders", jwtVerifySellerToken, async (req, res) => {
         "subtotal",
         "delivery_fee",
         "discount",
+        "cashback",
         "total_price",
         "status",
         "notes",
@@ -550,6 +731,7 @@ router.get("/orders", jwtVerifySellerToken, async (req, res) => {
             "quantity",
             "unit_price",
             "total_price",
+            "cashback_amount",
             "color",
             "size",
             ...(withVariantSnapshot ? ["variant_options_snapshot"] : []),
@@ -721,6 +903,7 @@ router.get("/orders/:orderId", jwtVerifySellerToken, async (req, res) => {
         "subtotal",
         "delivery_fee",
         "discount",
+        "cashback",
         "total_price",
         "status",
         "notes",
@@ -744,6 +927,7 @@ router.get("/orders/:orderId", jwtVerifySellerToken, async (req, res) => {
             "quantity",
             "unit_price",
             "total_price",
+            "cashback_amount",
             "currency",
             "createdAt",
             "updatedAt",
@@ -774,7 +958,8 @@ router.get("/orders/:orderId", jwtVerifySellerToken, async (req, res) => {
         .json({ success: false, message: "Order not found" });
     }
 
-    return res.json({ success: true, order });
+    const orderResponse = await buildOrderResponseWithLegacyCashback(order);
+    return res.json({ success: true, order: orderResponse });
   } catch (err) {
     console.error("Get order error:", err);
     return res.status(500).json({ success: false, message: "Server error" });

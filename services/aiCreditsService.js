@@ -166,6 +166,57 @@ export async function approveAiCreditPurchaseRequest({ requestId, adminId }) {
   });
 }
 
+export async function addSellerAiCreditsByAdmin({ sellerId, credits }) {
+  const sellerIdNumber = Number.parseInt(sellerId, 10);
+  const creditsNumber = Number.parseInt(credits, 10);
+
+  if (!Number.isInteger(sellerIdNumber) || sellerIdNumber <= 0) {
+    const error = new Error("Seller ID is required.");
+    error.code = "INVALID_SELLER_ID";
+    throw error;
+  }
+
+  if (!Number.isInteger(creditsNumber) || creditsNumber <= 0) {
+    const error = new Error("Credits must be a positive number.");
+    error.code = "INVALID_AI_CREDITS";
+    throw error;
+  }
+
+  if (creditsNumber > 10000) {
+    const error = new Error("Credits amount is too high.");
+    error.code = "AI_CREDITS_TOO_HIGH";
+    throw error;
+  }
+
+  return sequelize.transaction(async (transaction) => {
+    const seller = await Seller.findByPk(sellerIdNumber, {
+      attributes: ["id", "name", "shop_name"],
+      transaction,
+    });
+
+    if (!seller) {
+      const error = new Error("Seller not found.");
+      error.code = "SELLER_NOT_FOUND";
+      throw error;
+    }
+
+    const balance = await getOrCreateSellerAiBalance(sellerIdNumber, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+
+    balance.credit_balance += creditsNumber;
+    balance.total_purchased += creditsNumber;
+    await balance.save({ transaction });
+
+    return {
+      seller: seller.toJSON(),
+      creditsAdded: creditsNumber,
+      creditBalance: balance.credit_balance,
+      totalPurchased: balance.total_purchased,
+    };
+  });
+}
 export async function rejectAiCreditPurchaseRequest({ requestId, adminId, notes }) {
   return sequelize.transaction(async (transaction) => {
     const request = await AiCreditPurchaseRequest.findOne({

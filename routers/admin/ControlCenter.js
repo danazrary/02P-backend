@@ -8,6 +8,7 @@ import SellerOffer from "../../database/sellerOffer.js";
 import Question from "../../database/questions.js";
 import SellerUsage from "../../database/sellerUsage.js";
 import SellerAiUsage from "../../database/sellerAiUsage.js";
+import { addSellerAiCreditsByAdmin } from "../../services/aiCreditsService.js";
 import { checkMe, adminAuth } from "../../middlewares/jwtVerify.js";
 import { toUTC } from "../../utils/timezoneHandler.js";
 import { clearCookieOpts } from "../../utils/addingToken.js";
@@ -1019,6 +1020,32 @@ router.post("/extend-subscription/extend-plan", adminAuth, async (req, res) => {
       success: false,
       error: true,
       message: "Server error",
+    });
+  }
+});
+
+// Add AI import credits to a seller balance.
+router.post("/add-seller-ai-credits", adminAuth, async (req, res) => {
+  try {
+    const result = await addSellerAiCreditsByAdmin({
+      sellerId: req.body?.seller_id,
+      credits: req.body?.credits,
+    });
+
+    return res.json({
+      success: true,
+      error: false,
+      message: "AI credits added successfully",
+      data: result,
+    });
+  } catch (error) {
+    const code = error?.code || "AI_CREDIT_ADD_FAILED";
+    const status = code === "SELLER_NOT_FOUND" ? 404 : 400;
+    return res.status(status).json({
+      success: false,
+      error: true,
+      code,
+      message: error?.message || "AI credits could not be added.",
     });
   }
 });

@@ -63,6 +63,12 @@ const OrderItem = sequelize.define(
       allowNull: false,
       defaultValue: 0,
     },
+    cashback_amount: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: false,
+      defaultValue: 0,
+      comment: "Cashback applied to this line in the item's currency",
+    },
     currency: {
       type: DataTypes.ENUM("IQD", "USD"),
       allowNull: false,

@@ -56,7 +56,7 @@ export async function checkAndCleanProductExpiration(products) {
     if (needsUpdate) {
       await product.update(updates);
       console.log(
-        `ðŸ—‘ï¸ Cleaned expired data for product ${product.id} - Discount: ${updates.hasDiscount !== undefined}, Free Delivery: ${updates.free_delivery !== undefined}`,
+        `🗑️ Cleaned expired data for product ${product.id} - Discount: ${updates.hasDiscount !== undefined}, Free Delivery: ${updates.free_delivery !== undefined}`,
       );
     }
 
@@ -119,7 +119,7 @@ export async function checkAndCleanSingleProduct(product) {
   if (needsUpdate) {
     await product.update(updates);
     console.log(
-      `ðŸ—‘ï¸ Cleaned expired data for product ${product.id} - Discount: ${updates.hasDiscount !== undefined}, Free Delivery: ${updates.free_delivery !== undefined}`,
+      `🗑️ Cleaned expired data for product ${product.id} - Discount: ${updates.hasDiscount !== undefined}, Free Delivery: ${updates.free_delivery !== undefined}`,
     );
   }
 

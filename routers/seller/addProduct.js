@@ -832,7 +832,7 @@ router.post(
       const tRequest = Date.now();
       const { id } = req.user;
       console.log(
-        `ðŸ›’ Add-product  seller ${id} env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
+        `🛒 Add-product  seller ${id} env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
       );
 
       // Check seller plan and product limit

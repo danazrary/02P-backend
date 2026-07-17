@@ -30,8 +30,8 @@ const DEFAULT_CONFIGS = {
     viewMode: "home",
   },
   brands: {
-    titleKu: "Ø¨Ø±Ø§Ù†Ø¯Û•Ú©Ø§Ù†",
-    titleAr: "Ø§Ù„Ø¹Ù„Ø§Ù…Ø§Øª Ø§Ù„ØªØ¬Ø§Ø±ÙŠØ©",
+    titleKu: "براندەکان",
+    titleAr: "العلامات التجارية",
     titleEn: "Brands",
     layout: "slider",
     items: [],
