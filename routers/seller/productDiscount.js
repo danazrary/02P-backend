@@ -1,10 +1,11 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { Op } from "sequelize";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
 import { toUTC } from "../../utils/timezoneHandler.js";
+import { parseOptionalCashbackDate } from "../../utils/cashbackDates.js";
 
 const router = Router();
 
@@ -83,8 +84,8 @@ function normalizeCashbackBulkPayload(body = {}) {
     throw err;
   }
 
-  const cashbackStartDate = parseOptionalDate(body.cashbackStartDate, "cashbackStartDate");
-  const cashbackEndDate = parseOptionalDate(body.cashbackEndDate, "cashbackEndDate");
+  const cashbackStartDate = parseOptionalCashbackDate(body.cashbackStartDate, "cashbackStartDate");
+  const cashbackEndDate = parseOptionalCashbackDate(body.cashbackEndDate, "cashbackEndDate");
   if (cashbackStartDate && cashbackEndDate && cashbackEndDate <= cashbackStartDate) {
     const err = new Error("Invalid cashback date range");
     err.statusCode = 400;

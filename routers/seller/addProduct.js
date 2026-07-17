@@ -1,4 +1,4 @@
-﻿import express from "express";
+import express from "express";
 import { v4 as uuidv4 } from "uuid";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
@@ -27,6 +27,7 @@ import getTikTokEmbedUrl, {
 } from "../../utils/getTikTokEmbedUrl.js";
 import { getProductImageRecordBytes } from "../../utils/sellerStorageUsage.js";
 import { notifyGoogle } from "../../utils/googleIndexing.js";
+import { parseOptionalCashbackDate } from "../../utils/cashbackDates.js";
 
 const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
 
@@ -478,11 +479,11 @@ function normalizeCashbackPayload(body = {}) {
     throw err;
   }
 
-  const cashbackStartDate = parseOptionalDate(
+  const cashbackStartDate = parseOptionalCashbackDate(
     body.cashbackStartDate,
     "cashbackStartDate",
   );
-  const cashbackEndDate = parseOptionalDate(
+  const cashbackEndDate = parseOptionalCashbackDate(
     body.cashbackEndDate,
     "cashbackEndDate",
   );
@@ -554,8 +555,8 @@ function getProductFieldLimit(plan) {
 
 /**
  * Returns max allowed price combinations for the plan:
- *   Basic/Pro  -> 25   (5—5)
- *   Plus/Business Pro -> 225 (15—15)
+ *   Basic/Pro  -> 25   (5�5)
+ *   Plus/Business Pro -> 225 (15�15)
  */
 function getMaxVariantPriceCombinations(plan) {
   return getProductFieldLimit(plan) === 15 ? 225 : 125;
@@ -832,7 +833,7 @@ router.post(
       const tRequest = Date.now();
       const { id } = req.user;
       console.log(
-        `🛒 Add-product  seller ${id} env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
+        `?? Add-product  seller ${id} env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
       );
 
       // Check seller plan and product limit
@@ -1261,7 +1262,12 @@ router.put(
       const isAvailableEdit =
         isAvailableBody === "false" || isAvailableBody === false ? false : true;
 
-      const cashbackPayload = normalizeCashbackPayload(req.body);
+      const cashbackPayload = Object.prototype.hasOwnProperty.call(
+        req.body,
+        "hasCashback",
+      )
+        ? normalizeCashbackPayload(req.body)
+        : {};
 
       const parsedYoutubeLinks = youtubeLinks ? JSON.parse(youtubeLinks) : [];
       const normalizedYoutubeLinks =
