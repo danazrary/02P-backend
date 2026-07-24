@@ -9,7 +9,7 @@ import Report from "../../database/report.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { notifySellerNewOrder } from "../../utils/webPush.js";
 import { normalizeUiSettings } from "../../utils/uiSettings.js";
-
+import { applyItemStockDecrement } from "../../utils/productStock.js";
 const router = Router();
 
 const IRAQ_DELIVERY_CITY_KEYS = [
@@ -364,6 +364,8 @@ function validateCreateOrder(body) {
    Creates a new order for a seller's store.
    No auth required — customers place orders publicly.
 ───────────────────────────────────────────────────────────── */
+
+
 router.post("/orders/create", async (req, res) => {
   try {
     const {
@@ -533,10 +535,7 @@ router.post("/orders/create", async (req, res) => {
         .reduce((sum, item) => sum + item.cashback_amount, 0)
         .toFixed(2),
     );
-    const parsedDiscount = Math.max(
-      0,
-      parseFloat(Number(discount).toFixed(2)),
-    );
+    const parsedDiscount = Math.max(0, parseFloat(Number(discount).toFixed(2)));
     const total_price = parseFloat(
       Math.max(
         0,
@@ -595,6 +594,37 @@ router.post("/orders/create", async (req, res) => {
         });
 
         await OrderItem.bulkCreate(itemRows, { transaction: t });
+
+        // 🔻 Decrement inventory for each ordered item.
+        // Rows are locked (SELECT ... FOR UPDATE) so two orders placed at
+        // the same time can't both decrement from a stale stock value.
+        if (productIds.length) {
+          const lockedProducts = await Product.findAll({
+            where: { id: productIds, seller_id: Number(seller_id) },
+            attributes: [
+              "id",
+              "stock",
+              "isAvailable",
+              "variantPrices",
+              "variantPricesAr",
+            ],
+            transaction: t,
+            lock: t.LOCK.UPDATE,
+          });
+          const lockedProductById = new Map(
+            lockedProducts.map((product) => [Number(product.id), product]),
+          );
+
+          for (const item of parsedItems) {
+            const product = lockedProductById.get(Number(item.product_id));
+            if (!product) continue;
+
+            const stockUpdate = applyItemStockDecrement(product, item);
+            if (stockUpdate) {
+              await product.update(stockUpdate, { transaction: t });
+            }
+          }
+        }
 
         return newOrder;
       });
@@ -661,7 +691,6 @@ router.post("/orders/create", async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
 /* ─────────────────────────────────────────────────────────────
    GET /api/seller/orders   (seller dashboard)
    Returns all orders for the authenticated seller's store.

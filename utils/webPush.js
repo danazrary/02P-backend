@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import webpush from "web-push";
 import SellerPushSubscription from "../database/sellerPushSubscription.js";
-
+import Seller from "../database/seller.js";
 let vapidConfigured = false;
 
 function endpointFingerprint(endpoint) {
@@ -116,14 +116,34 @@ export async function removeSellerPushSubscriptionByEndpoint(endpoint) {
   }
 }
 
+const NOTIFICATION_TEMPLATES = {
+  en: {
+    title: "New Order Received! 🛍️",
+    body: (orderCode) => `You have received a new order #${orderCode}.`,
+  },
+  ar: {
+    title: "طلب جديد! 🛍️",
+    body: (orderCode) => `لديك طلب جديد برقم #${orderCode}.`,
+  },
+  ku: {
+    title: "داواکارییەکی نوێ! 🛍️",
+    body: (orderCode) => `داواکارییەکی نوێت پێگەیشت #${orderCode}.`,
+  },
+};
+
 export async function notifySellerNewOrder({ seller, order }) {
+  // 1. Language detection (Fallback to 'en' if invalid or missing)
+  const sellerLang = (seller?.default_shop_lang || "en").toLowerCase();
+  const template =
+    NOTIFICATION_TEMPLATES[sellerLang] || NOTIFICATION_TEMPLATES.en;
+
   if (!seller?.id || !order?.order_id) {
     console.log("[push] Skip notify: missing seller or order payload");
     return { total: 0, sent: 0, removed: 0, skipped: true };
   }
 
   console.log(
-    `[push] New order notification start: seller=${seller.id}, order=${order.order_id}`,
+    `[push] New order notification start: seller=${seller.id}, order=${order.order_id}, lang=${sellerLang}`,
   );
 
   const isConfigured = ensureWebPushConfigured();
@@ -160,11 +180,35 @@ export async function notifySellerNewOrder({ seller, order }) {
     `[push] Found ${subscriptions.length} subscription(s) for seller=${seller.id}`,
   );
 
+  // 2. Dynamic Shop Logo Handling (Cloudflare R2 / Upload / Default Fallback)
+  const BASE_URL =
+    process.env.PUSH_NOTIFICATION_ICON_URL || "https://dwkanlink.com";
+  const R2_BASE_URL = process.env.R2_PUBLIC_URL || "https://dwkanlink.com"; // UPDATE THIS
+
+  const defaultIcon = `${BASE_URL}/uploads/dl-logo.png`;
+  const shopLogo = seller?.shop_image || seller?.logo || order?.shop_logo;
+
+  let iconUrl = defaultIcon;
+
+  if (shopLogo) {
+    if (shopLogo.startsWith("http")) {
+      // If it already has https:// (e.g., an external link), use it directly
+      iconUrl = shopLogo;
+    } else {
+      // It's a relative path from your database, so add the R2 Base URL
+      const cleanPath = shopLogo.startsWith("/")
+        ? shopLogo.substring(1)
+        : shopLogo;
+      iconUrl = `${R2_BASE_URL}/${cleanPath}`;
+    }
+  }
+
+  console.log(`[push] Final Icon URL: ${iconUrl}`);
+
   const payload = JSON.stringify({
-    title: "New Order Received",
-    body: `You have a new order #${order.order_id}`,
-    icon:
-      process.env.PUSH_NOTIFICATION_ICON_URL || "/android-chrome-192x192.png",
+    title: template.title,
+    body: template.body(order.order_id),
+    icon: iconUrl,
     badge:
       process.env.PUSH_NOTIFICATION_BADGE_URL || "/android-chrome-192x192.png",
     data: {
