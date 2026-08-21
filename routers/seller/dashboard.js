@@ -121,6 +121,7 @@ function sellerBase(seller, sellerPlanRecord, planName) {
 async function handleExpiredPlan(
   seller,
   sellerPlanRecord,
+
   planName,
   closeReason,
   now,
@@ -128,6 +129,7 @@ async function handleExpiredPlan(
   const endDate = new Date(sellerPlanRecord.end_date);
   const state = getExpiryState(endDate, now);
   if (!state) return null; // plan still active
+
 
   const base = sellerBase(seller, sellerPlanRecord, planName);
   const isTrial = sellerPlanRecord.plan_id === TRIAL_PLAN_ID;
@@ -150,11 +152,13 @@ async function handleExpiredPlan(
     return {
       ...base,
       yourShopClose: false,
+
       plan_warning: true,
       warning_type: closeReason,
       hours_remaining: state.hoursRemaining,
       minutes_remaining: state.minutesRemaining,
       message: `Your ${isTrial ? "trial period" : "plan"} has expired. Renew within 24 hours or your shop will close.`,
+      sellerRegistrationDate: seller.createdAt,
       products: [],
       offers: [],
     };
@@ -177,6 +181,7 @@ async function handleExpiredPlan(
       ...base,
       yourShopClose: true,
       closeReason,
+      sellerRegistrationDate: seller.createdAt,
       days_until_deletion: state.daysUntilDeletion,
       message:
         "Your shop is closed. Renew your plan or your data will be deleted.",
@@ -188,6 +193,7 @@ async function handleExpiredPlan(
     ...base,
     yourShopClose: true,
     closeReason: `${closeReason}_deleted`,
+    sellerRegistrationDate: seller.createdAt,
     days_until_deletion: 0,
     message: "Your plan has expired and the grace period has passed.",
   };
@@ -299,6 +305,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         seller,
         sellerPlanRecord,
         planName,
+        { sellerRegistrationDate: seller.createdAt },
         "trial_expired",
         now,
       );
@@ -310,9 +317,11 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         seller,
         sellerPlanRecord,
         planName,
+
         "plan_expired",
         now,
       );
+
       if (expiredResponse) return res.status(200).json(expiredResponse);
     }
 
@@ -365,12 +374,12 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
           "freeDeliveryStartDate",
           "freeDeliveryEndDate",
           "free_delivery",
-        "hasCashback",
-        "cashbackType",
-        "cashbackValue",
-        "cashbackStartDate",
-        "cashbackEndDate",
-        "cashbackMinOrderAmount",
+          "hasCashback",
+          "cashbackType",
+          "cashbackValue",
+          "cashbackStartDate",
+          "cashbackEndDate",
+          "cashbackMinOrderAmount",
           "options",
           "variants",
           "variantPrices",
@@ -440,6 +449,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       logout: false,
       message: "Dashboard loaded successfully",
       ...sellerBase(seller, sellerPlanRecord, planName),
+      sellerRegistrationDate: seller.createdAt,
       yourShopClose: false,
       is_trial: sellerPlanRecord.is_trial,
       trial_ended: sellerPlanRecord.trial_ended,
@@ -624,4 +634,3 @@ router.post("/activate-free-plan", jwtVerifySellerToken, async (req, res) => {
 });
 
 export default router;
-
