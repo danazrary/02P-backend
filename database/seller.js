@@ -142,6 +142,22 @@ const Seller = sequelize.define(
       allowNull: false,
       defaultValue: "both", // "both" or "whatsapp" or "websystem"
     },
+    // Add inside Seller.define attributes:
+product_badges: {
+  type: DataTypes.JSON,
+  allowNull: true,
+  defaultValue: [], 
+  /* Structure:
+     [
+       {
+         productId: 102,
+         titleKu: "پڕفرۆشترین",
+         titleAr: "الأكثر مبيعاً",
+         bgColor: "#ff5722"
+       }
+     ]
+  */
+},
   },
   {
     timestamps: true,
@@ -150,3 +166,5 @@ const Seller = sequelize.define(
 );
 
 export default Seller;
+/* ALTER TABLE seller 
+ADD COLUMN product_badges JSON DEFAULT NULL; */

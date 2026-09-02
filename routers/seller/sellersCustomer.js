@@ -557,6 +557,9 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
           "freeDeliveryStartDate",
           "freeDeliveryEndDate",
           "free_delivery",
+          "hasCashback",
+          "cashbackType",
+          "cashbackValue",
           "options",
           "variants",
           "variantPrices",
@@ -649,6 +652,14 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
 
     const sections = await getShopSections(sellerId);
     const uiSettingsFromSections = buildUiSettingsFromSections(sections);
+let productBadges = seller.product_badges || [];
+if (typeof productBadges === "string") {
+  try {
+    productBadges = JSON.parse(productBadges);
+  } catch {
+    productBadges = [];
+  }
+}
 
     // 7️⃣ Return complete seller data
     res.status(200).json({
@@ -657,6 +668,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       isSeller: role,
       shopName: sellerShop || null,
       yourShopClose: false,
+      
       seller: {
         id: seller.id,
         name: seller.name,
@@ -676,6 +688,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       offers,
       red_line: redLine,
       sections,
+      product_badges: Array.isArray(productBadges) ? productBadges : [],
+  
       ui_settings: uiSettingsFromSections,
     });
   } catch (error) {

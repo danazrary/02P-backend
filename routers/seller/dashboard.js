@@ -130,7 +130,6 @@ async function handleExpiredPlan(
   const state = getExpiryState(endDate, now);
   if (!state) return null; // plan still active
 
-
   const base = sellerBase(seller, sellerPlanRecord, planName);
   const isTrial = sellerPlanRecord.plan_id === TRIAL_PLAN_ID;
 
@@ -216,6 +215,7 @@ function parseRedLine(raw) {
 // Route
 
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
+  console.log("[dashboard] GET /dashboard called"); // Debugging log
   try {
     const { id } = req.user;
     const now = new Date();
@@ -441,7 +441,14 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         status: kuStatus || arStatus, // "coming_soon" | "active" | "expired"
       };
     }
-
+    let productBadges = seller.product_badges || [];
+    if (typeof productBadges === "string") {
+      try {
+        productBadges = JSON.parse(productBadges);
+      } catch {
+        productBadges = [];
+      }
+    }
     // 11. Success response
     return res.status(200).json({
       success: true,
@@ -450,6 +457,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       message: "Dashboard loaded successfully",
       ...sellerBase(seller, sellerPlanRecord, planName),
       sellerRegistrationDate: seller.createdAt,
+      product_badges: Array.isArray(productBadges) ? productBadges : [],
       yourShopClose: false,
       is_trial: sellerPlanRecord.is_trial,
       trial_ended: sellerPlanRecord.trial_ended,
@@ -632,5 +640,117 @@ router.post("/activate-free-plan", jwtVerifySellerToken, async (req, res) => {
     });
   }
 });
+router.post("/product-badges", jwtVerifySellerToken, async (req, res) => {
+  try {
+    const { id: sellerId } = req.user;
+    const { productId, titleKu, titleAr, bgColor } = req.body;
 
+    const parsedProductId = Number(productId);
+    if (!parsedProductId || !titleKu?.trim() || !titleAr?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Product ID and titles for both languages are required.",
+      });
+    }
+
+    // Verify product belongs strictly to this seller
+    const productExists = await Product.findOne({
+      where: { id: parsedProductId, seller_id: sellerId },
+    });
+
+    if (!productExists) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found or does not belong to your shop.",
+      });
+    }
+
+    const seller = await Seller.findByPk(sellerId);
+    let currentBadges = seller.product_badges || [];
+    if (typeof currentBadges === "string") {
+      try {
+        currentBadges = JSON.parse(currentBadges);
+      } catch {
+        currentBadges = [];
+      }
+    }
+
+    // Remove existing badge for the same product if updating, then push new badge
+    const updatedBadges = currentBadges.filter(
+      (b) => Number(b.productId) !== parsedProductId,
+    );
+    const newBadge = {
+      productId: parsedProductId,
+      titleKu: titleKu.trim(),
+      titleAr: titleAr.trim(),
+      bgColor: bgColor || "#000000",
+    };
+    updatedBadges.push(newBadge);
+
+    await seller.update({ product_badges: updatedBadges });
+
+    return res.status(200).json({
+      success: true,
+      message: "Badge saved successfully.",
+      product_badges: updatedBadges,
+    });
+  } catch (error) {
+    console.error("Error saving product badge:", error);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+router.delete(
+  "/product-badges/:productId",
+  jwtVerifySellerToken,
+  async (req, res) => {
+    try {
+      const { id: sellerId } = req.user;
+      const { productId } = req.params;
+
+      const parsedProductId = Number(productId);
+      if (!parsedProductId) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid product ID.",
+        });
+      }
+
+      const seller = await Seller.findByPk(sellerId);
+      if (!seller) {
+        return res.status(404).json({
+          success: false,
+          message: "Seller not found.",
+        });
+      }
+
+      let currentBadges = seller.product_badges || [];
+      if (typeof currentBadges === "string") {
+        try {
+          currentBadges = JSON.parse(currentBadges);
+        } catch {
+          currentBadges = [];
+        }
+      }
+
+      // Filter out the badge matching this product ID
+      const updatedBadges = currentBadges.filter(
+        (b) => Number(b.productId) !== parsedProductId,
+      );
+
+      await seller.update({ product_badges: updatedBadges });
+
+      return res.status(200).json({
+        success: true,
+        message: "Badge deleted successfully.",
+        product_badges: updatedBadges,
+      });
+    } catch (error) {
+      console.error("Error deleting product badge:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Server error.",
+      });
+    }
+  },
+);
 export default router;
