@@ -46,11 +46,8 @@ const sessionCookieOptions = {
   secure: isProductionEnvironment,
   sameSite: "lax",
   path: "/",
+  ...(isProductionEnvironment && { domain: `.${sessionBaseDomain}` }),
 };
-
-if (isProductionEnvironment) {
-  sessionCookieOptions.domain = `.${sessionBaseDomain}`;
-}
 
 // Request logging - Only in development
 if (process.env.NODE_ENV !== "production") {
@@ -91,16 +88,16 @@ app.use(passport.initialize());
 
 // MIDDLEWARE
 /* app.use((req, res, next) => {
-  const origin = process.env.CORS_ORIGIN || "";
-  if (origin) res.header("Access-Control-Allow-Origin", origin);
-  res.header("Access-Control-Allow-Credentials", "true");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-CSRF-Token"
-  );
-  if (req.method === "OPTIONS") return res.sendStatus(204);
-  next();
+  const origin = process.env.CORS_ORIGIN || "";
+  if (origin) res.header("Access-Control-Allow-Origin", origin);
+  res.header("Access-Control-Allow-Credentials", "true");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-CSRF-Token"
+  );
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
 }); */
 
 // Apply CORS before static file serving
@@ -116,26 +113,36 @@ app.use(
         objectSrc: ["'none'"],
         scriptSrc: [
           "'self'",
+          "'unsafe-inline'",
+          "'unsafe-eval'",
           "https://connect.facebook.net",
           "https://www.googletagmanager.com",
           "https://www.google-analytics.com",
+          "https://static.cloudflareinsights.com",
         ],
         connectSrc: [
           "'self'",
           "https://dwkanlink.com",
+          "https://*.dwkanlink.com",
           "https://www.googletagmanager.com",
           "https://www.google-analytics.com",
           "https://region1.google-analytics.com",
           "https://www.facebook.com",
           "https://graph.facebook.com",
+          "https://connect.facebook.net",
+          "https://cloudflareinsights.com",
         ],
         workerSrc: ["'self'", "blob:"],
         imgSrc: ["'self'", "https:", "data:", "blob:"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        fontSrc: ["'self'", "data:"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https:"],
+        fontSrc: ["'self'", "data:", "https:"],
         manifestSrc: ["'self'"],
-        frameSrc: ["https://www.googletagmanager.com"],
-        formAction: ["'self'"],
+        frameSrc: [
+          "'self'",
+          "https://www.googletagmanager.com",
+          "https://www.facebook.com",
+        ],
+        formAction: ["'self'", "https://www.facebook.com"],
         frameAncestors: ["'self'"],
       },
     },
@@ -210,24 +217,29 @@ const RESERVED_PATHS = new Set([
 
 app.use((req, res, next) => {
   // Only redirect on the main domain (no subdomain present)
-  if (req.shopName) return next(); // Only redirect GET requests (not API calls)
+  if (req.shopName) return next();
 
+  // Only redirect GET requests (not API calls)
   if (req.method !== "GET") return next();
 
   const host = req.headers.host || "";
-  const hostname = host.split(":")[0]; // Only apply on production domain
+  const hostname = host.split(":")[0];
 
+  // Only apply on production domain
   if (!hostname.includes("dwkanlink.com")) return next();
 
   const pathParts = req.path.split("/").filter(Boolean);
   if (pathParts.length === 0) return next();
 
-  const firstSegment = pathParts[0]; // Don't redirect reserved paths
+  const firstSegment = pathParts[0];
 
-  if (RESERVED_PATHS.has(firstSegment.toLowerCase())) return next(); // Don't redirect paths with file extensions (static assets)
+  // Don't redirect reserved paths
+  if (RESERVED_PATHS.has(firstSegment.toLowerCase())) return next();
 
-  if (firstSegment.includes(".")) return next(); // Redirect: /shopName/... → https://shopName.dwkanlink.com/...
+  // Don't redirect paths with file extensions (static assets)
+  if (firstSegment.includes(".")) return next();
 
+  // Redirect: /shopName/... → https://shopName.dwkanlink.com/...
   const remainingPath = pathParts.slice(1).join("/");
   const queryString = req.originalUrl.includes("?")
     ? req.originalUrl.substring(req.originalUrl.indexOf("?"))
@@ -384,17 +396,19 @@ if (fs.existsSync(frontendDistPath)) {
   app.get("/sw.js", (req, res) => {
     res.set("Cache-Control", "no-cache, no-store, must-revalidate");
     res.sendFile(path.join(frontendDistPath, "sw.js"));
-  }); // Serve hashed assets (CSS, JS, images) with long-term caching
+  });
 
+  // Serve hashed assets (CSS, JS, images) with long-term caching
   app.use(
     express.static(frontendDistPath, {
       maxAge: "1y",
       immutable: true,
       index: false, // let the SPA fallback handle directory requests
     }),
-  ); // SPA fallback: any GET that didn't match a real file → serve index.html
-  // Exclude /api routes so API 404s still return JSON
+  );
 
+  // SPA fallback: any GET that didn't match a real file → serve index.html
+  // Exclude /api routes so API 404s still return JSON
   app.get("/*path", (req, res) => {
     if (req.path.startsWith("/api/")) {
       return res
@@ -417,8 +431,9 @@ app.use((req, res) => {
 
 // Global error handler - must be last
 app.use((err, req, res, next) => {
-  console.error("❌ Server Error:", err); // Don't leak error details in production
+  console.error("❌ Server Error:", err);
 
+  // Don't leak error details in production
   const errorResponse = {
     error:
       process.env.NODE_ENV === "production"
@@ -482,8 +497,9 @@ function startHttpServer() {
 // START SERVER
 async function startServer() {
   // Initialize database first
-  await initializeDatabase(); // Start appropriate server based on mode
+  await initializeDatabase();
 
+  // Start appropriate server based on mode
   if (mode === "product" || mode === "developingURL") {
     startHttpsServer();
   } else {
