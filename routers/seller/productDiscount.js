@@ -168,6 +168,7 @@ router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
         "cashbackStartDate",
         "cashbackEndDate",
         "cashbackMinOrderAmount",
+        "variantPrices",  
       ],
       include: [
         {
