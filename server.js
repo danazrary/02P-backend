@@ -1,4 +1,3 @@
-//......
 import express from "express";
 import bodyParser from "body-parser";
 import dotenv from "dotenv";
@@ -15,6 +14,7 @@ import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import jwt from "jsonwebtoken";
 import "./utils/passportConfig.js";
+
 // Routers, Middleware, Utils
 import allRouters from "./routers/index.js";
 import sitemapRouter from "./routers/sitemap.js";
@@ -85,28 +85,13 @@ app.use(
   }),
 );
 app.use(passport.initialize());
-//app.use("/uploads", express.static("uploads"));
-
-// place BEFORE server start (near end of app file, but after routers)
-
-// MIDDLEWARE
-/* app.use((req, res, next) => {
-  const origin = process.env.CORS_ORIGIN || "";
-  if (origin) res.header("Access-Control-Allow-Origin", origin);
-  res.header("Access-Control-Allow-Credentials", "true");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-CSRF-Token"
-  );
-  if (req.method === "OPTIONS") return res.sendStatus(204);
-  next();
-}); */
 
 // Apply CORS before static file serving
 app.use(cors(corsOptions));
 
 app.use("/api", apiLimiter); // Extra protection for API routes
+
+// CSP Configuration
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -116,31 +101,42 @@ app.use(
         objectSrc: ["'none'"],
         scriptSrc: [
           "'self'",
+          "'unsafe-inline'",
+          "'unsafe-eval'",
           "https://connect.facebook.net",
           "https://www.googletagmanager.com",
           "https://www.google-analytics.com",
+          "https://static.cloudflareinsights.com",
         ],
         connectSrc: [
           "'self'",
           "https://dwkanlink.com",
+          "https://*.dwkanlink.com",
           "https://www.googletagmanager.com",
           "https://www.google-analytics.com",
           "https://region1.google-analytics.com",
           "https://www.facebook.com",
           "https://graph.facebook.com",
+          "https://connect.facebook.net",
+          "https://cloudflareinsights.com",
         ],
         workerSrc: ["'self'", "blob:"],
         imgSrc: ["'self'", "https:", "data:", "blob:"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        fontSrc: ["'self'", "data:"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https:"],
+        fontSrc: ["'self'", "data:", "https:"],
         manifestSrc: ["'self'"],
-        frameSrc: ["https://www.googletagmanager.com"],
-        formAction: ["'self'"],
+        frameSrc: [
+          "'self'",
+          "https://www.googletagmanager.com",
+          "https://www.facebook.com",
+        ],
+        formAction: ["'self'", "https://www.facebook.com"],
         frameAncestors: ["'self'"],
       },
     },
   }),
 );
+
 app.use(hpp());
 app.use(bodyParser.json({ limit: process.env.BODY_LIMIT || "10mb" }));
 app.use(
@@ -378,30 +374,24 @@ app.get("/health", (req, res) => res.json({ status: "ok" }));
 
 // FRONTEND STATIC FILES + SPA FALLBACK
 // Serve the built React app so the VPS works without a separate Nginx static config.
-// In production the frontend dist lives one level up: ../frontend/dist
 const frontendDistPath =
   process.env.FRONTEND_DIST_PATH ||
   path.join(process.cwd(), "..", "frontend", "dist");
 
 if (fs.existsSync(frontendDistPath)) {
-  // The worker must always be revalidated; caching it as an immutable asset
-  // prevents clients from discovering new cache versions after a deploy.
   app.get("/sw.js", (req, res) => {
     res.set("Cache-Control", "no-cache, no-store, must-revalidate");
     res.sendFile(path.join(frontendDistPath, "sw.js"));
   });
 
-  // Serve hashed assets (CSS, JS, images) with long-term caching
   app.use(
     express.static(frontendDistPath, {
       maxAge: "1y",
       immutable: true,
-      index: false, // let the SPA fallback handle directory requests
+      index: false,
     }),
   );
 
-  // SPA fallback: any GET that didn't match a real file → serve index.html
-  // Exclude /api routes so API 404s still return JSON
   app.get("/*path", (req, res) => {
     if (req.path.startsWith("/api/")) {
       return res
@@ -414,7 +404,6 @@ if (fs.existsSync(frontendDistPath)) {
 }
 
 // ERROR HANDLERS
-// 404 handler - must be after all routes
 app.use((req, res) => {
   res.status(404).json({
     error: "Route not found",
@@ -422,11 +411,9 @@ app.use((req, res) => {
   });
 });
 
-// Global error handler - must be last
 app.use((err, req, res, next) => {
   console.error("❌ Server Error:", err);
 
-  // Don't leak error details in production
   const errorResponse = {
     error:
       process.env.NODE_ENV === "production"
@@ -470,7 +457,7 @@ function startHttpsServer() {
       console.log(
         `🔒 HTTPS server running on https://${bindHost}:${port} (mode=${mode})`,
       );
-      scheduleCleanup(); // Start cleanup scheduler
+      scheduleCleanup();
     });
   } catch (err) {
     console.error("❌ Failed to start HTTPS server:", err);
@@ -483,16 +470,14 @@ function startHttpServer() {
     console.log(
       `🚀 HTTP server running on http://${bindHost}:${port} (mode=${mode})`,
     );
-    scheduleCleanup(); // Start cleanup scheduler
+    scheduleCleanup();
   });
 }
 
 // START SERVER
 async function startServer() {
-  // Initialize database first
   await initializeDatabase();
 
-  // Start appropriate server based on mode
   if (mode === "product" || mode === "developingURL") {
     startHttpsServer();
   } else {
@@ -500,7 +485,6 @@ async function startServer() {
   }
 }
 
-// Start the server
 startServer().catch((err) => {
   console.error("❌ Failed to start server:", err);
   process.exit(1);
