@@ -1,3 +1,4 @@
+// backend/routes/seller/pushNotifications.js
 import { Router } from "express";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import {
@@ -55,7 +56,7 @@ router.get("/push/public-key", jwtVerifySellerToken, (req, res) => {
 
 router.post("/push/subscribe", jwtVerifySellerToken, async (req, res) => {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const normalizedSubscription = normalizeSubscription(
       req.body?.subscription,
     );

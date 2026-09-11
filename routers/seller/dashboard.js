@@ -1,10 +1,11 @@
-﻿import { Router } from "express";
+﻿// backend/routes/seller/dashboard.js
+import { Router } from "express";
 import { Op } from "sequelize";
 import sequelize from "../../database/sequelize.js";
 
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
-import Seller from "../../database/seller.js";
+import SellerV2 from "../../database/sellerv2.js"; // 👈 گۆڕدرا بۆ SellerV2
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
@@ -31,12 +32,6 @@ const DELETION_PERIOD_DAYS = 16;
 const MAX_PRODUCT_LIMIT = 100;
 const DEFAULT_PRODUCT_LIMIT = 30;
 
-// Helpers
-
-/**
- * Safely parse a JSON string or return the value as-is if already an object.
- * Returns null on any failure.
- */
 function safeJsonParse(value) {
   if (value === null || value === undefined) return null;
   if (typeof value === "object") return value;
@@ -47,10 +42,6 @@ function safeJsonParse(value) {
   }
 }
 
-/**
- * Parse and validate the `selectedPlan` query param from the client.
- * Accepts only { name: string } to prevent prototype pollution or injection.
- */
 function parseSelectedPlan(raw) {
   if (!raw) return null;
   try {
@@ -63,15 +54,11 @@ function parseSelectedPlan(raw) {
       return { name: parsed.name };
     }
   } catch {
-    // malformed input ignore
+    // ignore
   }
   return null;
 }
 
-/**
- * Compute expiry phase from an end date relative to now.
- * Returns null when the plan has NOT yet expired.
- */
 function getExpiryState(endDate, now) {
   if (endDate >= now) return null;
 
@@ -96,9 +83,6 @@ function getExpiryState(endDate, now) {
   return { phase: "deleted" };
 }
 
-/**
- * Shared seller identity fields reused across all responses.
- */
 function sellerBase(seller, sellerPlanRecord, planName) {
   return {
     success: true,
@@ -107,34 +91,28 @@ function sellerBase(seller, sellerPlanRecord, planName) {
     seller_id: seller.id,
     seller_name: seller.name,
     shop_name: seller.shop_name,
+    business_type: seller.business_type || "retail",
     plan_id: sellerPlanRecord?.plan_id ?? null,
     sellerPlan: planName,
     plan_end_date: sellerPlanRecord?.end_date ?? null,
   };
 }
 
-/**
- * Handle an expired plan (trial or paid).
- * Uses isolated write transactions only when a DB update is needed.
- * Returns a complete response object when the plan is expired, or null if still valid.
- */
 async function handleExpiredPlan(
   seller,
   sellerPlanRecord,
-
   planName,
   closeReason,
   now,
 ) {
   const endDate = new Date(sellerPlanRecord.end_date);
   const state = getExpiryState(endDate, now);
-  if (!state) return null; // plan still active
+  if (!state) return null;
 
   const base = sellerBase(seller, sellerPlanRecord, planName);
   const isTrial = sellerPlanRecord.plan_id === TRIAL_PLAN_ID;
 
   if (state.phase === "warning") {
-    // Write: mark trial as ended (trial plans only)
     if (isTrial) {
       const t = await sequelize.transaction();
       try {
@@ -151,20 +129,18 @@ async function handleExpiredPlan(
     return {
       ...base,
       yourShopClose: false,
-
       plan_warning: true,
       warning_type: closeReason,
       hours_remaining: state.hoursRemaining,
       minutes_remaining: state.minutesRemaining,
       message: `Your ${isTrial ? "trial period" : "plan"} has expired. Renew within 24 hours or your shop will close.`,
-      sellerRegistrationDate: seller.createdAt,
+      sellerRegistrationDate: seller.created_at || seller.createdAt,
       products: [],
       offers: [],
     };
   }
 
   if (state.phase === "closed") {
-    // Write: deactivate shop; also mark trial_ended for trial plans
     const updatePayload = { status: false };
     if (isTrial) updatePayload.trial_ended = true;
 
@@ -180,29 +156,23 @@ async function handleExpiredPlan(
       ...base,
       yourShopClose: true,
       closeReason,
-      sellerRegistrationDate: seller.createdAt,
+      sellerRegistrationDate: seller.created_at || seller.createdAt,
       days_until_deletion: state.daysUntilDeletion,
       message:
         "Your shop is closed. Renew your plan or your data will be deleted.",
     };
   }
 
-  // phase === "deleted" no write needed; admin cleanup handles actual deletion
   return {
     ...base,
     yourShopClose: true,
     closeReason: `${closeReason}_deleted`,
-    sellerRegistrationDate: seller.createdAt,
+    sellerRegistrationDate: seller.created_at || seller.createdAt,
     days_until_deletion: 0,
     message: "Your plan has expired and the grace period has passed.",
   };
 }
 
-/**
- * Parse a red_line / red_lineAr field from the seller record.
- * Uses Baghdad timezone for comparisons.
- * Returns { data: object|null, status: string|null, needsCleanup: boolean }.
- */
 function parseRedLine(raw) {
   const result = processRedLineData(raw);
   return {
@@ -212,15 +182,14 @@ function parseRedLine(raw) {
   };
 }
 
-// Route
-
+// ==========================================
+// GET /dashboard
+// ==========================================
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
-  console.log("[dashboard] GET /dashboard called"); // Debugging log
   try {
-    const { id } = req.user;
+    const id = req.user?.id || req.user?.seller_id;
     const now = new Date();
 
-    // Validate & parse query params
     const selectedPlan = parseSelectedPlan(req.query.selectedPlan);
     const productLimit = Math.min(
       Math.max(
@@ -234,15 +203,15 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       0,
     );
 
-    // 1. Fetch seller (READ)
-    const seller = await Seller.findByPk(id);
+    // 1. گەڕان تەنها لە خشتەی sellers_v2
+    const seller = await SellerV2.findByPk(id);
     if (!seller) {
       res.clearCookie("s_t", clearCookieOpts());
       return res.status(404).json({
         success: false,
         error: true,
         logout: true,
-        message: "Seller not found",
+        message: "Seller not found in V2",
       });
     }
 
@@ -255,7 +224,6 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       let newPlanData;
 
       if (wantsTrial) {
-        // READ: fetch trial plan duration before opening transaction
         const trialPlan = await Plan.findByPk(TRIAL_PLAN_ID);
         const trialDays = trialPlan?.duration_days ?? 7;
         newPlanData = {
@@ -291,7 +259,6 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       }
     }
 
-    // 4. Fetch plan details (READ)
     const planRow = await Plan.findByPk(sellerPlanRecord.plan_id);
     const planName = planRow?.name ?? "Free";
 
@@ -299,13 +266,11 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
     const isFree = sellerPlanRecord.plan_id === FREE_PLAN_ID;
     const isPaid = !isTrial && !isFree;
 
-    // 6. Expiry checks (writes isolated inside handleExpiredPlan)
     if (isTrial) {
       const expiredResponse = await handleExpiredPlan(
         seller,
         sellerPlanRecord,
         planName,
-        { sellerRegistrationDate: seller.createdAt },
         "trial_expired",
         now,
       );
@@ -317,15 +282,12 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         seller,
         sellerPlanRecord,
         planName,
-
         "plan_expired",
         now,
       );
-
       if (expiredResponse) return res.status(200).json(expiredResponse);
     }
 
-    // 7. Parallel reads: counts, offers, products, storage
     const [
       currentProductCount,
       currentOfferCount,
@@ -416,7 +378,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       const updateObj = {};
       if (ku.needsCleanup) updateObj.red_line = null;
       if (ar.needsCleanup) updateObj.red_lineAr = null;
-      Seller.update(updateObj, { where: { id } }).catch((err) =>
+      SellerV2.update(updateObj, { where: { id } }).catch((err) =>
         console.error("[dashboard] Failed to clean red_line fields:", err),
       );
     }
@@ -438,9 +400,10 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         language,
         start_time: ku.data?.start_time ?? ar.data?.start_time,
         end_time: ku.data?.end_time ?? ar.data?.end_time,
-        status: kuStatus || arStatus, // "coming_soon" | "active" | "expired"
+        status: kuStatus || arStatus,
       };
     }
+
     let productBadges = seller.product_badges || [];
     if (typeof productBadges === "string") {
       try {
@@ -449,14 +412,14 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
         productBadges = [];
       }
     }
-    // 11. Success response
+
     return res.status(200).json({
       success: true,
       error: false,
       logout: false,
       message: "Dashboard loaded successfully",
       ...sellerBase(seller, sellerPlanRecord, planName),
-      sellerRegistrationDate: seller.createdAt,
+      sellerRegistrationDate: seller.created_at || seller.createdAt,
       product_badges: Array.isArray(productBadges) ? productBadges : [],
       yourShopClose: false,
       is_trial: sellerPlanRecord.is_trial,
@@ -495,154 +458,12 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
   }
 });
 
-// Activate trial plan for seller
-router.post("/activate-trial", jwtVerifySellerToken, async (req, res) => {
-  try {
-    const { id } = req.user;
-
-    // Find seller's current plan
-    const sellerPlanRecord = await SellerPlan.findOne({
-      where: { seller_id: id },
-    });
-
-    if (!sellerPlanRecord) {
-      return res.status(404).json({
-        success: false,
-        error: true,
-        message: "No plan record found",
-      });
-    }
-
-    // Check if trial was already used
-    if (sellerPlanRecord.trial_ended) {
-      return res.status(400).json({
-        success: false,
-        error: true,
-        message: "Trial has already been used",
-      });
-    }
-
-    // Check if already on trial
-    if (sellerPlanRecord.plan_id === 9) {
-      return res.status(400).json({
-        success: false,
-        error: true,
-        message: "Already on trial plan",
-      });
-    }
-
-    // Activate trial plan (7 days)
-    const trialDays = 7;
-    const trialStartDate = toUTC(new Date());
-    const trialEndDate = toUTC(
-      new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000),
-    );
-
-    await sellerPlanRecord.update({
-      plan_id: 9, // Trial plan ID
-      start_date: trialStartDate,
-      end_date: trialEndDate,
-      is_trial: true,
-      status: true,
-    });
-
-    console.log(`\u2705 Activated trial plan for seller ${id}`);
-
-    return res.status(200).json({
-      success: true,
-      error: false,
-      message: "Trial activated successfully",
-      plan_id: 9,
-      trial_days: trialDays,
-      end_date: trialEndDate,
-    });
-  } catch (error) {
-    console.error("Error activating trial:", error);
-    return res.status(500).json({
-      success: false,
-      error: true,
-      message: "Server error",
-    });
-  }
-});
-
-// Activate free plan for seller (Plan ID 30 only)
-router.post("/activate-free-plan", jwtVerifySellerToken, async (req, res) => {
-  try {
-    const { id } = req.user;
-    const { planId } = req.body;
-
-    // Security: Only allow plan ID 30 (free plan)
-    if (planId !== 30) {
-      return res.status(400).json({
-        success: false,
-        error: true,
-        message:
-          "Invalid plan ID. Only plan ID 30 is allowed for free activation.",
-      });
-    }
-
-    // Verify plan exists and is the free plan
-    const freePlan = await Plan.findOne({
-      where: { id: 30 },
-    });
-
-    if (!freePlan) {
-      return res.status(404).json({
-        success: false,
-        error: true,
-        message: "Free plan not found in database",
-      });
-    }
-
-    // Find seller's current plan
-    let sellerPlanRecord = await SellerPlan.findOne({
-      where: { seller_id: id },
-    });
-
-    if (!sellerPlanRecord) {
-      // Create new seller plan record if it doesn't exist
-      sellerPlanRecord = await SellerPlan.create({
-        seller_id: id,
-        plan_id: 30,
-        start_date: toUTC(new Date()),
-        end_date: toUTC(new Date("2099-12-31")),
-        is_trial: false,
-        status: true,
-      });
-    } else {
-      // Update existing plan record
-      await sellerPlanRecord.update({
-        plan_id: 30,
-        start_date: toUTC(new Date()),
-        end_date: toUTC(new Date("2099-12-31")),
-        is_trial: false,
-        status: true,
-      });
-    }
-
-    console.log(`OK Activated free plan (ID 30) for seller ${id}`);
-
-    return res.status(200).json({
-      success: true,
-      error: false,
-      message: "Free plan activated successfully",
-      plan_id: 30,
-      plan_name: freePlan.name,
-      max_products: freePlan.max_products,
-    });
-  } catch (error) {
-    console.error("Error activating free plan:", error);
-    return res.status(500).json({
-      success: false,
-      error: true,
-      message: "Server error",
-    });
-  }
-});
+// ==========================================
+// Product Badges
+// ==========================================
 router.post("/product-badges", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id: sellerId } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const { productId, titleKu, titleAr, bgColor } = req.body;
 
     const parsedProductId = Number(productId);
@@ -653,7 +474,6 @@ router.post("/product-badges", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // Verify product belongs strictly to this seller
     const productExists = await Product.findOne({
       where: { id: parsedProductId, seller_id: sellerId },
     });
@@ -665,7 +485,7 @@ router.post("/product-badges", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    const seller = await Seller.findByPk(sellerId);
+    const seller = await SellerV2.findByPk(sellerId);
     let currentBadges = seller.product_badges || [];
     if (typeof currentBadges === "string") {
       try {
@@ -675,7 +495,6 @@ router.post("/product-badges", jwtVerifySellerToken, async (req, res) => {
       }
     }
 
-    // Remove existing badge for the same product if updating, then push new badge
     const updatedBadges = currentBadges.filter(
       (b) => Number(b.productId) !== parsedProductId,
     );
@@ -699,12 +518,13 @@ router.post("/product-badges", jwtVerifySellerToken, async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error." });
   }
 });
+
 router.delete(
   "/product-badges/:productId",
   jwtVerifySellerToken,
   async (req, res) => {
     try {
-      const { id: sellerId } = req.user;
+      const sellerId = req.user?.id || req.user?.seller_id;
       const { productId } = req.params;
 
       const parsedProductId = Number(productId);
@@ -715,7 +535,7 @@ router.delete(
         });
       }
 
-      const seller = await Seller.findByPk(sellerId);
+      const seller = await SellerV2.findByPk(sellerId);
       if (!seller) {
         return res.status(404).json({
           success: false,
@@ -732,7 +552,6 @@ router.delete(
         }
       }
 
-      // Filter out the badge matching this product ID
       const updatedBadges = currentBadges.filter(
         (b) => Number(b.productId) !== parsedProductId,
       );
@@ -753,4 +572,5 @@ router.delete(
     }
   },
 );
+
 export default router;

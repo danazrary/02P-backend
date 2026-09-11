@@ -1,11 +1,10 @@
+// backend/routes/seller/deleteAccount.js
 import { Router } from "express";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
-import {
-  Seller,
-  Product,
-  SellerOffer,
-  SellerPlan,
-} from "../../database/index.js";
+import SellerV2 from "../../database/sellerv2.js";
+import Product from "../../database/products.js";
+import SellerOffer from "../../database/sellerOffer.js";
+import SellerPlan from "../../database/sellerPlan.js";
 import { deleteFile } from "../../utils/deleteFile.js";
 import { clearCookieOpts } from "../../utils/addingToken.js";
 import { deleteFromR2 } from "../../utils/r2.js";
@@ -18,33 +17,26 @@ function isLegacyUploadPath(value) {
 
 async function deleteStoredAsset(pathOrKey) {
   if (!pathOrKey) return;
-
   if (isLegacyUploadPath(pathOrKey)) {
     deleteFile(pathOrKey);
     return;
   }
-
   await deleteFromR2(pathOrKey);
 }
 
-// Request account deletion (sets 30-day timer)
+// 1) DELETE /delete-account
 router.delete("/delete-account", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
+    const seller = await SellerV2.findByPk(sellerId);
 
-    const seller = await Seller.findByPk(id);
     if (!seller) {
-      return res.status(404).json({
-        success: false,
-        error: true,
-        message: "Seller not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, error: true, message: "Seller not found" });
     }
 
-    // Set deletion timer to current date - account will be deleted after 30 days
     await seller.update({ deletion_requested_at: new Date() });
-
-    // Clear the session cookie
     res.clearCookie("s_t", clearCookieOpts());
 
     return res.json({
@@ -55,26 +47,26 @@ router.delete("/delete-account", jwtVerifySellerToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Delete account error:", error);
-    return res.status(500).json({
-      success: false,
-      error: true,
-      message: "Server error. Please try again.",
-    });
+    return res
+      .status(500)
+      .json({
+        success: false,
+        error: true,
+        message: "Server error. Please try again.",
+      });
   }
 });
 
-// Cancel account deletion (resets timer)
+// 2) POST /cancel-deletion
 router.post("/cancel-deletion", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
+    const seller = await SellerV2.findByPk(sellerId);
 
-    const seller = await Seller.findByPk(id);
     if (!seller) {
-      return res.status(404).json({
-        success: false,
-        error: true,
-        message: "Seller not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, error: true, message: "Seller not found" });
     }
 
     if (!seller.deletion_requested_at) {
@@ -92,23 +84,22 @@ router.post("/cancel-deletion", jwtVerifySellerToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Cancel deletion error:", error);
-    return res.status(500).json({
-      success: false,
-      error: true,
-      message: "Server error. Please try again.",
-    });
+    return res
+      .status(500)
+      .json({
+        success: false,
+        error: true,
+        message: "Server error. Please try again.",
+      });
   }
 });
 
-// Permanently delete a seller account and all related data (used by cleanup job)
+// 3) Permanent delete helper
 export async function permanentlyDeleteSellerAccount(sellerId) {
   try {
-    const seller = await Seller.findByPk(sellerId);
-    if (!seller) {
-      return { success: false, message: "Seller not found" };
-    }
+    const seller = await SellerV2.findByPk(sellerId);
+    if (!seller) return { success: false, message: "Seller not found" };
 
-    // Delete product images, then product records
     const products = await Product.findAll({ where: { seller_id: sellerId } });
     for (const product of products) {
       if (product.images && Array.isArray(product.images)) {
@@ -119,7 +110,6 @@ export async function permanentlyDeleteSellerAccount(sellerId) {
     }
     await Product.destroy({ where: { seller_id: sellerId } });
 
-    // Delete offer cover images, then offer records
     const offers = await SellerOffer.findAll({
       where: { seller_id: sellerId },
     });
@@ -129,18 +119,13 @@ export async function permanentlyDeleteSellerAccount(sellerId) {
       }
     }
     await SellerOffer.destroy({ where: { seller_id: sellerId } });
-
-    // Delete seller plan records
     await SellerPlan.destroy({ where: { seller_id: sellerId } });
 
-    // Delete seller shop image
     if (seller.shop_image) {
       await deleteStoredAsset(seller.shop_image);
     }
 
-    // Delete the seller record
     await seller.destroy();
-
     return { success: true, message: "Account deleted permanently" };
   } catch (error) {
     console.error("Permanent delete error:", error);

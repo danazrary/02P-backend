@@ -1,25 +1,21 @@
+// backend/routes/seller/redLine.js
 import { Router } from "express";
-
-import Seller from "../../database/seller.js";
+import SellerV2 from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
-
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import {
   parseDateToUTC,
   getCurrentTimeBaghdad,
-  formatRedLineForStorage,
-  formatRedLineResponse,
 } from "../../utils/timezoneHandler.js";
 
 const router = Router();
 
 router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id: sellerId } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const { textKu, textAr, language, start_time, end_time } = req.body;
 
-    // Validation - check required times
     if (!start_time || !end_time) {
       return res.status(400).json({
         success: false,
@@ -28,8 +24,7 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // Validate text based on language selection
-    const lang = language || "arabic"; // default to arabic
+    const lang = language || "arabic";
     if (lang === "kurdish" && !textKu?.trim()) {
       return res.status(400).json({
         success: false,
@@ -52,8 +47,7 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    /* -------------------- Seller -------------------- */
-    const seller = await Seller.findByPk(sellerId);
+    const seller = await SellerV2.findByPk(sellerId);
     if (!seller) {
       return res.status(404).json({
         success: false,
@@ -63,8 +57,6 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    /* -------------------- Plan Validation -------------------- */
-    // Check seller plan
     const sellerPlan = await SellerPlan.findOne({
       where: { seller_id: sellerId },
     });
@@ -79,7 +71,6 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
 
     const plan = await Plan.findByPk(sellerPlan.plan_id);
 
-    // Check if free plan - don't allow adding red line
     if (
       sellerPlan.plan_id === 1 ||
       plan?.name === "free_seller" ||
@@ -93,7 +84,6 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // Check if plan has expired (use Baghdad timezone)
     const { baghdadFull: currentBaghdad } = getCurrentTimeBaghdad();
     const endDateParsed = parseDateToUTC(sellerPlan.end_date);
     if (
@@ -108,7 +98,6 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // Validate and parse start_time and end_time
     const startParsed = parseDateToUTC(start_time);
     const endParsed = parseDateToUTC(end_time);
 
@@ -120,7 +109,6 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // Validate that start_time is before end_time
     if (startParsed.dayjsObj.isAfter(endParsed.dayjsObj)) {
       return res.status(400).json({
         success: false,
@@ -129,13 +117,10 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // Build update object based on language selection
-    // Store dates in UTC ISO format
     const updateData = {};
     const { utc: createdAt } = getCurrentTimeBaghdad();
 
     if (lang === "kurdish") {
-      // Kurdish only - save to red_line, clear red_lineAr
       updateData.red_line = {
         text: textKu.trim(),
         start_time: startParsed.utc,
@@ -144,7 +129,6 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       };
       updateData.red_lineAr = null;
     } else if (lang === "arabic") {
-      // Arabic only - save to red_lineAr, clear red_line
       updateData.red_lineAr = {
         text: textAr.trim(),
         start_time: startParsed.utc,
@@ -153,7 +137,6 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
       };
       updateData.red_line = null;
     } else {
-      // Both - save Kurdish to red_line, Arabic to red_lineAr
       updateData.red_line = {
         text: textKu.trim(),
         start_time: startParsed.utc,
@@ -170,7 +153,6 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
 
     await seller.update(updateData);
 
-    // Build response with formatted dates
     const responseData = {
       language: lang,
       start_time_utc: startParsed.utc,
@@ -206,10 +188,9 @@ router.post("/add-redline", jwtVerifySellerToken, async (req, res) => {
 
 router.delete("/delete-redline", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id: sellerId } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
+    const seller = await SellerV2.findByPk(sellerId);
 
-    /* -------------------- Seller -------------------- */
-    const seller = await Seller.findByPk(sellerId);
     if (!seller) {
       return res.status(404).json({
         success: false,
@@ -219,7 +200,6 @@ router.delete("/delete-redline", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // Delete red_line data (both columns)
     await seller.update({
       red_line: null,
       red_lineAr: null,

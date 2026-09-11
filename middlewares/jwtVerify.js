@@ -1,15 +1,20 @@
-//jwtVerifySellerToken --- detectSeller
+// backend/middlewares/jwtVerify.js
 import jwt from "jsonwebtoken";
 import { clearCookieOpts } from "../utils/addingToken.js";
 
-//.
-//.
-//.
-//seller token
-export const jwtVerifySellerToken = (req, res, next) => {
-  const { s_t } = req.cookies;
+function extractToken(req, cookieName = "s_t") {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.split(" ")[1];
+  }
+  return req.cookies?.[cookieName] || null;
+}
 
-  if (!s_t) {
+// 1️⃣ Seller Token Verification
+export const jwtVerifySellerToken = (req, res, next) => {
+  const token = extractToken(req, "s_t");
+
+  if (!token) {
     return res.status(401).json({
       logout: true,
       token: "missing",
@@ -18,9 +23,8 @@ export const jwtVerifySellerToken = (req, res, next) => {
     });
   }
 
-  jwt.verify(s_t, process.env.JWT_SECRET, (err, user) => {
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) {
-      // 🔥 MATCH COOKIE OPTIONS EXACTLY
       res.clearCookie("s_t", clearCookieOpts());
 
       if (err.name === "TokenExpiredError") {
@@ -40,98 +44,80 @@ export const jwtVerifySellerToken = (req, res, next) => {
       });
     }
 
-    req.user = user;
+    req.user = decoded;
     next();
   });
 };
-//.
-//.
-//.
-// detectSeller
-export const detectSeller = (req, res, next) => {
-  const { s_t } = req.cookies;
 
-  // default: not seller
+// 2️⃣ Detect Seller (Optional check)
+export const detectSeller = (req, res, next) => {
+  const token = extractToken(req, "s_t");
+
   req.isSeller = false;
   req.seller = null;
 
-  if (!s_t) return next();
+  if (!token) return next();
 
-  jwt.verify(s_t, process.env.JWT_SECRET, (err, decoded) => {
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (!err && decoded) {
       req.isSeller = true;
-      req.seller = decoded; // optional (seller id, role, etc)
+      req.seller = decoded;
     }
-    // even if token invalid → continue normally
     next();
   });
 };
 
-//.
-//.
-//.
-// check me
+// 3️⃣ Check Me (Admin -> Seller -> Customer)
 export const checkMe = (req, res, next) => {
-  const { admin_token, s_t } = req.cookies;
+  const adminToken = extractToken(req, "admin_token");
+  const sellerToken = extractToken(req, "s_t");
 
-  // default → customer
   req.user = {
     role: "customer",
     data: null,
   };
 
-  // 1️⃣ ADMIN has priority
-  if (admin_token) {
+  // ADMIN
+  if (adminToken) {
     return jwt.verify(
-      admin_token,
+      adminToken,
       process.env.ADMIN_JWT_SECRET,
       (err, decoded) => {
         if (err || !decoded) {
-          // ❌ invalid / expired → remove cookie
           res.clearCookie("admin_token", clearCookieOpts());
           return next();
         }
-
-        // ✅ valid admin
         req.user = {
           role: "admin",
           data: decoded,
         };
-
         return next();
       },
     );
   }
 
-  // 2️⃣ SELLER
-  if (s_t) {
-    return jwt.verify(s_t, process.env.JWT_SECRET, (err, decoded) => {
+  // SELLER / STAFF
+  if (sellerToken) {
+    return jwt.verify(sellerToken, process.env.JWT_SECRET, (err, decoded) => {
       if (err || !decoded) {
-        // ❌ invalid / expired → remove cookie
         res.clearCookie("s_t", clearCookieOpts());
         return next();
       }
 
-      // ✅ valid seller
       req.user = {
-        role: "seller",
+        role: decoded.role || "seller",
         data: decoded,
       };
-
       return next();
     });
   }
 
-  // 3️⃣ CUSTOMER (no token)
   next();
 };
 
-//.
-//.
-//.
-// admin
+// 4️⃣ Admin Auth Guard
 export const adminAuth = (req, res, next) => {
-  const token = req.cookies.admin_token;
+  const token = extractToken(req, "admin_token");
 
   if (!token) {
     return res.status(401).json({
@@ -143,7 +129,6 @@ export const adminAuth = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.ADMIN_JWT_SECRET);
-
     if (decoded.role !== "admin" && decoded.role !== "super_admin") {
       res.clearCookie("admin_token", clearCookieOpts());
       return res.status(403).json({

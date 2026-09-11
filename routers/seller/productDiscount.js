@@ -1,3 +1,4 @@
+// backend/routes/seller/productDiscount.js
 import { Router } from "express";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
@@ -25,21 +26,11 @@ function parseOptionalDecimal(value, fieldName) {
   return parsed;
 }
 
-function parseOptionalDate(value, fieldName) {
-  if (value === undefined || value === null || value === "") return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    const err = new Error(`Invalid ${fieldName}`);
-    err.statusCode = 400;
-    err.clientMessage = `${fieldName} must be a valid date.`;
-    throw err;
-  }
-  return parsed;
-}
-
 function normalizeProductIds(productIds) {
   if (!Array.isArray(productIds)) return [];
-  return [...new Set(productIds.map((id) => Number(id)).filter(Number.isInteger))];
+  return [
+    ...new Set(productIds.map((id) => Number(id)).filter(Number.isInteger)),
+  ];
 }
 
 function normalizeCashbackBulkPayload(body = {}) {
@@ -64,17 +55,24 @@ function normalizeCashbackBulkPayload(body = {}) {
     throw err;
   }
 
-  const cashbackValue = parseOptionalDecimal(body.cashbackValue, "cashbackValue");
+  const cashbackValue = parseOptionalDecimal(
+    body.cashbackValue,
+    "cashbackValue",
+  );
   if (cashbackValue === null) {
     const err = new Error("Missing cashbackValue");
     err.statusCode = 400;
     err.clientMessage = "cashbackValue is required when cashback is enabled.";
     throw err;
   }
-  if (cashbackType === "percentage" && (cashbackValue <= 0 || cashbackValue > 100)) {
+  if (
+    cashbackType === "percentage" &&
+    (cashbackValue <= 0 || cashbackValue > 100)
+  ) {
     const err = new Error("Invalid cashback percentage");
     err.statusCode = 400;
-    err.clientMessage = "Percentage cashback must be greater than 0 and no more than 100.";
+    err.clientMessage =
+      "Percentage cashback must be greater than 0 and no more than 100.";
     throw err;
   }
   if (cashbackType === "fixed" && cashbackValue <= 0) {
@@ -84,9 +82,19 @@ function normalizeCashbackBulkPayload(body = {}) {
     throw err;
   }
 
-  const cashbackStartDate = parseOptionalCashbackDate(body.cashbackStartDate, "cashbackStartDate");
-  const cashbackEndDate = parseOptionalCashbackDate(body.cashbackEndDate, "cashbackEndDate");
-  if (cashbackStartDate && cashbackEndDate && cashbackEndDate <= cashbackStartDate) {
+  const cashbackStartDate = parseOptionalCashbackDate(
+    body.cashbackStartDate,
+    "cashbackStartDate",
+  );
+  const cashbackEndDate = parseOptionalCashbackDate(
+    body.cashbackEndDate,
+    "cashbackEndDate",
+  );
+  if (
+    cashbackStartDate &&
+    cashbackEndDate &&
+    cashbackEndDate <= cashbackStartDate
+  ) {
     const err = new Error("Invalid cashback date range");
     err.statusCode = 400;
     err.clientMessage = "cashbackEndDate must be after cashbackStartDate.";
@@ -114,17 +122,16 @@ function normalizeCashbackBulkPayload(body = {}) {
   };
 }
 
-// Get all products for discount management
+// 1) GET /products-discount
 router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id } = req.user;
-    const { filterType } = req.query; // discount, free_delivery, cashback, both, none_*
+    const sellerId = req.user?.id || req.user?.seller_id;
+    const { filterType } = req.query;
     const limit = Math.min(parseInt(req.query.limit) || 15, 100);
     const offset = parseInt(req.query.offset) || 0;
 
-    let whereClause = { seller_id: id };
+    let whereClause = { seller_id: sellerId };
 
-    // Filter products based on type
     if (filterType === "discount") {
       whereClause.hasDiscount = true;
     } else if (filterType === "free_delivery") {
@@ -168,7 +175,7 @@ router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
         "cashbackStartDate",
         "cashbackEndDate",
         "cashbackMinOrderAmount",
-        "variantPrices",  
+        "variantPrices",
       ],
       include: [
         {
@@ -184,7 +191,6 @@ router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
       distinct: true,
     });
 
-    // Check and clean expired discounts and free delivery
     const products = await checkAndCleanProductExpiration(rawProducts);
 
     res.status(200).json({
@@ -196,29 +202,31 @@ router.get("/products-discount", jwtVerifySellerToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Error fetching products for discount:", error);
-    res.status(500).json({
-      success: false,
-      error: true,
-      message: "Failed to fetch products",
-    });
+    res
+      .status(500)
+      .json({
+        success: false,
+        error: true,
+        message: "Failed to fetch products",
+      });
   }
 });
 
-// Add discount or free delivery to products
+// 2) PUT /products-discount/add
 router.put("/products-discount/add", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const {
       productIds,
-      actionType, // 'discount', 'free_delivery', 'both'
+      actionType,
       discount_percent,
-      discountType, // 'permanent', 'timer'
+      discountType,
       startDate,
       endDate,
       applyToAll,
     } = req.body;
 
-    let whereClause = { seller_id: id };
+    let whereClause = { seller_id: sellerId };
 
     if (!applyToAll && productIds && productIds.length > 0) {
       whereClause.id = { [Op.in]: productIds };
@@ -255,28 +263,26 @@ router.put("/products-discount/add", jwtVerifySellerToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Error adding discount/free delivery:", error);
-    res.status(500).json({
-      success: false,
-      error: true,
-      message: "Failed to update products",
-    });
+    res
+      .status(500)
+      .json({
+        success: false,
+        error: true,
+        message: "Failed to update products",
+      });
   }
 });
 
-// Remove discount or free delivery from products
+// 3) PUT /products-discount/remove
 router.put(
   "/products-discount/remove",
   jwtVerifySellerToken,
   async (req, res) => {
     try {
-      const { id } = req.user;
-      const {
-        productIds,
-        actionType, // 'discount', 'free_delivery', 'both'
-        applyToAll,
-      } = req.body;
+      const sellerId = req.user?.id || req.user?.seller_id;
+      const { productIds, actionType, applyToAll } = req.body;
 
-      let whereClause = { seller_id: id };
+      let whereClause = { seller_id: sellerId };
 
       if (!applyToAll && productIds && productIds.length > 0) {
         whereClause.id = { [Op.in]: productIds };
@@ -297,6 +303,7 @@ router.put(
         updateData.freeDeliveryStartDate = null;
         updateData.freeDeliveryEndDate = null;
       }
+
       const [updatedCount] = await Product.update(updateData, {
         where: whereClause,
       });
@@ -309,108 +316,116 @@ router.put(
       });
     } catch (error) {
       console.error("Error removing discount/free delivery:", error);
-      res.status(500).json({
+      res
+        .status(500)
+        .json({
+          success: false,
+          error: true,
+          message: "Failed to update products",
+        });
+    }
+  },
+);
+
+// 4) PUT /products-discount/cashback
+router.put(
+  "/products-discount/cashback",
+  jwtVerifySellerToken,
+  async (req, res) => {
+    const transaction = await Product.sequelize.transaction();
+    try {
+      const sellerId = req.user?.id || req.user?.seller_id;
+      const productIds = normalizeProductIds(req.body.productIds);
+
+      if (productIds.length === 0) {
+        await transaction.rollback();
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error: true,
+            message: "productIds array is required.",
+          });
+      }
+
+      const updateData = normalizeCashbackBulkPayload(req.body);
+      const ownedProducts = await Product.findAll({
+        where: { id: { [Op.in]: productIds }, seller_id: sellerId },
+        attributes: ["id"],
+        transaction,
+      });
+
+      if (ownedProducts.length !== productIds.length) {
+        await transaction.rollback();
+        return res.status(403).json({
+          success: false,
+          error: true,
+          message:
+            "One or more selected products do not belong to this seller.",
+        });
+      }
+
+      const [updatedCount] = await Product.update(updateData, {
+        where: { id: { [Op.in]: productIds }, seller_id: sellerId },
+        transaction,
+      });
+
+      const updatedProducts = await Product.findAll({
+        where: { id: { [Op.in]: productIds }, seller_id: sellerId },
+        attributes: [
+          "id",
+          "hasCashback",
+          "cashbackType",
+          "cashbackValue",
+          "cashbackStartDate",
+          "cashbackEndDate",
+          "cashbackMinOrderAmount",
+        ],
+        transaction,
+      });
+
+      await transaction.commit();
+      return res.status(200).json({
+        success: true,
+        error: false,
+        message: `Successfully updated cashback for ${updatedCount} product(s)`,
+        updatedCount,
+        products: updatedProducts,
+      });
+    } catch (error) {
+      await transaction.rollback();
+      console.error("Error updating cashback:", error);
+      return res.status(error.statusCode || 500).json({
         success: false,
         error: true,
-        message: "Failed to update products",
+        message: error.clientMessage || "Failed to update cashback.",
       });
     }
   },
 );
 
-
-router.put("/products-discount/cashback", jwtVerifySellerToken, async (req, res) => {
-  const transaction = await Product.sequelize.transaction();
-  try {
-    const { id: sellerId } = req.user;
-    const productIds = normalizeProductIds(req.body.productIds);
-
-    if (productIds.length === 0) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        error: true,
-        message: "productIds array is required.",
-      });
-    }
-
-    const updateData = normalizeCashbackBulkPayload(req.body);
-    const ownedProducts = await Product.findAll({
-      where: { id: { [Op.in]: productIds }, seller_id: sellerId },
-      attributes: ["id"],
-      transaction,
-    });
-
-    if (ownedProducts.length !== productIds.length) {
-      await transaction.rollback();
-      return res.status(403).json({
-        success: false,
-        error: true,
-        message: "One or more selected products do not belong to this seller.",
-      });
-    }
-
-    const [updatedCount] = await Product.update(updateData, {
-      where: { id: { [Op.in]: productIds }, seller_id: sellerId },
-      transaction,
-    });
-
-    const updatedProducts = await Product.findAll({
-      where: { id: { [Op.in]: productIds }, seller_id: sellerId },
-      attributes: [
-        "id",
-        "hasCashback",
-        "cashbackType",
-        "cashbackValue",
-        "cashbackStartDate",
-        "cashbackEndDate",
-        "cashbackMinOrderAmount",
-      ],
-      transaction,
-    });
-
-    await transaction.commit();
-    return res.status(200).json({
-      success: true,
-      error: false,
-      message: `Successfully updated cashback for ${updatedCount} product(s)`,
-      updatedCount,
-      products: updatedProducts,
-    });
-  } catch (error) {
-    await transaction.rollback();
-    console.error("Error updating cashback:", error);
-    return res.status(error.statusCode || 500).json({
-      success: false,
-      error: true,
-      message: error.clientMessage || "Failed to update cashback.",
-    });
-  }
-});
-// Get products count by type
+// 5) GET /products-discount/counts
 router.get(
   "/products-discount/counts",
   jwtVerifySellerToken,
   async (req, res) => {
     try {
-      const { id } = req.user;
+      const sellerId = req.user?.id || req.user?.seller_id;
 
-      const totalProducts = await Product.count({ where: { seller_id: id } });
+      const totalProducts = await Product.count({
+        where: { seller_id: sellerId },
+      });
       const withDiscount = await Product.count({
-        where: { seller_id: id, hasDiscount: true },
+        where: { seller_id: sellerId, hasDiscount: true },
       });
       const withFreeDelivery = await Product.count({
-        where: { seller_id: id, free_delivery: true },
+        where: { seller_id: sellerId, free_delivery: true },
       });
       const withBoth = await Product.count({
-        where: {
-          seller_id: id,
-          hasDiscount: true,
-          free_delivery: true,
-        },
+        where: { seller_id: sellerId, hasDiscount: true, free_delivery: true },
       });
       const withCashback = await Product.count({
-        where: { seller_id: id, hasCashback: true },
+        where: { seller_id: sellerId, hasCashback: true },
       });
 
       res.status(200).json({
@@ -429,18 +444,15 @@ router.get(
       });
     } catch (error) {
       console.error("Error fetching product counts:", error);
-      res.status(500).json({
-        success: false,
-        error: true,
-        message: "Failed to fetch product counts",
-      });
+      res
+        .status(500)
+        .json({
+          success: false,
+          error: true,
+          message: "Failed to fetch product counts",
+        });
     }
   },
 );
 
 export default router;
-
-
-
-
-

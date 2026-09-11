@@ -1,15 +1,17 @@
+// backend/routes/seller/orders.js
 import { Router } from "express";
-import { Op, fn, col, literal } from "sequelize";
+import { Op, fn, col } from "sequelize";
 import sequelize from "../../database/sequelize.js";
 import Order from "../../database/order.js";
 import OrderItem from "../../database/orderItem.js";
-import Seller from "../../database/seller.js";
+import SellerV2 from "../../database/sellerv2.js";
 import Product from "../../database/products.js";
 import Report from "../../database/report.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { notifySellerNewOrder } from "../../utils/webPush.js";
 import { normalizeUiSettings } from "../../utils/uiSettings.js";
 import { applyItemStockDecrement } from "../../utils/productStock.js";
+
 const router = Router();
 
 const IRAQ_DELIVERY_CITY_KEYS = [
@@ -126,11 +128,7 @@ function isMissingOrderCustomerContactPreferenceColumnError(error) {
 
 function parseObjectInput(value) {
   if (!value) return null;
-
-  if (typeof value === "object" && !Array.isArray(value)) {
-    return value;
-  }
-
+  if (typeof value === "object" && !Array.isArray(value)) return value;
   if (typeof value === "string") {
     try {
       const parsed = JSON.parse(value);
@@ -141,14 +139,11 @@ function parseObjectInput(value) {
       return null;
     }
   }
-
   return null;
 }
 
-
 function isProductCashbackActive(product, lineSubtotal, atTime = Date.now()) {
   if (!product?.hasCashback) return false;
-
   const value = Number(product.cashbackValue);
   if (!Number.isFinite(value) || value <= 0) return false;
 
@@ -267,16 +262,14 @@ async function buildOrderResponseWithLegacyCashback(order) {
 
   return plainOrder;
 }
+
 function buildSelectedOptions(item) {
   const selectedFromPayload =
     parseObjectInput(item?.selected_options) ||
     parseObjectInput(item?.variant_options) ||
     {};
 
-  // Keep legacy fields too so color/size/taste remain visible in one JSON snapshot.
-  const merged = {
-    ...selectedFromPayload,
-  };
+  const merged = { ...selectedFromPayload };
 
   ["color", "size", "taste"].forEach((key) => {
     const value = item?.[key];
@@ -288,14 +281,6 @@ function buildSelectedOptions(item) {
   return Object.keys(merged).length ? merged : null;
 }
 
-/* ─────────────────────────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────────────────────────── */
-
-/**
- * Generate a unique, human-readable order ID.
- * Format: ORD-<timestamp_last6><random2>
- */
 async function generateOrderId() {
   const ts = Date.now().toString().slice(-6);
   const rnd = Math.floor(10 + Math.random() * 90);
@@ -305,11 +290,10 @@ async function generateOrderId() {
     where: { order_id: candidate },
     attributes: ["id"],
   });
-  if (existing) return generateOrderId(); // retry on collision (extremely rare)
+  if (existing) return generateOrderId();
   return candidate;
 }
 
-/** Return 400 if any required field is missing/invalid */
 function validateCreateOrder(body) {
   const errors = [];
   const { customer_name, customer_phone, customer_city, currency, items } =
@@ -319,53 +303,58 @@ function validateCreateOrder(body) {
     !customer_name ||
     typeof customer_name !== "string" ||
     !customer_name.trim()
-  )
+  ) {
     errors.push("customer_name is required");
+  }
 
   if (
     !customer_phone ||
     typeof customer_phone !== "string" ||
     !customer_phone.trim()
-  )
+  ) {
     errors.push("customer_phone is required");
+  }
 
   if (
     !customer_city ||
     typeof customer_city !== "string" ||
     !customer_city.trim()
-  )
+  ) {
     errors.push("customer_city is required");
+  }
 
-  if (!["IQD", "USD", "MIXED"].includes(currency))
+  if (!["IQD", "USD", "MIXED"].includes(currency)) {
     errors.push("currency must be IQD, USD, or MIXED");
+  }
 
-  if (!Array.isArray(items) || items.length === 0)
+  if (!Array.isArray(items) || items.length === 0) {
     errors.push("items must be a non-empty array");
+  }
 
   if (Array.isArray(items)) {
     items.forEach((item, idx) => {
-      if (!item.product_name || typeof item.product_name !== "string")
+      if (!item.product_name || typeof item.product_name !== "string") {
         errors.push(`items[${idx}].product_name is required`);
-      if (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) < 1)
+      }
+      if (
+        !Number.isFinite(Number(item.quantity)) ||
+        Number(item.quantity) < 1
+      ) {
         errors.push(`items[${idx}].quantity must be a positive integer`);
+      }
       if (
         !Number.isFinite(Number(item.unit_price)) ||
         Number(item.unit_price) < 0
-      )
+      ) {
         errors.push(`items[${idx}].unit_price must be a non-negative number`);
+      }
     });
   }
 
   return errors;
 }
 
-/* ─────────────────────────────────────────────────────────────
-   POST /api/seller/orders/create   (customer-facing)
-   Creates a new order for a seller's store.
-   No auth required — customers place orders publicly.
-───────────────────────────────────────────────────────────── */
-
-
+// 1) POST /orders/create
 router.post("/orders/create", async (req, res) => {
   try {
     const {
@@ -383,21 +372,19 @@ router.post("/orders/create", async (req, res) => {
       notes,
     } = req.body;
 
-    // Validate seller
     if (!seller_id || !Number.isInteger(Number(seller_id))) {
       return res
         .status(400)
         .json({ success: false, message: "seller_id is required" });
     }
 
-    const seller = await Seller.findByPk(Number(seller_id));
+    const seller = await SellerV2.findByPk(Number(seller_id));
     if (!seller) {
       return res
         .status(404)
         .json({ success: false, message: "Store not found" });
     }
 
-    // Validate fields
     const errors = validateCreateOrder(req.body);
     if (errors.length) {
       return res
@@ -406,10 +393,12 @@ router.post("/orders/create", async (req, res) => {
     }
 
     if (!["COD", "Card"].includes(payment_method)) {
-      return res.status(400).json({
-        success: false,
-        message: "payment_method must be COD or Card",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "payment_method must be COD or Card",
+        });
     }
 
     if (
@@ -422,14 +411,10 @@ router.post("/orders/create", async (req, res) => {
       });
     }
 
-    // Calculate totals server-side
     const parsedItems = items.map((item) => {
       const selectedOptions = buildSelectedOptions(item);
-
       return {
-        // Store canonical JSON selected options (color/size/taste + dynamic keys).
         selected_options: selectedOptions,
-        // Keep legacy text snapshot for backward compatibility with existing readers.
         variant_options_snapshot: selectedOptions
           ? JSON.stringify(selectedOptions)
           : null,
@@ -440,7 +425,7 @@ router.post("/orders/create", async (req, res) => {
         size: item.size ? String(item.size).slice(0, 100) : null,
         quantity: Math.max(1, Math.floor(Number(item.quantity))),
         unit_price: Math.max(0, parseFloat(Number(item.unit_price).toFixed(2))),
-        total_price: 0, // computed below
+        total_price: 0,
         currency: ["IQD", "USD"].includes(item.currency)
           ? item.currency
           : currency === "MIXED"
@@ -464,10 +449,7 @@ router.post("/orders/create", async (req, res) => {
     ];
     const orderedProducts = productIds.length
       ? await Product.findAll({
-          where: {
-            id: productIds,
-            seller_id: Number(seller_id),
-          },
+          where: { id: productIds, seller_id: Number(seller_id) },
           attributes: [
             "id",
             "hasCashback",
@@ -479,9 +461,7 @@ router.post("/orders/create", async (req, res) => {
           ],
         })
       : [];
-    const productById = new Map(
-      orderedProducts.map((product) => [Number(product.id), product]),
-    );
+    const productById = new Map(orderedProducts.map((p) => [Number(p.id), p]));
 
     parsedItems.forEach((item) => {
       const product = productById.get(Number(item.product_id));
@@ -545,7 +525,6 @@ router.post("/orders/create", async (req, res) => {
 
     const order_id = await generateOrderId();
 
-    // Atomic transaction
     const createOrderTransaction = async (
       withVariantSnapshot = true,
       withSelectedOptions = true,
@@ -580,24 +559,14 @@ router.post("/orders/create", async (req, res) => {
         const newOrder = await Order.create(createPayload, { transaction: t });
 
         const itemRows = parsedItems.map((item) => {
-          const base = {
-            ...item,
-            order_id: newOrder.id,
-          };
-          if (!withVariantSnapshot) {
-            delete base.variant_options_snapshot;
-          }
-          if (!withSelectedOptions) {
-            delete base.selected_options;
-          }
+          const base = { ...item, order_id: newOrder.id };
+          if (!withVariantSnapshot) delete base.variant_options_snapshot;
+          if (!withSelectedOptions) delete base.selected_options;
           return base;
         });
 
         await OrderItem.bulkCreate(itemRows, { transaction: t });
 
-        // 🔻 Decrement inventory for each ordered item.
-        // Rows are locked (SELECT ... FOR UPDATE) so two orders placed at
-        // the same time can't both decrement from a stale stock value.
         if (productIds.length) {
           const lockedProducts = await Product.findAll({
             where: { id: productIds, seller_id: Number(seller_id) },
@@ -612,13 +581,12 @@ router.post("/orders/create", async (req, res) => {
             lock: t.LOCK.UPDATE,
           });
           const lockedProductById = new Map(
-            lockedProducts.map((product) => [Number(product.id), product]),
+            lockedProducts.map((p) => [Number(p.id), p]),
           );
 
           for (const item of parsedItems) {
             const product = lockedProductById.get(Number(item.product_id));
             if (!product) continue;
-
             const stockUpdate = applyItemStockDecrement(product, item);
             if (stockUpdate) {
               await product.update(stockUpdate, { transaction: t });
@@ -639,7 +607,6 @@ router.post("/orders/create", async (req, res) => {
       ) {
         throw error;
       }
-
       const withoutCustomerContactPreference =
         isMissingOrderCustomerContactPreferenceColumnError(error);
       const missing = getMissingOptionalColumns(error);
@@ -651,7 +618,6 @@ router.post("/orders/create", async (req, res) => {
       );
     }
 
-    // 📊 Increment orders count in daily report (non-blocking)
     try {
       const today = new Date().toISOString().split("T")[0];
       const [report, created] = await Report.findOrCreate({
@@ -666,12 +632,8 @@ router.post("/orders/create", async (req, res) => {
     }
 
     try {
-      const pushResult = await notifySellerNewOrder({ seller, order });
-      console.log(
-        `[orders] Push notify result for order=${order.order_id}: ${JSON.stringify(pushResult)}`,
-      );
+      await notifySellerNewOrder({ seller, order });
     } catch (notifyError) {
-      // Push delivery failure must never block order creation.
       console.error("Order push notification failed:", notifyError);
     }
 
@@ -691,13 +653,11 @@ router.post("/orders/create", async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
-/* ─────────────────────────────────────────────────────────────
-   GET /api/seller/orders   (seller dashboard)
-   Returns all orders for the authenticated seller's store.
-───────────────────────────────────────────────────────────── */
+
+// 2) GET /orders
 router.get("/orders", jwtVerifySellerToken, async (req, res) => {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const { status, search, page = 1, limit = 20 } = req.query;
 
     const pageNum = Math.max(1, parseInt(page, 10));
@@ -781,9 +741,7 @@ router.get("/orders", jwtVerifySellerToken, async (req, res) => {
         buildQueryOptions(true, true),
       ));
     } catch (error) {
-      if (!isMissingOrderItemOptionalColumnError(error)) {
-        throw error;
-      }
+      if (!isMissingOrderItemOptionalColumnError(error)) throw error;
       const missing = getMissingOptionalColumns(error);
       ({ count, rows } = await Order.findAndCountAll(
         buildQueryOptions(
@@ -809,13 +767,10 @@ router.get("/orders", jwtVerifySellerToken, async (req, res) => {
   }
 });
 
-/* ─────────────────────────────────────────────────────────────
-   GET /api/seller/orders/stats   (seller dashboard analytics)
-───────────────────────────────────────────────────────────── */
+// 3) GET /orders/stats
 router.get("/orders/stats", jwtVerifySellerToken, async (req, res) => {
   try {
-    const sellerId = req.user.id;
-
+    const sellerId = req.user?.id || req.user?.seller_id;
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
@@ -865,7 +820,6 @@ router.get("/orders/stats", jwtVerifySellerToken, async (req, res) => {
           },
         ],
       }),
-      // Orders per day for last 7 days
       Order.findAll({
         where: {
           seller_id: sellerId,
@@ -905,12 +859,10 @@ router.get("/orders/stats", jwtVerifySellerToken, async (req, res) => {
   }
 });
 
-/* ─────────────────────────────────────────────────────────────
-   GET /api/seller/orders/:orderId   (seller — single order)
-───────────────────────────────────────────────────────────── */
+// 4) GET /orders/:orderId
 router.get("/orders/:orderId", jwtVerifySellerToken, async (req, res) => {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const { orderId } = req.params;
 
     const buildDetailQuery = (
@@ -969,9 +921,7 @@ router.get("/orders/:orderId", jwtVerifySellerToken, async (req, res) => {
     try {
       order = await Order.findOne(buildDetailQuery(true, true));
     } catch (error) {
-      if (!isMissingOrderItemOptionalColumnError(error)) {
-        throw error;
-      }
+      if (!isMissingOrderItemOptionalColumnError(error)) throw error;
       const missing = getMissingOptionalColumns(error);
       order = await Order.findOne(
         buildDetailQuery(
@@ -995,9 +945,7 @@ router.get("/orders/:orderId", jwtVerifySellerToken, async (req, res) => {
   }
 });
 
-/* ─────────────────────────────────────────────────────────────
-   PUT /api/seller/orders/:orderId/status
-───────────────────────────────────────────────────────────── */
+// 5) PUT /orders/:orderId/status
 const ALLOWED_STATUSES = [
   "pending",
   "accepted",
@@ -1011,7 +959,7 @@ router.put(
   jwtVerifySellerToken,
   async (req, res) => {
     try {
-      const sellerId = req.user.id;
+      const sellerId = req.user?.id || req.user?.seller_id;
       const { orderId } = req.params;
       const { status } = req.body;
 

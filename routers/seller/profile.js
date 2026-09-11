@@ -1,11 +1,13 @@
+// backend/routes/seller/profile.js
 import { Router } from "express";
-import Seller from "../../database/seller.js";
+import SellerV2 from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import ShopSection from "../../database/ShopSection.js";
 import {
   processRedLineData,
   getRedLineStatus,
 } from "../../utils/timezoneHandler.js";
+
 const router = Router();
 
 const DEFAULT_CONFIGS = {
@@ -29,9 +31,9 @@ router.get("/:shopName/profile", async (req, res) => {
   try {
     const { shopName } = req.params;
 
-    const sellerData = await Seller.findOne({
+    const sellerData = await SellerV2.findOne({
       where: {
-        shop_name: shopName,
+        shop_name: shopName.trim().toLowerCase(),
       },
       attributes: [
         "id",
@@ -39,6 +41,7 @@ router.get("/:shopName/profile", async (req, res) => {
         "shop_name",
         "shop_image",
         "brand_color",
+        "business_type",
         "social_links",
         "red_line",
         "red_lineAr",
@@ -47,11 +50,12 @@ router.get("/:shopName/profile", async (req, res) => {
         "shop_location",
         "default_shop_lang",
         "ui_settings",
-        "createdAt",
+        "is_active",
+        "created_at",
       ],
     });
 
-    if (!sellerData) {
+    if (!sellerData || sellerData.is_active === false) {
       return res.status(404).json({
         success: false,
         message: "Seller not found",
@@ -90,9 +94,11 @@ router.get("/:shopName/profile", async (req, res) => {
           shop_name: sellerData.shop_name,
           shop_image: sellerData.shop_image,
           brand_color: sellerData.brand_color,
+          business_type: sellerData.business_type || "retail",
         },
       });
     }
+
     let redLine = null;
     const kuResult = processRedLineData(sellerData.red_line);
     const arResult = processRedLineData(sellerData.red_lineAr);
@@ -115,15 +121,17 @@ router.get("/:shopName/profile", async (req, res) => {
         language,
         start_time: kuResult.data?.start_time || arResult.data?.start_time,
         end_time: kuResult.data?.end_time || arResult.data?.end_time,
-        status: kuStatus || arStatus, // "coming_soon" | "active" | "expired"
+        status: kuStatus || arStatus,
       };
     }
+
     const profileData = {
       id: sellerData.id,
       name: sellerData.name,
       shopName: sellerData.shop_name,
       shopImage: sellerData.shop_image,
       brandColor: sellerData.brand_color || null,
+      businessType: sellerData.business_type || "retail",
       whatsapp: sellerData.phone || null,
       viber: sellerData.social_links?.viber || null,
       socialMedia: {
@@ -140,9 +148,8 @@ router.get("/:shopName/profile", async (req, res) => {
       shopLocation: sellerData.shop_location || null,
       defaultShopLang: sellerData.default_shop_lang || "ku",
       redLine,
-
       flashBanner,
-      joinedDate: sellerData.createdAt,
+      joinedDate: sellerData.created_at || sellerData.createdAt,
     };
 
     return res.status(200).json({
@@ -151,7 +158,6 @@ router.get("/:shopName/profile", async (req, res) => {
     });
   } catch (error) {
     console.error("Error fetching seller profile:", error);
-
     return res.status(500).json({
       success: false,
       message: "Error fetching seller profile",

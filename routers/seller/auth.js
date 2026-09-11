@@ -1,8 +1,9 @@
+// backend/routes/seller/auth.js
 import express from "express";
 import passport from "passport";
 import jwt from "jsonwebtoken";
 import "../../utils/passportConfig.js";
-import Seller from "../../database/seller.js";
+import SellerV2 from "../../database/sellerv2.js";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
 import { Resend } from "resend";
@@ -12,12 +13,10 @@ import {
   clearCookieOpts,
 } from "../../utils/addingToken.js";
 import { checkMe } from "../../middlewares/jwtVerify.js";
-import { pingGoogleSitemap } from "../sitemap.js";
 import axios from "axios";
+
 const router = express.Router();
-
 const resendClient = new Resend(process.env.RESEND_API_KEY || "");
-
 const isProductionEnvironment =
   process.env.NODE_ENV === "production" ||
   process.env.ENVIRONMENT === "product";
@@ -26,7 +25,6 @@ function getFrontendOrigin(req) {
   if (isProductionEnvironment) {
     return process.env.FRONTEND_ORIGIN || "https://dwkanlink.com";
   }
-
   return (
     req.query.origin || process.env.FRONTEND_ORIGIN || "http://localhost:5173"
   );
@@ -37,15 +35,11 @@ function getStoredOAuthRedirect(req, provider, code) {
   if (!stored || stored.code !== code) {
     return null;
   }
-
   return stored.redirectUrl || null;
 }
 
 function storeOAuthRedirect(req, provider, code, redirectUrl) {
-  if (!req.session) {
-    return;
-  }
-
+  if (!req.session) return;
   req.session.oauthCallbacks = {
     ...(req.session.oauthCallbacks || {}),
     [provider]: {
@@ -69,41 +63,24 @@ function getPasswordValidationErrors(password) {
   if (!/[a-z]/.test(password))
     errors.push("Password must include a lowercase letter");
   if (!/[0-9]/.test(password)) errors.push("Password must include a number");
-  if (!/[!@#$%^&*(),.?\"{}|<>]/.test(password))
-    errors.push("Password must include a special character");
   return errors;
 }
 
-function getEmailBodyTemplate(code, language) {
-  const codeText = String(code);
-  if (language === "ar") {
-    return {
-      subject: "رمز التحقق الخاص بك",
-      html: `<div style="font-family: Arial, sans-serif;line-height:1.5;color:#1a1a1a;"><h2 style="color:#5D5FEF;">رمز التحقق</h2><p>رمز التحقق الخاص بك هو:</p><p style="font-size:2rem;font-weight:bold;color:#5D5FEF;">${codeText}</p><p>سيتم انتهاء هذا الرمز خلال 10 دقائق.</p></div>`,
-    };
+async function sendVerificationEmail(email, code, language = "ku") {
+  try {
+    await resendClient.emails.send({
+      from: "Dwkanlink <no-reply@dwkanlink.com>",
+      to: [email],
+      subject: "کۆدی پشتڕاستکردنەوە | Dwkanlink",
+      html: `<div style="font-family: Arial; direction: rtl; text-align: right;">
+        <h2>کۆدی پشتڕاستکردنەوە</h2>
+        <p style="font-size: 24px; font-weight: bold; color: #5d5fef;">${code}</p>
+        <p>ئەم کۆدە تەنها بۆ ماوەی ١٠ خولەک کار دەکات.</p>
+      </div>`,
+    });
+  } catch (err) {
+    console.error("Email send error:", err);
   }
-
-  if (language === "ku") {
-    return {
-      subject: "کۆدی پشتڕاستکردنەوە",
-      html: `<div style="font-family: Arial, sans-serif;line-height:1.5;color:#1a1a1a;"><h2 style="color:#5D5FEF;">کۆدی پشتڕاستکردنەوە</h2><p>کۆدی پشتڕاستکردنەوەی تۆ ئەمەیە:</p><p style="font-size:2rem;font-weight:bold;color:#5D5FEF;">${codeText}</p><p>ئەم کۆدە دەبێ تەنها 10 خولەک بەکارببرێ.</p></div>`,
-    };
-  }
-
-  return {
-    subject: "Your verification code",
-    html: `<div style="font-family: Arial, sans-serif;line-height:1.5;color:#1a1a1a;"><h2 style="color:#5D5FEF;">Verification Code</h2><p>Your verification code is:</p><p style="font-size:2rem;font-weight:bold;color:#5D5FEF;">${codeText}</p><p>This code expires in 10 minutes.</p></div>`,
-  };
-}
-
-async function sendVerificationEmail(email, code, language = "en") {
-  const { subject, html } = getEmailBodyTemplate(code, language);
-  await resendClient.emails.send({
-    from: "Dwkanlink <no-reply@dwkanlink.com>",
-    to: [email],
-    subject,
-    html,
-  });
 }
 
 function generateCodeVerifier() {
@@ -114,13 +91,27 @@ function generateCodeChallenge(verifier) {
   return crypto.createHash("sha256").update(verifier).digest("base64url");
 }
 
-// Temporary in-memory store (use Redis in production)
 const pkceStore = {};
 
+function isProfileIncomplete(seller) {
+  if (!seller) return true;
+  if (!seller.shop_name) return true;
+  if (
+    seller.shop_name.startsWith("dwkan-") ||
+    seller.shop_name.startsWith("shop-")
+  ) {
+    return true;
+  }
+  if (!seller.phone) return true;
+  return false;
+}
+
+// ==========================================
 // 1) REGISTER
+// ==========================================
 router.post("/register", async (req, res) => {
   try {
-    const { email, password, confirmPassword, lang = "en" } = req.body;
+    const { email, password, confirmPassword, lang = "ku" } = req.body;
 
     if (!email || !password || !confirmPassword) {
       return res
@@ -141,7 +132,9 @@ router.post("/register", async (req, res) => {
         .json({ success: false, message: passwordErrors.join(", ") });
     }
 
-    const existing = await Seller.findOne({ where: { email } });
+    const existing = await SellerV2.findOne({
+      where: { email: email.trim().toLowerCase() },
+    });
     if (existing) {
       return res
         .status(409)
@@ -152,14 +145,15 @@ router.post("/register", async (req, res) => {
     const code = generate6DigitCode();
     const expires = new Date(Date.now() + 10 * 60 * 1000);
 
-    const seller = await Seller.create({
-      email,
+    const seller = await SellerV2.create({
+      email: email.trim().toLowerCase(),
       password_hash: hashedPassword,
       email_verified: false,
       verification_code: code,
       code_expires: expires,
       name: email.split("@")[0],
-      shop_name: null,
+      shop_name: `dwkan-${Date.now().toString().slice(-6)}`,
+      business_type: "retail",
     });
 
     await sendVerificationEmail(email, code, lang);
@@ -175,18 +169,21 @@ router.post("/register", async (req, res) => {
   }
 });
 
+// ==========================================
 // 2) LOGIN
+// ==========================================
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-
     if (!email || !password) {
       return res
         .status(400)
-        .json({ success: false, message: "Email and password are required" });
+        .json({ success: false, message: "Email and password required" });
     }
 
-    const seller = await Seller.findOne({ where: { email } });
+    const seller = await SellerV2.findOne({
+      where: { email: email.trim().toLowerCase() },
+    });
     if (!seller || !seller.password_hash) {
       return res
         .status(401)
@@ -206,32 +203,93 @@ router.post("/login", async (req, res) => {
         .json({ success: false, message: "Email not verified" });
     }
 
-    // Cancel any pending deletion if seller logs back in
     if (seller.deletion_requested_at) {
       await seller.update({ deletion_requested_at: null });
     }
 
     sellerToken(seller.id, seller.email, seller.shop_name, res);
-
-    return res.json({ success: true, message: "Login successful" });
+    return res.json({
+      success: true,
+      message: "Login successful",
+      seller: {
+        id: seller.id,
+        shop_name: seller.shop_name,
+        business_type: seller.business_type,
+      },
+    });
   } catch (err) {
     console.error("/login error", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// 3) FORGOT PASSWORD
+// ==========================================
+// 3) VERIFY OTP CODE
+// ==========================================
+router.post("/verify-code", async (req, res) => {
+  try {
+    const { email, code, purpose = "register" } = req.body;
+    const seller = await SellerV2.findOne({
+      where: { email: email.trim().toLowerCase() },
+    });
+
+    if (!seller || seller.verification_code !== String(code).trim()) {
+      return res.status(400).json({ success: false, message: "Invalid code" });
+    }
+
+    if (new Date() > new Date(seller.code_expires)) {
+      return res.status(400).json({ success: false, message: "Code expired" });
+    }
+
+    const updates = { verification_code: null, code_expires: null };
+    if (purpose === "register") {
+      updates.email_verified = true;
+      if (seller.deletion_requested_at) {
+        updates.deletion_requested_at = null;
+      }
+    }
+    await seller.update(updates);
+
+    if (purpose === "register") {
+      sellerToken(seller.id, seller.email, seller.shop_name, res);
+      return res.json({
+        success: true,
+        message: "Email verified",
+        sellerId: seller.id,
+        needsProfile: isProfileIncomplete(seller),
+      });
+    }
+
+    if (purpose === "forgot-password") {
+      const resetToken = jwt.sign(
+        { id: seller.id, email: seller.email, purpose: "reset-password" },
+        process.env.JWT_SECRET,
+        { expiresIn: "15m" },
+      );
+      return res.json({ success: true, message: "Code verified", resetToken });
+    }
+
+    return res.json({ success: true, message: "Code verified" });
+  } catch (err) {
+    console.error("/verify-code error", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==========================================
+// 4) FORGOT PASSWORD
+// ==========================================
 router.post("/forgot-password", async (req, res) => {
   try {
-    const { email, lang = "en" } = req.body;
-
-    if (!email) {
+    const { email, lang = "ku" } = req.body;
+    if (!email)
       return res
         .status(400)
         .json({ success: false, message: "Email required" });
-    }
 
-    const seller = await Seller.findOne({ where: { email } });
+    const seller = await SellerV2.findOne({
+      where: { email: email.trim().toLowerCase() },
+    });
     if (!seller) {
       return res
         .status(200)
@@ -251,72 +309,9 @@ router.post("/forgot-password", async (req, res) => {
   }
 });
 
-// 4) VERIFY CODE
-router.post("/verify-code", async (req, res) => {
-  try {
-    const { email, code, purpose = "register" } = req.body;
-
-    if (!email || !code) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email and code required" });
-    }
-
-    const seller = await Seller.findOne({ where: { email } });
-    if (!seller || !seller.verification_code || !seller.code_expires) {
-      return res.status(400).json({ success: false, message: "Invalid code" });
-    }
-
-    if (seller.verification_code !== String(code).trim()) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid verification code" });
-    }
-
-    if (new Date() > new Date(seller.code_expires)) {
-      return res.status(400).json({ success: false, message: "Code expired" });
-    }
-
-    const updates = { verification_code: null, code_expires: null };
-
-    if (purpose === "register") {
-      updates.email_verified = true;
-      // Cancel any pending deletion if seller verifies email
-      if (seller.deletion_requested_at) {
-        updates.deletion_requested_at = null;
-      }
-    }
-
-    await seller.update(updates);
-
-    if (purpose === "register") {
-      const token = jwt.sign(
-        { id: seller.id, email: seller.email, isSeller: true },
-        process.env.JWT_SECRET,
-        { expiresIn: "24h" },
-      );
-      sellerToken(seller.id, seller.email, seller.shop_name, res);
-      return res.json({ success: true, message: "Email verified", token });
-    }
-
-    if (purpose === "forgot-password") {
-      // secure token for password reset 
-      const resetToken = jwt.sign(
-        { id: seller.id, email: seller.email, purpose: "reset-password" },
-        process.env.JWT_SECRET,
-        { expiresIn: "15m" },
-      );
-      return res.json({ success: true, message: "Code verified", resetToken });
-    }
-
-    return res.json({ success: true, message: "Code verified" });
-  } catch (err) {
-    console.error("/verify-code error", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
+// ==========================================
 // 5) RESET PASSWORD
+// ==========================================
 router.post("/reset-password", async (req, res) => {
   try {
     const { email, code, newPassword, confirmPassword } = req.body;
@@ -340,7 +335,9 @@ router.post("/reset-password", async (req, res) => {
         .json({ success: false, message: passwordErrors.join(", ") });
     }
 
-    const seller = await Seller.findOne({ where: { email } });
+    const seller = await SellerV2.findOne({
+      where: { email: email.trim().toLowerCase() },
+    });
     if (!seller || !seller.verification_code || !seller.code_expires) {
       return res.status(400).json({ success: false, message: "Invalid code" });
     }
@@ -370,11 +367,12 @@ router.post("/reset-password", async (req, res) => {
   }
 });
 
-// 6) CHANGE PASSWORD (settings)
+// ==========================================
+// 6) CHANGE PASSWORD (SETTINGS)
+// ==========================================
 router.post("/change-password", checkMe, async (req, res) => {
   try {
     const { oldPassword, newPassword, confirmPassword } = req.body;
-
     if (!oldPassword || !newPassword || !confirmPassword) {
       return res
         .status(400)
@@ -394,26 +392,18 @@ router.post("/change-password", checkMe, async (req, res) => {
         .json({ success: false, message: passwordErrors.join(", ") });
     }
 
-    const sellerId = req.user?.data?.id;
-    if (!sellerId) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Not authenticated" });
-    }
-
-    const seller = await Seller.findByPk(sellerId);
-    if (!seller) {
+    const sellerId = req.user?.data?.id || req.user?.id;
+    const seller = await SellerV2.findByPk(sellerId);
+    if (!seller)
       return res
         .status(404)
         .json({ success: false, message: "Seller not found" });
-    }
 
     const match = await bcrypt.compare(oldPassword, seller.password_hash || "");
-    if (!match) {
+    if (!match)
       return res
         .status(401)
         .json({ success: false, message: "Old password is incorrect" });
-    }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     await seller.update({ password_hash: hashedPassword });
@@ -428,21 +418,102 @@ router.post("/change-password", checkMe, async (req, res) => {
   }
 });
 
+// ==========================================
+// 7) CHECK-ME
+// ==========================================
 router.get("/check-me", checkMe, async (req, res) => {
   const { user } = req;
-  if (user.role === "customer") {
-    return res.json({ role: "customer" });
-  } else if (user.role === "seller") {
-    const findSeller = await Seller.findByPk(user.data.id, {
-      attributes: ["shop_name", "id"],
+  if (user.role === "seller") {
+    const seller = await SellerV2.findByPk(user.data.id, {
+      attributes: [
+        "id",
+        "shop_name",
+        "business_type",
+        "name",
+        "email",
+        "phone",
+      ],
     });
 
-    return res.json({ role: "seller", seller: findSeller });
-  } else if (user.role === "admin") {
-    return res.json({ role: "admin" });
+    if (!seller) {
+      return res.status(401).json({ error: true, logout: true });
+    }
+
+    const needsProfile = isProfileIncomplete(seller);
+
+    return res.json({
+      role: "seller",
+      needsProfile,
+      seller: {
+        id: seller.id,
+        shop_name: needsProfile ? null : seller.shop_name,
+        business_type: seller.business_type,
+        name: seller.name,
+        email: seller.email,
+      },
+    });
+  }
+  return res.json({ role: user.role });
+});
+
+// ==========================================
+// 8) COMPLETE PROFILE
+// ==========================================
+router.post("/complete-profile", checkMe, async (req, res) => {
+  try {
+    const sellerId = req.user.data.id;
+    const { shop_name, business_type, phone, name, city } = req.body;
+
+    if (!shop_name || !business_type) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "ناوی فرۆشگا و جۆری کارکردن پێویستە",
+        });
+    }
+
+    const cleanShopName = shop_name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "");
+    const existing = await SellerV2.findOne({
+      where: { shop_name: cleanShopName },
+    });
+
+    if (existing && existing.id !== sellerId) {
+      return res
+        .status(409)
+        .json({ success: false, message: "ئەم ناوی فرۆشگایە پێشتر گیراوە" });
+    }
+
+    const seller = await SellerV2.findByPk(sellerId);
+    await seller.update({
+      shop_name: cleanShopName,
+      business_type,
+      phone: phone || seller.phone,
+      name: name || seller.name,
+      city: city || seller.city,
+      needsManualEmail: false,
+    });
+
+    sellerToken(seller.id, seller.email || seller.name, seller.shop_name, res);
+
+    return res.json({
+      success: true,
+      message: "پرۆفایل بە سەرکەوتوویی تەواو کرا",
+      shop_name: seller.shop_name,
+      business_type: seller.business_type,
+    });
+  } catch (err) {
+    console.error("Complete Profile Error:", err);
+    return res.status(500).json({ success: false, message: "هەڵەی سێرڤەر" });
   }
 });
 
+// ==========================================
+// 9) GOOGLE OAUTH
+// ==========================================
 router.get("/google/url", (req, res) => {
   res.json({
     url: `${req.protocol}://${req.get("host")}/api/seller/auth/google`,
@@ -451,10 +522,7 @@ router.get("/google/url", (req, res) => {
 
 router.get(
   "/google",
-  passport.authenticate("google", {
-    scope: ["profile", "email"],
-    state: true,
-  }),
+  passport.authenticate("google", { scope: ["profile", "email"], state: true }),
 );
 
 router.get(
@@ -462,166 +530,76 @@ router.get(
   (req, res, next) => {
     const code = req.query.code;
     const redirectUrl = getStoredOAuthRedirect(req, "google", code);
-
-    if (redirectUrl) {
-      return res.redirect(redirectUrl);
-    }
-
+    if (redirectUrl) return res.redirect(redirectUrl);
     next();
   },
   passport.authenticate("google", { session: false }),
   (req, res) => {
     const seller = req.user;
-
-    // Create short-lived temp token
     const tempToken = shortSellerToken(seller.id, { info: seller.name }, res);
-
-    const frontend = getFrontendOrigin(req);
-    const redirectUrl = `${frontend}/oauth-success?token=${tempToken}&provider=google`;
+    const redirectUrl = `${getFrontendOrigin(req)}/oauth-success?token=${tempToken}&provider=google`;
 
     storeOAuthRedirect(req, "google", req.query.code, redirectUrl);
-
-    // Redirect the same tab directly to frontend OAuthSuccess
     if (req.session) {
-      req.session.save(() => {
-        res.redirect(redirectUrl);
-      });
+      req.session.save(() => res.redirect(redirectUrl));
       return;
     }
-
     res.redirect(redirectUrl);
   },
 );
 
-// Facebook routes
+// ==========================================
+// 10) FACEBOOK OAUTH
+// ==========================================
 router.get("/facebook/url", (req, res) => {
   res.json({
     url: `${req.protocol}://${req.get("host")}/api/seller/auth/facebook`,
   });
 });
 
-// Start OAuth
 router.get(
   "/facebook",
-  passport.authenticate("facebook", { scope: [], state: true }), // removed "email" scope
+  passport.authenticate("facebook", { scope: [], state: true }),
 );
 
-// Callback
 router.get(
   "/facebook/callback",
-
-  // 1️⃣ Handle cancel FIRST
   (req, res, next) => {
     const code = req.query.code;
     const redirectUrl = getStoredOAuthRedirect(req, "facebook", code);
-
-    if (redirectUrl) {
-      return res.redirect(redirectUrl);
-    }
-
+    if (redirectUrl) return res.redirect(redirectUrl);
     if (req.query.error === "access_denied") {
-      const frontendUrl = getFrontendOrigin(req);
-
-      return res.redirect(`${frontendUrl}/login`);
+      return res.redirect(`${getFrontendOrigin(req)}/login`);
     }
     next();
   },
-
-  // 2️⃣ Passport only runs if NOT cancelled
   passport.authenticate("facebook", {
     session: false,
     failureRedirect: "/login",
   }),
-
-  // 3️⃣ Success
   (req, res) => {
     const seller = req.user;
     let token;
-
-    // email may exist if seller added it manually after first login
     if (!seller.email) {
       token = shortSellerToken(seller.id, seller.name, res);
     } else {
       token = sellerToken(seller.id, seller.email, seller.shop_name, res);
     }
 
-    const frontendUrl = getFrontendOrigin(req);
-    const redirectUrl = `${frontendUrl}/oauth-success?token=${token}&provider=facebook`;
-
+    const redirectUrl = `${getFrontendOrigin(req)}/oauth-success?token=${token}&provider=facebook`;
     storeOAuthRedirect(req, "facebook", req.query.code, redirectUrl);
 
     if (req.session) {
-      req.session.save(() => {
-        res.redirect(redirectUrl);
-      });
+      req.session.save(() => res.redirect(redirectUrl));
       return;
     }
-
     res.redirect(redirectUrl);
   },
 );
-/* router.get("/facebook/url", (req, res) => {
-  res.json({
-    url: `${req.protocol}://${req.get("host")}/api/seller/auth/facebook`,
-  });
-});
 
-// Start OAuth
-router.get(
-  "/facebook",
-  passport.authenticate("facebook", { scope: ["email"] }),
-);
-
-// Callback
-// Backend callback - FIXED VERSION
-//http://localhost:3000/api/seller/auth/facebook/callback
-router.get(
-  "/facebook/callback",
-
-  // 1️⃣ Handle cancel FIRST
-  (req, res, next) => {
-    if (req.query.error === "access_denied") {
-      const frontendUrl =
-        req.query.origin ||
-        process.env.FRONTEND_ORIGIN ||
-        "http://localhost:5173";
-
-      return res.redirect(`${frontendUrl}/login`);
-    }
-    next();
-  },
-
-  // 2️⃣ Passport only runs if NOT cancelled
-  passport.authenticate("facebook", {
-    session: false,
-    failureRedirect: "/login",
-  }),
-
-  // 3️⃣ Success
-  (req, res) => {
-    const seller = req.user;
-    let token;
-
-    if (!seller.email) {
-      // pass only plain string
-      token = shortSellerToken(seller.id, seller.name, res);
-    } else {
-      // email must be a string, shop_name must be string
-      token = sellerToken(seller.id, seller.email, seller.shop_name, res);
-    }
-
-    const frontendUrl =
-      process.env.ENVIRONMENT === "product"
-        ? "https://dwkanlink.com"
-        : req.query.origin ||
-          process.env.FRONTEND_ORIGIN ||
-          "http://localhost:5173";
-    res.redirect(
-      `${frontendUrl}/oauth-success?token=${token}&provider=facebook`,
-    );
-  },
-); */
-
+// ==========================================
+// 11) TIKTOK OAUTH
+// ==========================================
 router.get("/tiktok/url", (req, res) => {
   const clientKey = process.env.TIKTOK_CLIENT_KEY;
   const redirectURI = encodeURIComponent(
@@ -629,73 +607,42 @@ router.get("/tiktok/url", (req, res) => {
   );
   const scope = "user.info.basic";
 
-  // Generate PKCE values
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = generateCodeChallenge(codeVerifier);
   const state = crypto.randomBytes(16).toString("hex");
 
-  // Store verifier keyed by state (expires in 10 min)
   pkceStore[state] = { codeVerifier, expiresAt: Date.now() + 10 * 60 * 1000 };
 
-  const url =
-    `https://www.tiktok.com/v2/auth/authorize?` +
-    `client_key=${clientKey}` +
-    `&response_type=code` +
-    `&scope=${scope}` +
-    `&redirect_uri=${redirectURI}` +
-    `&state=${state}` +
-    `&code_challenge=${codeChallenge}` +
-    `&code_challenge_method=S256`;
-
+  const url = `https://www.tiktok.com/v2/auth/authorize?client_key=${clientKey}&response_type=code&scope=${scope}&redirect_uri=${redirectURI}&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
   res.json({ url });
 });
 
 router.get("/tiktok/callback", async (req, res) => {
   try {
     const { code, state } = req.query;
-
-    if (!code) {
-      return res.redirect(
-        `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_no_code`,
-      );
-    }
-
-    // Retrieve and validate PKCE verifier
     const pkceData = pkceStore[state];
     if (!pkceData || Date.now() > pkceData.expiresAt) {
       return res.redirect(
-        `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_invalid_state`,
+        `${getFrontendOrigin(req)}/login?error=tiktok_invalid_state`,
       );
     }
     const { codeVerifier } = pkceData;
-    delete pkceStore[state]; // one-time use
+    delete pkceStore[state];
 
-    const clientKey = process.env.TIKTOK_CLIENT_KEY;
-    const clientSecret = process.env.TIKTOK_CLIENT_SECRET;
-    const redirectURI = `${process.env.BACKEND_URL}/api/seller/auth/tiktok/callback`;
-
-    // Exchange code for access token (include code_verifier)
     const tokenRes = await axios.post(
       "https://open.tiktokapis.com/v2/oauth/token/",
       new URLSearchParams({
-        client_key: clientKey,
-        client_secret: clientSecret,
-        code: code,
+        client_key: process.env.TIKTOK_CLIENT_KEY,
+        client_secret: process.env.TIKTOK_CLIENT_SECRET,
+        code,
         grant_type: "authorization_code",
-        redirect_uri: redirectURI,
-        code_verifier: codeVerifier, // 👈 This was missing
+        redirect_uri: `${process.env.BACKEND_URL}/api/seller/auth/tiktok/callback`,
+        code_verifier: codeVerifier,
       }).toString(),
       { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
     );
-    if (!tokenRes.data || !tokenRes.data.access_token) {
-      console.error("TikTok token error:", tokenRes.data);
-      return res.redirect(
-        `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_login_failed`,
-      );
-    }
 
     const { access_token, open_id } = tokenRes.data;
-    // ✅ Fix: use v2 user info endpoint (old one is deprecated)
     const userRes = await axios.get(
       "https://open.tiktokapis.com/v2/user/info/",
       {
@@ -704,131 +651,162 @@ router.get("/tiktok/callback", async (req, res) => {
       },
     );
 
-    if (!userRes.data || !userRes.data.data) {
-      console.error("TikTok user fetch error:", userRes.data);
-      return res.redirect(
-        `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_login_failed`,
-      );
-    }
-
     const tiktokUser = userRes.data.data.user;
 
-    // Create or fetch seller in DB
-    let sellerExist = await Seller.findOne({
+    let seller = await SellerV2.findOne({
       where: { tiktokId: tiktokUser.open_id },
     });
-    if (!sellerExist) {
-      sellerExist = await Seller.create({
+    if (!seller) {
+      seller = await SellerV2.create({
         tiktokId: tiktokUser.open_id,
-        name: tiktokUser.display_name || "TikTok User",
-        email: null,
-        password_hash: null,
+        name: tiktokUser.display_name || "TikTok Seller",
+        shop_name: `shop-${Date.now().toString().slice(-6)}`,
+        business_type: "social_media",
         needsManualEmail: true,
+        email_verified: true,
       });
     }
 
-    const tempToken = shortSellerToken(
-      sellerExist.id,
-      { info: sellerExist.name },
-      res,
-    );
-    const frontend = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
-    res.redirect(
-      `${frontend}/oauth-success?token=${tempToken}&provider=tiktok`,
+    const tempToken = shortSellerToken(seller.id, { info: seller.name }, res);
+    return res.redirect(
+      `${getFrontendOrigin(req)}/oauth-success?token=${tempToken}&provider=tiktok`,
     );
   } catch (err) {
-    console.error("TikTok login error:", err.response?.data || err.message);
-    res.redirect(
-      `${process.env.FRONTEND_ORIGIN}/login?error=tiktok_login_failed`,
+    console.error("TikTok Login Error:", err.response?.data || err.message);
+    return res.redirect(
+      `${getFrontendOrigin(req)}/login?error=tiktok_login_failed`,
     );
   }
 });
 
+// ==========================================
+// 12) SUCCESS LOGIN (OAUTH)
+// ==========================================
 router.post("/successLogin", async (req, res) => {
   try {
-    // 1) get temporary token from Authorization header
     const header = req.headers.authorization;
-
     if (!header || !header.startsWith("Bearer ")) {
       return res.status(401).json({ error: "No token provided" });
     }
 
     const tempToken = header.split(" ")[1];
-
-    // 2) verify temporary token (short-lived)
     const decoded = jwt.verify(tempToken, process.env.JWT_SECRET);
+    const seller = await SellerV2.findByPk(decoded.id);
 
-    // 3) read seller id from token
-    const sellerId = decoded.id;
+    if (!seller) return res.status(404).json({ error: "Seller not found" });
 
-    // 4) fetch seller
-    const seller = await Seller.findByPk(sellerId);
+    sellerToken(seller.id, seller.email || seller.name, seller.shop_name, res);
 
-    if (!seller) {
-      return res.status(404).json({ error: "Seller not found" });
-    }
+    const newSeller = isProfileIncomplete(seller);
 
-    // Cancel any pending deletion if seller logs back in via OAuth
-    if (seller.deletion_requested_at) {
-      await seller.update({ deletion_requested_at: null });
-    }
-
-    // 5) create FINAL token → saved as httpOnly cookie (s_t)
-    const sellerEmail = seller.email || seller.name;
-    sellerToken(seller.id, sellerEmail, seller.shop_name, res); // sets cookie: s_t
-
-    // 6) check if seller profile is incomplete
-    const newSeller =
-      seller.needsManualEmail === true ||
-      !seller.email ||
-      !seller.phone ||
-      !seller.name ||
-      !seller.shop_name;
-
-    // 📌 Ping Google sitemap if new seller created
-    if (newSeller) {
-      console.log("sitemap req ");
-
-      pingGoogleSitemap().catch((err) =>
-        console.warn("⚠️ Sitemap ping warning:", err.message),
-      );
-    }
-
-    // 7) respond WITHOUT sending token
-    res.json({
+    return res.json({
       success: true,
       id: seller.id,
       name: seller.name,
-      email: seller.email || null,
+      email: seller.email,
       shop_name: newSeller ? null : seller.shop_name,
+      business_type: seller.business_type,
       newSeller,
     });
   } catch (err) {
-    return res.status(401).json({ error: "Invalid or expired token" });
+    return res.status(401).json({ error: "Invalid token" });
   }
 });
-//.
-//.
-//.
-//.
-// // Logout route
 
+// ==========================================
+// 13) LOGOUT
+// ==========================================
 router.post("/logout", (req, res) => {
-  try {
-    // Clear auth cookies
-    res.clearCookie("s_t", clearCookieOpts());
+  res.clearCookie("s_t", clearCookieOpts());
+  return res
+    .status(200)
+    .json({ success: true, message: "Logged out successfully" });
+});
 
-    return res.status(200).json({
+// ==========================================
+// 14) STAFF LOGIN
+// ==========================================
+router.post("/staff/login", async (req, res) => {
+  try {
+    const { shop_name, email, password } = req.body;
+    if (!shop_name || !email || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "All fields required" });
+    }
+
+    const seller = await SellerV2.findOne({
+      where: { shop_name: shop_name.trim().toLowerCase() },
+    });
+
+    if (!seller || seller.is_active === false) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Shop not found or inactive" });
+    }
+
+    const staffList = Array.isArray(seller.staff_members)
+      ? seller.staff_members
+      : typeof seller.staff_members === "string"
+        ? JSON.parse(seller.staff_members || "[]")
+        : [];
+
+    const staffMember = staffList.find(
+      (stf) =>
+        stf.email?.trim().toLowerCase() === email.trim().toLowerCase() &&
+        stf.is_active !== false,
+    );
+
+    if (!staffMember || !staffMember.password_hash) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
+    }
+
+    const match = await bcrypt.compare(password, staffMember.password_hash);
+    if (!match) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
+    }
+
+    const payload = {
+      role: "staff",
+      staff_role: staffMember.role || "cashier",
+      staff_id: staffMember.staff_id,
+      staff_name: staffMember.name,
+      email: staffMember.email,
+      seller_id: seller.id,
+      parent_seller_id: seller.id,
+      shop_name: seller.shop_name,
+    };
+
+    const token = jwt.sign(
+      payload,
+      process.env.JWT_SECRET || "dwkanlink_secret_key",
+      {
+        expiresIn: "30d",
+      },
+    );
+
+    return res.json({
       success: true,
-      error: false,
-      message: "Logged out successfully",
+      token,
+      staff: {
+        staff_id: staffMember.staff_id,
+        name: staffMember.name,
+        email: staffMember.email,
+        role: staffMember.role,
+      },
+      shop: {
+        id: seller.id,
+        shop_name: seller.shop_name,
+        business_type: seller.business_type,
+      },
     });
   } catch (err) {
-    return res.status(500).json({
-      success: false,
-      error: true,
-      message: "Logout failed",
-    });
+    console.error("/staff/login error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 

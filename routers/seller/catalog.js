@@ -1,4 +1,5 @@
-﻿import { Router } from "express";
+﻿// backend/routes/seller/catalog.js
+import { Router } from "express";
 import { Op } from "sequelize";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
@@ -12,14 +13,10 @@ import {
 
 const router = Router();
 
-/**
- * GET /catalog/products
- * Returns a paginated lightweight list of seller products for catalog management.
- * Query params: limit, offset, search (titleKu/titleAr), category
- */
+// 1) GET /catalog/products
 router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 100);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
     const search = req.query.search?.trim() || "";
@@ -71,7 +68,6 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
     });
 
     const data = rows.map((p) => {
-      // Prefer is_main image, fall back to first image
       const mainImg =
         p.productImages?.find((img) => img.is_main) || p.productImages?.[0];
       return {
@@ -104,14 +100,10 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
   }
 });
 
-/**
- * PUT /catalog/bulk-category
- * Bulk update category (and optional subcategory) for multiple products.
- * Body: { productIds: number[], category: string, subcategory?: string }
- */
+// 2) PUT /catalog/bulk-category
 router.put("/catalog/bulk-category", jwtVerifySellerToken, async (req, res) => {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const { productIds, category, subcategory } = req.body;
 
     if (!Array.isArray(productIds) || productIds.length === 0) {
@@ -130,7 +122,6 @@ router.put("/catalog/bulk-category", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // category can be null/empty string to clear it
     const catValue =
       category && typeof category === "string" ? category.trim() || null : null;
     const subValue =
@@ -138,7 +129,6 @@ router.put("/catalog/bulk-category", jwtVerifySellerToken, async (req, res) => {
         ? subcategory.trim() || null
         : null;
 
-    // Only update products belonging to this seller
     const [updatedCount] = await Product.update(
       { category: catValue, subcategory: subValue },
       {
@@ -163,17 +153,13 @@ router.put("/catalog/bulk-category", jwtVerifySellerToken, async (req, res) => {
   }
 });
 
-/**
- * DELETE /catalog/bulk-delete
- * Bulk delete multiple products including R2 images and storage decrement.
- * Body: { productIds: number[] }
- */
+// 3) DELETE /catalog/bulk-delete
 router.delete(
   "/catalog/bulk-delete",
   jwtVerifySellerToken,
   async (req, res) => {
     try {
-      const sellerId = req.user.id;
+      const sellerId = req.user?.id || req.user?.seller_id;
       const { productIds } = req.body;
 
       if (!Array.isArray(productIds) || productIds.length === 0) {
@@ -192,7 +178,6 @@ router.delete(
         });
       }
 
-      // Verify all belong to this seller
       const products = await Product.findAll({
         where: { id: { [Op.in]: productIds }, seller_id: sellerId },
       });
@@ -206,13 +191,10 @@ router.delete(
       }
 
       const foundIds = products.map((p) => p.id);
-
-      // Gather all R2 image records
       const imageRecords = await ProductImage.findAll({
         where: { product_id: { [Op.in]: foundIds } },
       });
 
-      // Collect R2 keys and total bytes for storage decrement
       const r2Keys = [];
       let totalBytes = 0;
       for (const rec of imageRecords) {
@@ -221,7 +203,6 @@ router.delete(
         totalBytes += await getProductImageRecordBytes(rec);
       }
 
-      // Collect color image keys from product.colors
       let colorBytes = 0;
       for (const product of products) {
         const colorImages = (product.colors || []).filter((c) => c.imageKey);
@@ -233,25 +214,21 @@ router.delete(
         }
       }
 
-      // Delete from R2
       if (r2Keys.length > 0) {
         await deleteMultipleFromR2(r2Keys);
       }
 
-      // Delete image records
       if (imageRecords.length > 0) {
         await ProductImage.destroy({
           where: { product_id: { [Op.in]: foundIds } },
         });
       }
 
-      // Decrement storage
       const storageBytes = totalBytes + colorBytes;
       if (storageBytes > 0) {
         await decrementSellerStorage(sellerId, storageBytes);
       }
 
-      // Delete products
       await Product.destroy({
         where: { id: { [Op.in]: foundIds }, seller_id: sellerId },
       });
@@ -272,5 +249,3 @@ router.delete(
 );
 
 export default router;
-
-

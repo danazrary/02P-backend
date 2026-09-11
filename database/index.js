@@ -1,9 +1,16 @@
 import sequelize from "./sequelize.js";
 
+// --- مۆدێلە کۆنەکان (V1) بۆ پاراستنی کۆدەکانی پێشوو ---
 import Seller from "./seller.js";
+import Product from "./products.js";
+
+// --- مۆدێلە نوێیەکان (V2) بۆ سیستەم و تایبەتمەندییە نوێیەکان ---
+import SellerV2 from "./sellerv2.js";
+import ProductV2 from "./productv2.js";
+
+// --- سەرجەم مۆدێلەکانی تر ---
 import Plan from "./plan.js";
 import SellerPlan from "./sellerPlan.js";
-import Product from "./products.js";
 import SellerOffer from "./sellerOffer.js";
 import Admin from "./admin.js";
 import AdminDevice from "./adminDevice.js";
@@ -27,9 +34,9 @@ import AiCreditPlan from "./aiCreditPlan.js";
 import AiCreditPurchaseRequest from "./aiCreditPurchaseRequest.js";
 import AiFeatureSetting from "./aiFeatureSetting.js";
 
-/* ============================
-   ASSOCIATIONS
-============================ */
+/* ==============================================
+   ١. پەیوەندییەکانی وەشانی کۆن (V1 Associations)
+============================================== */
 Seller.hasMany(SellerPlan, { foreignKey: "seller_id", as: "plans" });
 SellerPlan.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
 
@@ -42,43 +49,27 @@ Product.belongsTo(Seller, { foreignKey: "seller_id" });
 Seller.hasMany(SellerOffer, { foreignKey: "seller_id" });
 SellerOffer.belongsTo(Seller, { foreignKey: "seller_id" });
 
-// SellerUsage: one row per seller
 Seller.hasOne(SellerUsage, { foreignKey: "seller_id", as: "usage" });
 SellerUsage.belongsTo(Seller, { foreignKey: "seller_id" });
 
-// ProductImages: one product has many image records
 Product.hasMany(ProductImage, {
   foreignKey: "product_id",
   as: "productImages",
 });
 ProductImage.belongsTo(Product, { foreignKey: "product_id" });
 
-// SellerCategory: one seller has many categories (and subcategories)
 Seller.hasMany(SellerCategory, {
   foreignKey: "seller_id",
   as: "sellerCategories",
 });
 SellerCategory.belongsTo(Seller, { foreignKey: "seller_id" });
 
-// SellerCategory self-reference: parent → children (subcategories)
-SellerCategory.hasMany(SellerCategory, {
-  foreignKey: "parent_id",
-  as: "subcategories",
-});
-SellerCategory.belongsTo(SellerCategory, {
-  foreignKey: "parent_id",
-  as: "parentCategory",
-});
-
-// Orders: one seller has many orders
 Seller.hasMany(Order, { foreignKey: "seller_id", as: "orders" });
 Order.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
 
-// OrderItems: one order has many items
 Order.hasMany(OrderItem, { foreignKey: "order_id", as: "items" });
 OrderItem.belongsTo(Order, { foreignKey: "order_id", as: "order" });
 
-// Seller push subscriptions: one seller can have multiple browsers/devices.
 Seller.hasMany(SellerPushSubscription, {
   foreignKey: "seller_id",
   as: "pushSubscriptions",
@@ -88,15 +79,9 @@ SellerPushSubscription.belongsTo(Seller, {
   as: "seller",
 });
 
-// Seller AI credits and product import usage.
-Seller.hasOne(SellerAiBalance, {
-  foreignKey: "seller_id",
-  as: "aiBalance",
-});
-SellerAiBalance.belongsTo(Seller, {
-  foreignKey: "seller_id",
-  as: "seller",
-});
+Seller.hasOne(SellerAiBalance, { foreignKey: "seller_id", as: "aiBalance" });
+SellerAiBalance.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
+
 Seller.hasMany(AiCreditPurchaseRequest, {
   foreignKey: "seller_id",
   as: "aiCreditPurchaseRequests",
@@ -105,6 +90,36 @@ AiCreditPurchaseRequest.belongsTo(Seller, {
   foreignKey: "seller_id",
   as: "seller",
 });
+
+Seller.hasMany(SellerAiUsage, { foreignKey: "seller_id", as: "aiUsage" });
+SellerAiUsage.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
+
+/* ==============================================
+   ٢. پەیوەندییەکانی وەشانی نوێ (V2 Associations)
+============================================== */
+SellerV2.hasMany(ProductV2, { foreignKey: "seller_id", as: "products" });
+ProductV2.belongsTo(SellerV2, { foreignKey: "seller_id", as: "seller" });
+
+SellerV2.hasMany(SellerPlan, { foreignKey: "seller_id", as: "plans_v2" });
+SellerV2.hasOne(SellerUsage, { foreignKey: "seller_id", as: "usage_v2" });
+SellerV2.hasMany(Order, { foreignKey: "seller_id", as: "orders_v2" });
+SellerV2.hasMany(SellerPushSubscription, {
+  foreignKey: "seller_id",
+  as: "pushSubscriptions_v2",
+});
+SellerV2.hasOne(SellerAiBalance, {
+  foreignKey: "seller_id",
+  as: "aiBalance_v2",
+});
+SellerV2.hasMany(AiCreditPurchaseRequest, {
+  foreignKey: "seller_id",
+  as: "aiCreditPurchaseRequests_v2",
+});
+SellerV2.hasMany(SellerAiUsage, { foreignKey: "seller_id", as: "aiUsage_v2" });
+
+/* ==============================================
+   ٣. بەشە گشتییەکان (AI, Help Center, Admin)
+============================================== */
 AiCreditPlan.hasMany(AiCreditPurchaseRequest, {
   foreignKey: "plan_id",
   as: "purchaseRequests",
@@ -113,82 +128,45 @@ AiCreditPurchaseRequest.belongsTo(AiCreditPlan, {
   foreignKey: "plan_id",
   as: "plan",
 });
-// Seller AI product import usage history.
-Seller.hasMany(SellerAiUsage, {
-  foreignKey: "seller_id",
-  as: "aiUsage",
-});
-SellerAiUsage.belongsTo(Seller, {
-  foreignKey: "seller_id",
-  as: "seller",
-});
-// Help Center: recursive help tree with optional translations per language.
-HelpItem.hasMany(HelpItem, {
+
+SellerCategory.hasMany(SellerCategory, {
   foreignKey: "parent_id",
-  as: "children",
+  as: "subcategories",
 });
-HelpItem.belongsTo(HelpItem, {
+SellerCategory.belongsTo(SellerCategory, {
   foreignKey: "parent_id",
-  as: "parent",
+  as: "parentCategory",
 });
+
+HelpItem.hasMany(HelpItem, { foreignKey: "parent_id", as: "children" });
+HelpItem.belongsTo(HelpItem, { foreignKey: "parent_id", as: "parent" });
+
 HelpItem.hasMany(HelpTranslation, {
   foreignKey: "help_item_id",
   as: "translations",
 });
-HelpTranslation.belongsTo(HelpItem, {
-  foreignKey: "help_item_id",
-  as: "item",
-});
-HelpItem.hasMany(HelpFeedback, {
-  foreignKey: "help_item_id",
-  as: "feedback",
-});
-HelpFeedback.belongsTo(HelpItem, {
-  foreignKey: "help_item_id",
-  as: "item",
-});
+HelpTranslation.belongsTo(HelpItem, { foreignKey: "help_item_id", as: "item" });
+
+HelpItem.hasMany(HelpFeedback, { foreignKey: "help_item_id", as: "feedback" });
+HelpFeedback.belongsTo(HelpItem, { foreignKey: "help_item_id", as: "item" });
+
 HelpItem.hasMany(HelpAnalytics, {
   foreignKey: "help_item_id",
   as: "analytics",
 });
-HelpAnalytics.belongsTo(HelpItem, {
-  foreignKey: "help_item_id",
-  as: "item",
-});
-Seller.hasMany(HelpFeedback, {
-  foreignKey: "seller_id",
-  as: "helpFeedback",
-});
-HelpFeedback.belongsTo(Seller, {
-  foreignKey: "seller_id",
-  as: "seller",
-});
-Seller.hasMany(HelpAnalytics, {
-  foreignKey: "seller_id",
-  as: "helpAnalytics",
-});
-HelpAnalytics.belongsTo(Seller, {
-  foreignKey: "seller_id",
-  as: "seller",
-});
-
-/* Seller.hasMany(SellerPlan, { foreignKey: "seller_id" });
-SellerPlan.belongsTo(Seller, { foreignKey: "seller_id" });
-
-Plan.hasMany(SellerPlan, { foreignKey: "plan_id" });
-SellerPlan.belongsTo(Plan, { foreignKey: "plan_id" });
- */
-
-/* ============================
-   EXPORT
-============================ */
+HelpAnalytics.belongsTo(HelpItem, { foreignKey: "help_item_id", as: "item" });
 
 export {
   sequelize,
+  // وەشانی پێشوو
   Seller,
+  Product,
+  // وەشانی نوێ
+  SellerV2,
+  ProductV2,
+  // مۆدێلە هاوبەشەکان
   Plan,
   SellerPlan,
-  Product,
   SellerOffer,
   Admin,
   AdminDevice,
@@ -212,28 +190,3 @@ export {
   AiCreditPurchaseRequest,
   AiFeatureSetting,
 };
-
-/* import { Sequelize } from "sequelize";
-import dotenv from "dotenv";
-
-dotenv.config();
-
-const sequelize = new Sequelize(
-  process.env.DB_NAME,
-  process.env.DB_USER,
-  process.env.DB_PASSWORD,
-  {
-    host: process.env.DB_HOST,
-    dialect: "mysql",
-  }
-);
-
-try {
-  await sequelize.authenticate();
-  console.log("✅ Connection established successfully.");
-} catch (error) {
-  console.error("❌ Unable to connect to the database:", error);
-}
-
-export default sequelize;
- */

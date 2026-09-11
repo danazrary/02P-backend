@@ -1,8 +1,9 @@
+// backend/routes/seller/data.js
 import { Router } from "express";
 import { Op } from "sequelize";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
-import Seller from "../../database/seller.js";
+import SellerV2 from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import Report from "../../database/report.js";
@@ -13,10 +14,9 @@ const router = Router();
 
 router.get("/data", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id: sellerId } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
 
-    /* -------------------- Seller -------------------- */
-    const seller = await Seller.findByPk(sellerId);
+    const seller = await SellerV2.findByPk(sellerId);
     if (!seller) {
       return res.status(404).json({
         success: false,
@@ -26,7 +26,6 @@ router.get("/data", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    /* -------------------- Seller Plan -------------------- */
     let sellerPlanRecord = await SellerPlan.findOne({
       where: { seller_id: sellerId },
     });
@@ -44,13 +43,11 @@ router.get("/data", jwtVerifySellerToken, async (req, res) => {
 
     const sellerPlan = await Plan.findByPk(sellerPlanRecord.plan_id);
 
-    /* -------------------- Reports -------------------- */
     const reports = await Report.findAll({
       where: { seller_id: sellerId },
       order: [["report_date", "ASC"]],
     });
 
-    /* -------------------- Analytics Calculation -------------------- */
     const today = new Date();
     const startOfDay = new Date(today.setHours(0, 0, 0, 0));
     const startOfWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -98,12 +95,9 @@ router.get("/data", jwtVerifySellerToken, async (req, res) => {
         seller_id: sellerId,
         report_date: { [Op.gte]: startOfYear },
       }),
-      lifetime: await sumReports({
-        seller_id: sellerId,
-      }),
+      lifetime: await sumReports({ seller_id: sellerId }),
     };
 
-    /* -------------------- Top 10 Products -------------------- */
     const topProducts = await Product.findAll({
       where: { seller_id: sellerId },
       order: [["views", "DESC"]],
@@ -127,16 +121,16 @@ router.get("/data", jwtVerifySellerToken, async (req, res) => {
       productImages: p.productImages || [],
     }));
 
-    /* -------------------- Response -------------------- */
     return res.status(200).json({
       success: true,
       error: false,
       logout: false,
       sellerPlan: sellerPlan ? sellerPlan.name : "Free",
       brand_color: seller.brand_color || null,
+      business_type: seller.business_type || "retail",
       analytics,
       topProducts: formattedTopProducts,
-      reports, // full raw report table if you need it later
+      reports,
     });
   } catch (error) {
     console.error(error);

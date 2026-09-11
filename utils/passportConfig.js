@@ -1,10 +1,9 @@
+// backend/utils/passportConfig.js
 import dotenv from "dotenv";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
-
-import seller from "../database/seller.js";
-
 import { Strategy as FacebookStrategy } from "passport-facebook";
+import SellerV2 from "../database/sellerv2.js";
 
 const isHttpsMode = process.argv.includes("--env=https");
 dotenv.config({ path: isHttpsMode ? ".env.https" : ".env" });
@@ -17,6 +16,7 @@ function getCallbackUrl(provider) {
   return `${BACKEND_BASE_URL}/api/seller/auth/${provider}/callback`;
 }
 
+// ١. Google OAuth Strategy
 passport.use(
   new GoogleStrategy(
     {
@@ -35,27 +35,30 @@ passport.use(
           "Google User";
         const googleId = profile.id;
 
-        let sellerExist = await seller.findOne({ where: { googleId } });
+        let seller = await SellerV2.findOne({ where: { googleId } });
 
-        if (!sellerExist && email) {
-          sellerExist = await seller.findOne({ where: { email } });
+        if (!seller && email) {
+          seller = await SellerV2.findOne({ where: { email } });
         }
 
-        if (sellerExist && !sellerExist.googleId) {
-          sellerExist.googleId = googleId;
-          await sellerExist.save();
+        if (seller && !seller.googleId) {
+          seller.googleId = googleId;
+          await seller.save();
         }
 
-        if (!sellerExist) {
-          sellerExist = await seller.create({
+        if (!seller) {
+          seller = await SellerV2.create({
             googleId,
             name,
             email,
             password_hash: null,
+            email_verified: true,
+            shop_name: `dwkan-${Date.now().toString().slice(-6)}`,
+            business_type: "retail",
           });
         }
 
-        return done(null, sellerExist);
+        return done(null, seller);
       } catch (err) {
         return done(err, null);
       }
@@ -63,86 +66,39 @@ passport.use(
   ),
 );
 
-// facebook strategy
+// ٢. Facebook OAuth Strategy
 passport.use(
   new FacebookStrategy(
     {
       clientID: process.env.FB_CLIENT_ID,
       clientSecret: process.env.FB_CLIENT_SECRET,
       callbackURL: getCallbackUrl("facebook"),
-      profileFields: ["id", "displayName"], // removed "emails"
+      profileFields: ["id", "displayName"],
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
         const facebookId = profile.id;
-        const name = profile.displayName;
+        const name = profile.displayName || "Facebook User";
 
-        let sellerExist = await seller.findOne({ where: { facebookId } });
+        let seller = await SellerV2.findOne({ where: { facebookId } });
 
-        if (!sellerExist) {
-          sellerExist = await seller.create({
+        if (!seller) {
+          seller = await SellerV2.create({
             facebookId,
             name,
             email: null,
             password_hash: null,
             needsManualEmail: true,
+            email_verified: true,
+            shop_name: `dwkan-${Date.now().toString().slice(-6)}`,
+            business_type: "social_media",
           });
         }
 
-        return done(null, sellerExist);
+        return done(null, seller);
       } catch (err) {
         return done(err, null);
       }
     },
   ),
 );
-/* passport.use(
-  new FacebookStrategy(
-    {
-      clientID: process.env.FB_CLIENT_ID,
-      clientSecret: process.env.FB_CLIENT_SECRET,
-      callbackURL: `${process.env.BACKEND_URL || "http://localhost:3001"}/api/seller/auth/facebook/callback`,
-      profileFields: ["id", "displayName", "emails"],
-    },
-    async (accessToken, refreshToken, profile, done) => {
-      try {
-        const facebookId = profile.id;
-        const name = profile.displayName;
-        const email = profile.emails?.[0]?.value || null;
-
-        let sellerExist = await seller.findOne({ where: { facebookId } });
-
-        if (!sellerExist) {
-          if (email) {
-            // normal login
-            sellerExist = await seller.findOne({ where: { email } });
-            if (sellerExist) {
-              sellerExist.facebookId = facebookId;
-              await sellerExist.save();
-            } else {
-              sellerExist = await seller.create({
-                facebookId,
-                name,
-                email,
-                needsManualEmail: false,
-              });
-            }
-          } else {
-            // Facebook has NO email
-            sellerExist = await seller.create({
-              facebookId,
-              name,
-              email: null,
-              phone: null,
-              needsManualEmail: true, // require email & phone manually after login
-            });
-          }
-        }
-
-        return done(null, sellerExist);
-      } catch (err) {
-        return done(err, null);
-      }
-    },
-  ),
-); */

@@ -1,21 +1,27 @@
+// backend/routes/seller/shopSections.js
 import { Router } from "express";
 import { v4 as uuidv4 } from "uuid";
-
 import ShopSection from "../../database/ShopSection.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { createR2Multer, uploadToR2, deleteFromR2 } from "../../utils/r2.js";
 
 const router = Router();
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-// Max 5 items; each item can have up to 2 images (ku + ar) → 10 files max
 const MAX_HERO_ITEMS = 5;
 const MAX_HERO_FILES = MAX_HERO_ITEMS * 2;
-const MAX_HERO_FILE_BYTES = 15 * 1024 * 1024; // 15 MB raw input per file
+const MAX_HERO_FILE_BYTES = 15 * 1024 * 1024;
 const MAX_BRAND_ITEMS = 20;
 const MAX_BRAND_FILES = MAX_BRAND_ITEMS;
-const MAX_BRAND_FILE_BYTES = 25 * 1024 * 1024; // 25 MB raw input per logo
-const VALID_SECTION_KEYS = ["hero", "flash_banner", "discount", "brands"];
+const MAX_BRAND_FILE_BYTES = 25 * 1024 * 1024;
+
+// زیادکردنی featured_categories بۆ لیستی ڕێگەپێدراوەکان
+const VALID_SECTION_KEYS = [
+  "hero",
+  "flash_banner",
+  "discount",
+  "brands",
+  "featured_categories",
+];
 const VALID_VIEW_MODES = ["home", "all_pages"];
 
 const heroUpload = createR2Multer({
@@ -30,10 +36,7 @@ const brandUpload = createR2Multer({
 
 function heroUploadMiddleware(req, res, next) {
   heroUpload.array("new_images", MAX_HERO_FILES)(req, res, (err) => {
-    if (!err) {
-      next();
-      return;
-    }
+    if (!err) return next();
 
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(413).json({
@@ -62,10 +65,7 @@ function heroUploadMiddleware(req, res, next) {
 
 function brandUploadMiddleware(req, res, next) {
   brandUpload.array("new_logos", MAX_BRAND_FILES)(req, res, (err) => {
-    if (!err) {
-      next();
-      return;
-    }
+    if (!err) return next();
 
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(413).json({
@@ -91,8 +91,6 @@ function brandUploadMiddleware(req, res, next) {
     return next(err);
   });
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function safeJsonParse(value) {
   if (value === null || value === undefined) return null;
@@ -121,6 +119,11 @@ function buildDefaultConfig(sectionKey) {
       titleEn: "Brands",
       layout: "slider",
       items: [],
+    };
+  }
+  if (sectionKey === "featured_categories") {
+    return {
+      selectedKeys: [],
     };
   }
   return {};
@@ -166,7 +169,9 @@ function sanitizeBrandConfig(inputConfig) {
   const rawItems = Array.isArray(config.items) ? config.items : [];
 
   if (rawItems.length > MAX_BRAND_ITEMS) {
-    const err = new Error(`Brands section supports a maximum of ${MAX_BRAND_ITEMS} brands.`);
+    const err = new Error(
+      `Brands section supports a maximum of ${MAX_BRAND_ITEMS} brands.`,
+    );
     err.status = 400;
     throw err;
   }
@@ -215,16 +220,10 @@ function sanitizeBrandConfig(inputConfig) {
   };
 }
 
-/**
- * Accept a dimension value as number or CSS string and return a normalised CSS string.
- *   toCssValue(120, 50, 180, 72, "px") → "120px"
- *   toCssValue("120px", 50, 180, 72, "px") → "120px"
- *   toCssValue("100%", 60, 100, 100, "%") → "100%"
- */
 function toCssValue(val, min, max, fallback, unit) {
   let n;
   if (typeof val === "string") {
-    n = parseFloat(val); // "120px" → 120, "100%" → 100
+    n = parseFloat(val);
   } else {
     n = Number(val);
   }
@@ -266,10 +265,10 @@ function toCssLength(val, { minPx, maxPx, fallbackPx, defaultUnit = "rem" }) {
   return `${stripTrailingZeros(clampedPx)}px`;
 }
 
-// ─── Controller: GET all sections for the authenticated seller ─────────────
+// 1) GET ALL SECTIONS
 async function getAllSections(req, res) {
   try {
-    const { id: sellerId } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const rows = await ShopSection.findAll({ where: { seller_id: sellerId } });
 
     const sectionMap = {};
@@ -307,10 +306,10 @@ async function getAllSections(req, res) {
   }
 }
 
-// ─── Controller: GET one section by section_key ───────────────────────────────
+// 2) GET ONE SECTION
 async function getSection(req, res) {
   try {
-    const { id: sellerId } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const { key } = req.params;
 
     if (!VALID_SECTION_KEYS.includes(key)) {
@@ -355,23 +354,16 @@ async function getSection(req, res) {
   }
 }
 
-// ─── Controller: Upsert non-hero section (JSON body) ─────────────────────────
-// Handles: flash_banner, discount
+// 3) UPSERT SECTION (چاککراو بۆ هەموو سێکشنەکان بەبێ 400)
 async function upsertSection(req, res) {
   try {
-    const { id: sellerId } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const { section_key, is_visible, config } = req.body;
 
     if (!VALID_SECTION_KEYS.includes(section_key)) {
       return res
         .status(400)
         .json({ success: false, message: "Invalid section_key" });
-    }
-    if (section_key === "hero") {
-      return res.status(400).json({
-        success: false,
-        message: "Use POST /sections/hero/upsert for the hero section",
-      });
     }
 
     const isVisible = toBoolean(is_visible);
@@ -399,9 +391,15 @@ async function upsertSection(req, res) {
         viewMode: normViewMode,
       };
     } else if (section_key === "discount") {
-      parsedConfig = {};
+      parsedConfig = parsedConfig || {};
     } else if (section_key === "brands") {
       parsedConfig = sanitizeBrandConfig(parsedConfig);
+    } else if (section_key === "hero") {
+      parsedConfig = parsedConfig?.items
+        ? parsedConfig
+        : buildDefaultConfig("hero");
+    } else if (section_key === "featured_categories") {
+      parsedConfig = parsedConfig || buildDefaultConfig("featured_categories");
     }
 
     const [section, created] = await ShopSection.findOrCreate({
@@ -410,7 +408,9 @@ async function upsertSection(req, res) {
     });
 
     if (!created) {
-      await section.update({ is_visible: isVisible, config: parsedConfig });
+      // ئەگەر config نەگۆڕابێت با هی پێشوو بپارێزرێت
+      const finalConfig = config !== undefined ? parsedConfig : section.config;
+      await section.update({ is_visible: isVisible, config: finalConfig });
     }
 
     return res.json({
@@ -430,9 +430,10 @@ async function upsertSection(req, res) {
   }
 }
 
+// 4) BRANDS
 async function getBrandsSection(req, res) {
   try {
-    const { id: sellerId } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const [section] = await ShopSection.findOrCreate({
       where: { seller_id: sellerId, section_key: "brands" },
       defaults: {
@@ -457,13 +458,16 @@ async function getBrandsSection(req, res) {
     console.error("getBrandsSection error:", err);
     return res
       .status(500)
-      .json({ success: false, message: "Server error fetching brands section" });
+      .json({
+        success: false,
+        message: "Server error fetching brands section",
+      });
   }
 }
 
 async function upsertBrandsSection(req, res) {
   try {
-    const { id: sellerId } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const files = req.files || [];
     const { is_visible, config, new_logos_meta, delete_keys } = req.body;
 
@@ -478,7 +482,9 @@ async function upsertBrandsSection(req, res) {
       });
     }
 
-    const itemsById = new Map(parsedConfig.items.map((item) => [item.id, item]));
+    const itemsById = new Map(
+      parsedConfig.items.map((item) => [item.id, item]),
+    );
 
     for (let i = 0; i < newLogosMeta.length; i++) {
       const meta = newLogosMeta[i];
@@ -517,7 +523,8 @@ async function upsertBrandsSection(req, res) {
         console.error("Brand logo upload failed:", uploadErr);
         return res.status(500).json({
           success: false,
-          message: "Failed to upload one or more brand logos. Please try again.",
+          message:
+            "Failed to upload one or more brand logos. Please try again.",
         });
       }
     }
@@ -550,21 +557,10 @@ async function upsertBrandsSection(req, res) {
   }
 }
 
-// ─── Controller: Upsert hero section (multipart/form-data) ────────────────────
-//
-// FormData fields:
-//   is_visible        "true" | "false"
-//   items_json        JSON array — the COMPLETE ordered list of items (source of truth).
-//                     Each item: { id, images: { ku: "r2-key|null", ar: "r2-key|null" }, link }
-//                     Items with null image slots that have new uploads will be filled below.
-//   new_images        File[] — the actual image files
-//   new_images_meta   JSON array matching new_images 1-to-1:
-//                     [{ itemId: "uuid", lang: "ku"|"ar" }]
-//   delete_keys       JSON array of R2 keys to delete
-//
+// 5) HERO WITH IMAGES
 async function upsertHeroSection(req, res) {
   try {
-    const { id: sellerId } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const files = req.files || [];
     const { is_visible, items_json, new_images_meta, delete_keys } = req.body;
 
@@ -572,7 +568,6 @@ async function upsertHeroSection(req, res) {
     const newImagesMeta = safeJsonParse(new_images_meta) || [];
     const keysToDelete = safeJsonParse(delete_keys) || [];
 
-    // ── Validate item count ────────────────────────────────────────────────────
     if (items.length > MAX_HERO_ITEMS) {
       return res.status(400).json({
         success: false,
@@ -587,7 +582,6 @@ async function upsertHeroSection(req, res) {
       });
     }
 
-    // ── Validate and sanitize items ────────────────────────────────────────────
     for (const item of items) {
       if (!item.id || typeof item.id !== "string" || !item.id.trim()) {
         return res
@@ -614,7 +608,6 @@ async function upsertHeroSection(req, res) {
       }
     }
 
-    // ── Validate new image meta ────────────────────────────────────────────────
     for (let i = 0; i < newImagesMeta.length; i++) {
       const meta = newImagesMeta[i];
       if (!meta.itemId || !["ku", "ar"].includes(meta.lang)) {
@@ -625,7 +618,6 @@ async function upsertHeroSection(req, res) {
       }
     }
 
-    // ── Delete removed R2 keys (fire-and-forget) ───────────────────────────────
     for (const key of keysToDelete) {
       if (typeof key === "string" && key.trim() && !key.startsWith("http")) {
         deleteFromR2(key).catch((e) =>
@@ -634,22 +626,17 @@ async function upsertHeroSection(req, res) {
       }
     }
 
-    // ── Build items map for fast lookup ────────────────────────────────────────
     const itemsMap = new Map();
     for (const item of items) {
       itemsMap.set(item.id, item);
     }
 
-    // ── Upload new images and assign to correct item.images[lang] ─────────────
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const { itemId, lang } = newImagesMeta[i];
 
       const item = itemsMap.get(itemId);
-      if (!item) {
-        // Item was declared in meta but not in items_json — skip
-        continue;
-      }
+      if (!item) continue;
 
       const safeLang = lang === "ar" ? "ar" : "ku";
       const key = `shops/${sellerId}/hero/${safeLang}/${uuidv4()}.webp`;
@@ -670,7 +657,6 @@ async function upsertHeroSection(req, res) {
       }
     }
 
-    // ── Rebuild ordered items from the original array (preserving order) ───────
     const finalItems = items.map((item) => ({
       id: item.id,
       images: { ku: item.images.ku, ar: item.images.ar },
@@ -678,7 +664,6 @@ async function upsertHeroSection(req, res) {
     }));
 
     const isVisible = toBoolean(is_visible);
-
     const [section, created] = await ShopSection.findOrCreate({
       where: { seller_id: sellerId, section_key: "hero" },
       defaults: { is_visible: isVisible, config: { items: finalItems } },
@@ -707,8 +692,6 @@ async function upsertHeroSection(req, res) {
       .json({ success: false, message: "Server error saving hero section" });
   }
 }
-
-// ─── Routes ───────────────────────────────────────────────────────────────────
 
 router.get("/sections", jwtVerifySellerToken, getAllSections);
 router.get("/sections/:key", jwtVerifySellerToken, getSection);

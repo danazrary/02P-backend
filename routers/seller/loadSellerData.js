@@ -1,7 +1,8 @@
+// backend/routes/seller/loadSellerData.js
 import { Router } from "express";
 import sequelize from "../../database/sequelize.js";
 import Product from "../../database/products.js";
-import Seller from "../../database/seller.js";
+import SellerV2 from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
@@ -9,16 +10,12 @@ import { clearCookieOpts } from "../../utils/addingToken.js";
 import { ensureSellerStorageUsage } from "../../utils/sellerStorageUsage.js";
 
 const router = Router();
-//hhhhhhh
-// Constants
+
 const FREE_PLAN_ID = 1;
 const TRIAL_PLAN_ID = 9;
 const GRACE_PERIOD_HOURS = 24;
 const DELETION_PERIOD_DAYS = 16;
 
-/**
- * Compute expiry phase from an end date relative to now.
- */
 function getExpiryState(endDate, now) {
   if (endDate >= now) return null;
 
@@ -43,9 +40,6 @@ function getExpiryState(endDate, now) {
   return { phase: "deleted" };
 }
 
-/**
- * Handle expired plans (trial or paid)
- */
 async function handleExpiredPlan(sellerPlanRecord, closeReason, now) {
   const endDate = new Date(sellerPlanRecord.end_date);
   const state = getExpiryState(endDate, now);
@@ -102,15 +96,20 @@ async function handleExpiredPlan(sellerPlanRecord, closeReason, now) {
   };
 }
 
-// Route: GET /api/seller/load-info
 router.get("/load-info", jwtVerifySellerToken, async (req, res) => {
   try {
-    const { id } = req.user;
+    const sellerId = req.user?.id || req.user?.seller_id;
     const now = new Date();
 
-    // 1. Fetch Seller Basic Info
-    const seller = await Seller.findByPk(id, {
-      attributes: ["id", "name", "shop_name", "default_shop_lang", "createdAt"],
+    const seller = await SellerV2.findByPk(sellerId, {
+      attributes: [
+        "id",
+        "name",
+        "shop_name",
+        "default_shop_lang",
+        "business_type",
+        "created_at",
+      ],
     });
 
     if (!seller) {
@@ -123,9 +122,8 @@ router.get("/load-info", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // 2. Fetch Seller Plan Record
     let sellerPlanRecord = await SellerPlan.findOne({
-      where: { seller_id: id },
+      where: { seller_id: sellerId },
     });
 
     if (!sellerPlanRecord) {
@@ -136,14 +134,12 @@ router.get("/load-info", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    // 3. Fetch Plan Definition Details
     const planRow = await Plan.findByPk(sellerPlanRecord.plan_id);
     const planName = planRow?.name ?? "Free";
 
     const isTrial = sellerPlanRecord.plan_id === TRIAL_PLAN_ID;
     const isPaid = !isTrial && sellerPlanRecord.plan_id !== FREE_PLAN_ID;
 
-    // 4. Handle Plan Expiration Status
     let warningAndClosedStatus = {
       showPlanWarning: false,
       warningType: "",
@@ -159,54 +155,45 @@ router.get("/load-info", jwtVerifySellerToken, async (req, res) => {
         "trial_expired",
         now,
       );
-      if (expired)
+      if (expired) {
         warningAndClosedStatus = { ...warningAndClosedStatus, ...expired };
+      }
     } else if (isPaid) {
       const expired = await handleExpiredPlan(
         sellerPlanRecord,
         "plan_expired",
         now,
       );
-      if (expired)
+      if (expired) {
         warningAndClosedStatus = { ...warningAndClosedStatus, ...expired };
+      }
     }
 
-    // 5. Parallel Reads: Product Count & Storage Usage ONLY
     const [currentProductCount, storageUsedMb] = await Promise.all([
-      Product.count({ where: { seller_id: id } }),
-      ensureSellerStorageUsage(id, planRow, { force: false }),
+      Product.count({ where: { seller_id: sellerId } }),
+      ensureSellerStorageUsage(sellerId, planRow, { force: false }),
     ]);
 
     const maxProducts = planRow?.max_products ?? 0;
 
-    // 6. Return Clean Essential Response
     return res.status(200).json({
       success: true,
       error: false,
-
-      // Limits & Counts
       productLimitReached: currentProductCount >= maxProducts,
       maxProducts,
       currentProductCount,
-
-      // Plan Details
       sellerPlan: planName,
       planId: sellerPlanRecord.plan_id,
       planStartDate: sellerPlanRecord.start_date,
       planEndDate: sellerPlanRecord.end_date,
-
-      // Identity Details
       sellerId: seller.id,
       sellerName: seller.name,
       shopName: seller.shop_name,
+      business_type: seller.business_type || "retail",
       defaultShopLang: seller.default_shop_lang || "ku",
-      sellerRegistrationDate: seller.createdAt,
-
-      // Storage
+      sellerRegistrationDate: seller.created_at || seller.createdAt,
       storageLimitMb: planRow?.storage_limit_mb ?? 0,
       storageUsedMb: parseFloat(storageUsedMb ?? 0),
-
-      // Status Warnings
       ...warningAndClosedStatus,
     });
   } catch (error) {
