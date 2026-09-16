@@ -3,6 +3,7 @@ import { Router } from "express";
 import { Op } from "sequelize";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
+import SellerV2 from "../../database/sellerv2.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { decrementSellerStorage } from "../../middlewares/checkStorageLimit.js";
 import { deleteMultipleFromR2 } from "../../utils/r2.js";
@@ -153,13 +154,24 @@ router.put("/catalog/bulk-category", jwtVerifySellerToken, async (req, res) => {
   }
 });
 
-// 3) DELETE /catalog/bulk-delete
+// 3) DELETE /catalog/bulk-delete (تەنها خاوەنکار دەسەڵاتی هەیە)
 router.delete(
   "/catalog/bulk-delete",
   jwtVerifySellerToken,
   async (req, res) => {
     try {
       const sellerId = req.user?.id || req.user?.seller_id;
+      const userType = req.user?.userType || req.user?.role;
+
+      // ئەگەر کارمەند بوو و دەسەڵاتی خاوەنکاری نەبوو
+      if (req.user?.userType === "staff" && userType !== "manager" && userType !== "owner") {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          message: "تەنها خاوەنی فرۆشگا دەتوانێت بەرهەمەکان بسڕێتەوە.",
+        });
+      }
+
       const { productIds } = req.body;
 
       if (!Array.isArray(productIds) || productIds.length === 0) {
@@ -205,7 +217,7 @@ router.delete(
 
       let colorBytes = 0;
       for (const product of products) {
-        const colorImages = (product.colors || []).filter((c) => c.imageKey);
+        const colorImages = (product.colors || []).filter((c) => c && c.imageKey);
         for (const ci of colorImages) {
           r2Keys.push(ci.imageKey);
           colorBytes +=

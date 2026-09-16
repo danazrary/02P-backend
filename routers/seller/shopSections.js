@@ -13,6 +13,7 @@ const MAX_HERO_FILE_BYTES = 15 * 1024 * 1024;
 const MAX_BRAND_ITEMS = 20;
 const MAX_BRAND_FILES = MAX_BRAND_ITEMS;
 const MAX_BRAND_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_FEATURED_CATEGORY_KEYS = 6;
 
 // زیادکردنی featured_categories بۆ لیستی ڕێگەپێدراوەکان
 const VALID_SECTION_KEYS = [
@@ -123,7 +124,7 @@ function buildDefaultConfig(sectionKey) {
   }
   if (sectionKey === "featured_categories") {
     return {
-      selectedKeys: [],
+      category_keys: [],
     };
   }
   return {};
@@ -220,6 +221,20 @@ function sanitizeBrandConfig(inputConfig) {
   };
 }
 
+function sanitizeFeaturedCategoriesConfig(inputConfig) {
+  const config = safeJsonParse(inputConfig) ?? {};
+  const rawKeys = Array.isArray(config.category_keys)
+    ? config.category_keys
+    : [];
+
+  const keys = rawKeys
+    .filter((k) => typeof k === "string" && k.trim().length > 0)
+    .map((k) => k.trim())
+    .slice(0, MAX_FEATURED_CATEGORY_KEYS);
+
+  return { category_keys: keys };
+}
+
 function toCssValue(val, min, max, fallback, unit) {
   let n;
   if (typeof val === "string") {
@@ -284,7 +299,7 @@ async function getAllSections(req, res) {
           section_key: key,
           is_visible: row.is_visible,
           config:
-            key === "brands"
+            key === "brands" || key === "featured_categories"
               ? { ...buildDefaultConfig(key), ...(row.config || {}) }
               : row.config || buildDefaultConfig(key),
         };
@@ -341,7 +356,7 @@ async function getSection(req, res) {
         section_key: row.section_key,
         is_visible: row.is_visible,
         config:
-          key === "brands"
+          key === "brands" || key === "featured_categories"
             ? { ...buildDefaultConfig(key), ...(row.config || {}) }
             : row.config || buildDefaultConfig(key),
       },
@@ -399,7 +414,7 @@ async function upsertSection(req, res) {
         ? parsedConfig
         : buildDefaultConfig("hero");
     } else if (section_key === "featured_categories") {
-      parsedConfig = parsedConfig || buildDefaultConfig("featured_categories");
+      parsedConfig = sanitizeFeaturedCategoriesConfig(parsedConfig);
     }
 
     const [section, created] = await ShopSection.findOrCreate({
@@ -456,12 +471,10 @@ async function getBrandsSection(req, res) {
     });
   } catch (err) {
     console.error("getBrandsSection error:", err);
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: "Server error fetching brands section",
-      });
+    return res.status(500).json({
+      success: false,
+      message: "Server error fetching brands section",
+    });
   }
 }
 

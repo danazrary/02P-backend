@@ -29,6 +29,7 @@ import getTikTokEmbedUrl, {
 import { getProductImageRecordBytes } from "../../utils/sellerStorageUsage.js";
 import { notifyGoogle } from "../../utils/googleIndexing.js";
 import { parseOptionalCashbackDate } from "../../utils/cashbackDates.js";
+import { generateUniqueProductV2Id } from "../../utils/generateProductV2Id.js";
 
 const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
 
@@ -789,7 +790,15 @@ router.post(
         descriptionAr,
         youtubeLinks,
         realPrice,
+        cost_price,
+        wholesale_price,
+        min_wholesale_quantity,
+        is_wholesale_only,
+        wholesale_tier_pricing,
+        sale_type,
         priceType,
+        barcode,
+        sku,
         options: optionsBody,
         variantPrices,
         variantPricesAr,
@@ -904,18 +913,33 @@ router.post(
               )
             : null;
 
+      let parsedTiers = null;
+      if (wholesale_tier_pricing) {
+        try {
+          parsedTiers =
+            typeof wholesale_tier_pricing === "string"
+              ? JSON.parse(wholesale_tier_pricing)
+              : wholesale_tier_pricing;
+        } catch (e) {
+          parsedTiers = null;
+        }
+      }
+
       const createPayload = {
         seller_id: id,
-        language,
+        language: language || "kurdish",
         hasRealPrice: isRealPricePost,
-        titleKu,
-        titleAr,
-        descriptionKu,
-        descriptionAr,
+        titleKu: titleKu || "",
+        titleAr: titleAr || "",
+        descriptionKu: descriptionKu || "",
+        descriptionAr: descriptionAr || "",
         images: [],
         youtubeLinks: normalizedYoutubeLinks,
-        realPrice: isRealPricePost && realPrice !== "" ? realPrice : null,
-        priceType,
+        realPrice:
+          isRealPricePost && realPrice !== ""
+            ? realPrice
+            : Number(wholesale_price) || null,
+        priceType: priceType || "USD",
         options: parsedOptions.length > 0 ? parsedOptions : null,
         variantPrices: finalVariantPricesPayload,
         variantPricesAr: finalVariantPricesArPayload,
@@ -1008,6 +1032,101 @@ router.post(
         await incrementSellerStorage(id, totalUploadedBytes);
       }
 
+      // Sync with ProductV2
+      // ============================================================
+      // Sync with ProductV2 (Fixed Mapping)
+      // ============================================================
+      try {
+        const v2Id = await generateUniqueProductV2Id();
+
+        // 1. Combine Custom Inputs into: [{ ku: {name, value}, ar: {name, value} }]
+        const combinedCustomInputs = [];
+        const maxInputsLength = Math.max(
+          parsedCustomInputs.length,
+          parsedCustomInputsAr.length,
+        );
+        for (let i = 0; i < maxInputsLength; i++) {
+          const kuItem = parsedCustomInputs[i] || { name: "", value: "" };
+          const arItem = parsedCustomInputsAr[i] || { name: "", value: "" };
+          if (kuItem.name || kuItem.value || arItem.name || arItem.value) {
+            combinedCustomInputs.push({
+              ku: { name: kuItem.name || "", value: kuItem.value || "" },
+              ar: { name: arItem.name || "", value: arItem.value || "" },
+            });
+          }
+        }
+
+        // 2. Determine default retail price if using variants
+        let computedRetailPrice = Number(realPrice) || 0;
+        if (!computedRetailPrice && parsedVariantPrices.length > 0) {
+          computedRetailPrice = Number(parsedVariantPrices[0].price) || 0;
+        } else if (
+          !computedRetailPrice &&
+          parsedTiers &&
+          parsedTiers.length > 0
+        ) {
+          computedRetailPrice = Number(parsedTiers[0]?.tiers?.[0]?.price) || 0;
+        }
+
+        await ProductV2.create({
+          id: v2Id,
+          seller_id: id,
+          language: ["kurdish", "arabic", "both"].includes(language)
+            ? language
+            : "both",
+          title: {
+            ku: titleKu || "",
+            ar: titleAr || titleKu || "",
+            en: "",
+          },
+          description: {
+            ku: descriptionKu || "",
+            ar: descriptionAr || descriptionKu || "",
+            en: "",
+          },
+          barcode: barcode ? String(barcode).trim() : null,
+          sku: sku ? String(sku).trim() : null,
+
+          // Pricing & Currency
+          cost_price: Number(cost_price) || 0,
+          retail_price: computedRetailPrice,
+          price_type: (priceType || "iqd").toLowerCase(), // MySQL enum expects lowercase ('iqd' or 'usd')
+
+          // Retail Variants
+          variant_r: finalVariantPricesPayload,
+          variant_r_ar: finalVariantPricesArPayload,
+
+          // Wholesale Data
+          is_wholesale_only:
+            is_wholesale_only === "true" || is_wholesale_only === true,
+          wholesale_price:
+            Number(wholesale_price) ||
+            (parsedTiers?.[0]?.tiers?.[0]?.price
+              ? Number(parsedTiers[0].tiers[0].price)
+              : null),
+          min_wholesale_quantity: Number(min_wholesale_quantity) || 1,
+          wholesale_tier_pricing: parsedTiers,
+          variant_w: parsedTiers, // Wholesale variant groups
+
+          // Categories (Direct Columns)
+          category: category || null,
+          subcategory: subcategory || null,
+
+          // Custom Fields, Media & Stock
+          custom_inputs:
+            combinedCustomInputs.length > 0 ? combinedCustomInputs : null,
+          stock_quantity: parsedStock || 0,
+          images: imageUploadResults.map((r) => r.mainKey),
+          video_links: normalizedYoutubeLinks.filter(Boolean),
+          is_published: isAvailablePost,
+          extra_attributes: {
+            sale_type: sale_type || "retail",
+          },
+        });
+      } catch (v2Err) {
+        console.error("Warning: ProductV2 sync error:", v2Err);
+      }
+
       await product.reload();
 
       res.status(201).json({
@@ -1037,7 +1156,8 @@ router.post(
       res.status(error.statusCode || 500).json({
         success: false,
         error: true,
-        message: error.clientMessage || "Failed to create product",
+        message:
+          error.clientMessage || error.message || "Failed to create product",
       });
     }
   },
@@ -1679,7 +1799,9 @@ router.post(
         uploadedImageUrls = uploadResults.map((r) => r.mainKey);
       }
 
+      const v2Id = await generateUniqueProductV2Id();
       const newProduct = await ProductV2.create({
+        id: v2Id,
         seller_id: sellerId,
         title: titleJson,
         description: descriptionJson,

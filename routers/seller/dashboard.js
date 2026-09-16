@@ -3,15 +3,17 @@ import { Router } from "express";
 import { Op } from "sequelize";
 import sequelize from "../../database/sequelize.js";
 
-import Product from "../../database/products.js";
-import ProductImage from "../../database/productImages.js";
+import ProductV2 from "../../database/productv2.js";
 import SellerV2 from "../../database/sellerv2.js"; // 👈 گۆڕدرا بۆ SellerV2
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { clearCookieOpts } from "../../utils/addingToken.js";
-import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
+import {
+  checkAndCleanProductV2Expiration,
+  normalizeProductV2,
+} from "../../utils/productV2Promos.js";
 import { ensureSellerStorageUsage } from "../../utils/sellerStorageUsage.js";
 import {
   processRedLineData,
@@ -288,6 +290,40 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       if (expiredResponse) return res.status(200).json(expiredResponse);
     }
 
+    const PRODUCT_V2_ATTRIBUTES = [
+      "id",
+      "seller_id",
+      "title",
+      "description",
+      "custom_inputs",
+      "language",
+      "barcode",
+      "sku",
+      "category",
+      "subcategory",
+      "cost_price",
+      "retail_price",
+      "price_type",
+      "variant_r",
+      "variant_r_ar",
+      "is_wholesale_only",
+      "wholesale_price",
+      "min_wholesale_quantity",
+      "wholesale_tier_pricing",
+      "variant_w",
+      "discount",
+      "cashback",
+      "free_delivery",
+      "stock_quantity",
+      "low_stock_alert",
+      "images",
+      "video_links",
+      "views",
+      "extra_attributes",
+      "is_published",
+      "sort_order",
+    ];
+
     const [
       currentProductCount,
       currentOfferCount,
@@ -295,7 +331,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       { count: totalProductsCount, rows: rawProducts },
       storageUsedMb,
     ] = await Promise.all([
-      Product.count({ where: { seller_id: id } }),
+      ProductV2.count({ where: { seller_id: id } }),
       SellerOffer.count({ where: { seller_id: id, is_active: true } }),
       SellerOffer.findAll({
         where: {
@@ -318,43 +354,9 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
           "discount_or_free_delivery",
         ],
       }),
-      Product.findAndCountAll({
+      ProductV2.findAndCountAll({
         where: { seller_id: id },
-        attributes: [
-          "id",
-          "hasRealPrice",
-          "language",
-          "titleKu",
-          "titleAr",
-          "realPrice",
-          "priceType",
-          "hasDiscount",
-          "discount_percent",
-          "discountType",
-          "discountStartDate",
-          "discountEndDate",
-          "freeDeliveryStartDate",
-          "freeDeliveryEndDate",
-          "free_delivery",
-          "hasCashback",
-          "cashbackType",
-          "cashbackValue",
-          "cashbackStartDate",
-          "cashbackEndDate",
-          "cashbackMinOrderAmount",
-          "options",
-          "variants",
-          "variantPrices",
-          "category",
-          "subcategory",
-        ],
-        include: [
-          {
-            model: ProductImage,
-            as: "productImages",
-            attributes: ["image_key", "thumb_key", "is_main"],
-          },
-        ],
+        attributes: PRODUCT_V2_ATTRIBUTES,
         limit: productLimit,
         offset: productOffset,
         order: [["id", "DESC"]],
@@ -368,7 +370,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       console.error("[dashboard] Failed to delete expired offers:", err),
     );
 
-    const products = await checkAndCleanProductExpiration(rawProducts);
+    const cleanedRows = await checkAndCleanProductV2Expiration(rawProducts);
+    const products = cleanedRows.map((row) => normalizeProductV2(row));
     const hasMoreProducts = productOffset + productLimit < totalProductsCount;
 
     const ku = parseRedLine(seller.red_line);
@@ -428,6 +431,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       show_plan_selection: sellerPlanRecord.plan_id === FREE_PLAN_ID,
       selected_plan_info: selectedPlan,
       brand_color: seller.brand_color ?? null,
+      // seller_name: seller.name ?? "",
       category_translations: getCategoryMap(seller),
       red_line: redLine,
       products,
@@ -474,7 +478,7 @@ router.post("/product-badges", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    const productExists = await Product.findOne({
+    const productExists = await ProductV2.findOne({
       where: { id: parsedProductId, seller_id: sellerId },
     });
 

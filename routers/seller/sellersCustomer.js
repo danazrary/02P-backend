@@ -1,15 +1,18 @@
 // backend/routes/seller/sellersCustomer.js
 import { Router } from "express";
-import Product from "../../database/products.js";
+import ProductV2 from "../../database/productv2.js";
 import SellerV2 from "../../database/sellerv2.js";
-import ProductImage from "../../database/productImages.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import ShopSection from "../../database/ShopSection.js";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import { Op } from "sequelize";
-import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
+import {
+  checkAndCleanProductV2Expiration,
+  normalizeProductV2,
+  isPromoCurrentlyActive,
+} from "../../utils/productV2Promos.js";
 import {
   processRedLineData,
   getRedLineStatus,
@@ -25,7 +28,13 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 const router = Router();
 
-const SECTION_KEYS = ["hero", "flash_banner", "brands", "discount"];
+const SECTION_KEYS = [
+  "hero",
+  "flash_banner",
+  "brands",
+  "discount",
+  "featured_categories",
+];
 
 const DEFAULT_SECTION_CONFIGS = {
   hero: { items: [] },
@@ -43,7 +52,45 @@ const DEFAULT_SECTION_CONFIGS = {
     items: [],
   },
   discount: {},
+  // category_keys: up to 6 category keys the seller picked to showcase.
+  // Empty means "not configured yet" — the customer page falls back to
+  // the seller's first 6 categories.
+  featured_categories: { category_keys: [] },
 };
+
+const PRODUCT_V2_ATTRIBUTES = [
+  "id",
+  "seller_id",
+  "title",
+  "description",
+  "custom_inputs",
+  "language",
+  "barcode",
+  "sku",
+  "category",
+  "subcategory",
+  "cost_price",
+  "retail_price",
+  "price_type",
+  "variant_r",
+  "variant_r_ar",
+  "is_wholesale_only",
+  "wholesale_price",
+  "min_wholesale_quantity",
+  "wholesale_tier_pricing",
+  "variant_w",
+  "discount",
+  "cashback",
+  "free_delivery",
+  "stock_quantity",
+  "low_stock_alert",
+  "images",
+  "video_links",
+  "views",
+  "extra_attributes",
+  "is_published",
+  "sort_order",
+];
 
 function normalizeBrandItems(items) {
   if (!Array.isArray(items)) return [];
@@ -61,6 +108,13 @@ function normalizeBrandItems(items) {
         : index,
     }))
     .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+function normalizeFeaturedCategoryKeys(keys) {
+  if (!Array.isArray(keys)) return [];
+  return keys
+    .filter((k) => typeof k === "string" && k.trim().length > 0)
+    .slice(0, 6);
 }
 
 function buildUiSettingsFromSections(shopSections) {
@@ -126,6 +180,20 @@ async function getShopSections(sellerId) {
           ...defaultConfig,
           ...(row.config || {}),
           items: activeItems,
+        },
+      };
+    }
+
+    if (key === "featured_categories") {
+      return {
+        section_key: key,
+        is_visible: row.is_visible,
+        config: {
+          ...defaultConfig,
+          ...(row.config || {}),
+          category_keys: normalizeFeaturedCategoryKeys(
+            row.config?.category_keys,
+          ),
         },
       };
     }
@@ -317,10 +385,10 @@ router.get(
 
 // 2) Full Shop Home Endpoint
 router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
+  let role = false;
+  let sellerShop = null;
   try {
     const { shopName } = req.params;
-    let role = false;
-    let sellerShop;
 
     if (req.isSeller && req.seller) {
       const findSeller = await SellerV2.findByPk(req.seller.id, {
@@ -497,49 +565,16 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     const productOffset = parseInt(req.query.productOffset) || 0;
 
     const { count: totalProducts, rows: rawProducts } =
-      await Product.findAndCountAll({
-        where: { seller_id: sellerId },
-        attributes: [
-          "id",
-          "hasRealPrice",
-          "language",
-          "titleKu",
-          "titleAr",
-          "realPrice",
-          "priceType",
-          "hasDiscount",
-          "discount_percent",
-          "discountType",
-          "discountStartDate",
-          "discountEndDate",
-          "freeDeliveryStartDate",
-          "freeDeliveryEndDate",
-          "free_delivery",
-          "hasCashback",
-          "cashbackType",
-          "cashbackValue",
-          "options",
-          "variants",
-          "variantPrices",
-          "variantPricesAr",
-          "category",
-          "subcategory",
-          "isAvailable",
-          "stock",
-        ],
-        include: [
-          {
-            model: ProductImage,
-            as: "productImages",
-            attributes: ["image_key", "thumb_key", "is_main"],
-          },
-        ],
+      await ProductV2.findAndCountAll({
+        where: { seller_id: sellerId, is_published: true },
+        attributes: PRODUCT_V2_ATTRIBUTES,
         limit: productLimit,
         offset: productOffset,
         order: [["id", "DESC"]],
       });
 
-    let products = await checkAndCleanProductExpiration(rawProducts);
+    const cleanedRows = await checkAndCleanProductV2Expiration(rawProducts);
+    let products = cleanedRows.map((row) => normalizeProductV2(row));
     const hasMoreProducts = productOffset + productLimit < totalProducts;
 
     let redLineKu = null;
@@ -648,46 +683,18 @@ router.get("/more-products/:sellerId", async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 30, 100);
     const offset = parseInt(req.query.offset) || 0;
 
-    const { count: total, rows: rawProducts } = await Product.findAndCountAll({
-      where: { seller_id: sellerId },
-      attributes: [
-        "id",
-        "hasRealPrice",
-        "language",
-        "titleKu",
-        "titleAr",
-        "realPrice",
-        "priceType",
-        "hasDiscount",
-        "discount_percent",
-        "discountType",
-        "discountStartDate",
-        "discountEndDate",
-        "freeDeliveryStartDate",
-        "freeDeliveryEndDate",
-        "free_delivery",
-        "options",
-        "variants",
-        "variantPrices",
-        "variantPricesAr",
-        "category",
-        "subcategory",
-        "isAvailable",
-        "stock",
-      ],
-      include: [
-        {
-          model: ProductImage,
-          as: "productImages",
-          attributes: ["image_key", "thumb_key", "is_main"],
-        },
-      ],
-      limit,
-      offset,
-      order: [["id", "DESC"]],
-    });
+    const { count: total, rows: rawProducts } = await ProductV2.findAndCountAll(
+      {
+        where: { seller_id: sellerId, is_published: true },
+        attributes: PRODUCT_V2_ATTRIBUTES,
+        limit,
+        offset,
+        order: [["id", "DESC"]],
+      },
+    );
 
-    const products = await checkAndCleanProductExpiration(rawProducts);
+    const cleanedRows = await checkAndCleanProductV2Expiration(rawProducts);
+    const products = cleanedRows.map((row) => normalizeProductV2(row));
 
     return res.status(200).json({
       success: true,
@@ -712,51 +719,22 @@ router.get("/products-by-category/:sellerId", async (req, res) => {
     const offset = parseInt(req.query.offset) || 0;
     const { category, subcategory } = req.query;
 
-    const whereClause = { seller_id: sellerId };
+    const whereClause = { seller_id: sellerId, is_published: true };
     if (category) whereClause.category = category;
     if (subcategory) whereClause.subcategory = subcategory;
 
-    const { count: total, rows: rawProducts } = await Product.findAndCountAll({
-      where: whereClause,
-      attributes: [
-        "id",
-        "hasRealPrice",
-        "language",
-        "titleKu",
-        "titleAr",
-        "realPrice",
-        "priceType",
-        "hasDiscount",
-        "discount_percent",
-        "discountType",
-        "discountStartDate",
-        "discountEndDate",
-        "freeDeliveryStartDate",
-        "freeDeliveryEndDate",
-        "free_delivery",
-        "options",
-        "variants",
-        "variantPrices",
-        "colors",
-        "sizes",
-        "stock",
-        "isAvailable",
-        "category",
-        "subcategory",
-      ],
-      include: [
-        {
-          model: ProductImage,
-          as: "productImages",
-          attributes: ["image_key", "thumb_key", "is_main"],
-        },
-      ],
-      limit,
-      offset,
-      order: [["id", "DESC"]],
-    });
+    const { count: total, rows: rawProducts } = await ProductV2.findAndCountAll(
+      {
+        where: whereClause,
+        attributes: PRODUCT_V2_ATTRIBUTES,
+        limit,
+        offset,
+        order: [["id", "DESC"]],
+      },
+    );
 
-    const products = await checkAndCleanProductExpiration(rawProducts);
+    const cleanedRows = await checkAndCleanProductV2Expiration(rawProducts);
+    const products = cleanedRows.map((row) => normalizeProductV2(row));
 
     return res.status(200).json({
       success: true,
@@ -784,41 +762,9 @@ router.get("/product-for-cart/:productId", async (req, res) => {
         .json({ success: false, message: "Invalid product ID" });
     }
 
-    const product = await Product.findByPk(id, {
-      attributes: [
-        "id",
-        "seller_id",
-        "hasRealPrice",
-        "language",
-        "titleKu",
-        "titleAr",
-        "realPrice",
-        "priceType",
-        "hasDiscount",
-        "discount_percent",
-        "discountType",
-        "discountStartDate",
-        "discountEndDate",
-        "freeDeliveryStartDate",
-        "freeDeliveryEndDate",
-        "free_delivery",
-        "options",
-        "variants",
-        "variantPrices",
-        "variantPricesAr",
-        "colors",
-        "sizes",
-        "customInputs",
-        "customInputsAr",
-        "images",
-      ],
-      include: [
-        {
-          model: ProductImage,
-          as: "productImages",
-          attributes: ["image_key", "thumb_key", "is_main"],
-        },
-      ],
+    const product = await ProductV2.findOne({
+      where: { id, is_published: true },
+      attributes: PRODUCT_V2_ATTRIBUTES,
     });
 
     if (!product) {
@@ -827,7 +773,9 @@ router.get("/product-for-cart/:productId", async (req, res) => {
         .json({ success: false, message: "Product not found" });
     }
 
-    return res.status(200).json({ success: true, product });
+    return res
+      .status(200)
+      .json({ success: true, product: normalizeProductV2(product) });
   } catch (error) {
     console.error("Error fetching product for cart:", error);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -853,50 +801,21 @@ router.get("/shop-discounts/:shopName", async (req, res) => {
         .json({ success: false, error: true, message: "Shop not found" });
     }
 
-    const PRODUCT_ATTRS = [
-      "id",
-      "hasRealPrice",
-      "language",
-      "titleKu",
-      "titleAr",
-      "images",
-      "realPrice",
-      "priceType",
-      "hasDiscount",
-      "discount_percent",
-      "discountType",
-      "discountStartDate",
-      "discountEndDate",
-      "freeDeliveryStartDate",
-      "freeDeliveryEndDate",
-      "free_delivery",
-      "options",
-      "variants",
-      "variantPrices",
-      "variantPricesAr",
-      "colors",
-      "sizes",
-      "category",
-      "subcategory",
-    ];
-
-    const rawProducts = await Product.findAll({
-      where: {
-        seller_id: seller.id,
-        [Op.or]: [{ hasDiscount: true }, { free_delivery: true }],
-      },
-      attributes: PRODUCT_ATTRS,
-      include: [
-        {
-          model: ProductImage,
-          as: "productImages",
-          attributes: ["image_key", "thumb_key", "is_main"],
-        },
-      ],
+    const rawProducts = await ProductV2.findAll({
+      where: { seller_id: seller.id, is_published: true },
+      attributes: PRODUCT_V2_ATTRIBUTES,
       order: [["id", "DESC"]],
     });
 
-    const products = await checkAndCleanProductExpiration(rawProducts);
+    const cleanedRows = await checkAndCleanProductV2Expiration(rawProducts);
+    const allProducts = cleanedRows.map((row) => normalizeProductV2(row));
+    // Only keep products that actually have an active discount or active
+    // free delivery — the DB can't filter this directly since both live
+    // inside JSON bundles, so we filter the normalized (already
+    // active/inactive resolved) rows here instead.
+    const products = allProducts.filter(
+      (p) => p.hasDiscount || p.free_delivery,
+    );
 
     const now = new Date();
     const in24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);

@@ -1,17 +1,50 @@
 import { Router } from "express";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
-import Product from "../../database/products.js";
-import Seller from "../../database/seller.js";
-import ProductImage from "../../database/productImages.js";
+import ProductV2 from "../../database/productv2.js";
+import SellerV2 from "../../database/sellerv2.js";
 import Report from "../../database/report.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import Feedback from "../../database/feedback.js";
 import { Op } from "sequelize";
 import {
-  checkAndCleanProductExpiration,
-  checkAndCleanSingleProduct,
-} from "../../utils/checkProductExpiration.js";
+  checkAndCleanProductV2Expiration,
+  normalizeProductV2,
+} from "../../utils/productV2Promos.js";
 const router = Router();
+
+const PRODUCT_V2_ATTRIBUTES = [
+  "id",
+  "seller_id",
+  "title",
+  "description",
+  "custom_inputs",
+  "language",
+  "barcode",
+  "sku",
+  "category",
+  "subcategory",
+  "cost_price",
+  "retail_price",
+  "price_type",
+  "variant_r",
+  "variant_r_ar",
+  "is_wholesale_only",
+  "wholesale_price",
+  "min_wholesale_quantity",
+  "wholesale_tier_pricing",
+  "variant_w",
+  "discount",
+  "cashback",
+  "free_delivery",
+  "stock_quantity",
+  "low_stock_alert",
+  "images",
+  "video_links",
+  "views",
+  "extra_attributes",
+  "is_published",
+  "sort_order",
+];
 
 // Get cart products with full data by IDs
 router.post("/cart-products", async (req, res) => {
@@ -30,19 +63,14 @@ router.post("/cart-products", async (req, res) => {
     const limitedIds = productIds.slice(0, 50);
 
     // Get full product data
-    let products = await Product.findAll({
+    const rawProducts = await ProductV2.findAll({
       where: { id: { [Op.in]: limitedIds } },
-      include: [
-        {
-          model: ProductImage,
-          as: "productImages",
-          attributes: ["image_key", "is_main"],
-        },
-      ],
+      attributes: PRODUCT_V2_ATTRIBUTES,
     });
 
-    // Check and clean expired discounts and free delivery
-    products = await checkAndCleanProductExpiration(products);
+    // Check and clean expired discounts, cashback, and free delivery
+    const cleanedRows = await checkAndCleanProductV2Expiration(rawProducts);
+    const products = cleanedRows.map((row) => normalizeProductV2(row));
 
     if (products.length === 0) {
       return res.status(200).json({
@@ -69,8 +97,7 @@ router.post("/cart-products", async (req, res) => {
     });
 
     // Get seller info (phone for WhatsApp)
-    const { default: Seller } = await import("../../database/seller.js");
-    const seller = await Seller.findByPk(sellerId, {
+    const seller = await SellerV2.findByPk(sellerId, {
       attributes: [
         "id",
         "name",
@@ -108,18 +135,8 @@ router.get("/product/:id", detectSeller, async (req, res) => {
     const { id } = req.params;
     const { shopName } = req.query;
 
-    let product = await Product.findByPk(id, {
-      include: [
-        {
-          model: Seller,
-          attributes: ["id", "shop_name"],
-        },
-        {
-          model: ProductImage,
-          as: "productImages",
-          attributes: ["image_key", "is_main"],
-        },
-      ],
+    const product = await ProductV2.findByPk(id, {
+      attributes: PRODUCT_V2_ATTRIBUTES,
     });
 
     if (!product) {
@@ -131,16 +148,21 @@ router.get("/product/:id", detectSeller, async (req, res) => {
     }
 
     // Validate product belongs to the requested shop (prevents cross-shop leakage)
-    if (shopName && product.Seller && product.Seller.shop_name !== shopName) {
-      return res.status(404).json({
-        success: false,
-        error: true,
-        message: "Product not found in this shop",
+    if (shopName) {
+      const owningSeller = await SellerV2.findByPk(product.seller_id, {
+        attributes: ["id", "shop_name"],
       });
+      if (!owningSeller || owningSeller.shop_name !== shopName) {
+        return res.status(404).json({
+          success: false,
+          error: true,
+          message: "Product not found in this shop",
+        });
+      }
     }
 
-    // Check and clean expired discounts and free delivery
-    product = await checkAndCleanSingleProduct(product);
+    // Check and clean expired discount/cashback/free-delivery bundles
+    await checkAndCleanProductV2Expiration([product]);
 
     // 👀 increase product views (skip if viewer is a seller)
     if (!req.isSeller) {
@@ -168,7 +190,7 @@ router.get("/product/:id", detectSeller, async (req, res) => {
     res.status(200).json({
       success: true,
       error: false,
-      product,
+      product: normalizeProductV2(product),
       isSeller: req.isSeller,
     });
   } catch (error) {

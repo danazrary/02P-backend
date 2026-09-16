@@ -126,13 +126,11 @@ router.post("/categories", jwtVerifySellerToken, async (req, res) => {
         .json({ success: false, error: true, message: "Invalid category key" });
     }
     if (findKey(map, key)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: true,
-          message: "Category already exists",
-        });
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Category already exists",
+      });
     }
 
     map[key] = { ku, ar, image: "", subcategories: {} };
@@ -298,25 +296,21 @@ router.post("/subcategories", jwtVerifySellerToken, async (req, res) => {
     const map = getCategoryMap(seller);
     const key = findKey(map, categoryKey);
     if (!key) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          error: true,
-          message: "Parent category not found",
-        });
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "Parent category not found",
+      });
     }
 
     const subKey = makeKey(requestedSubKey || ku || ar);
     const subcategories = map[key].subcategories;
     if (!subKey || findKey(subcategories, subKey)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: true,
-          message: "Subcategory already exists or has an invalid key",
-        });
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Subcategory already exists or has an invalid key",
+      });
     }
 
     subcategories[subKey] = { ku, ar };
@@ -358,26 +352,22 @@ router.put(
         : null;
 
       if (!categoryKey || !subcategoryKey) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-            error: true,
-            message: "Subcategory not found",
-          });
+        return res.status(404).json({
+          success: false,
+          error: true,
+          message: "Subcategory not found",
+        });
       }
 
       const current = map[categoryKey].subcategories[subcategoryKey];
       const ku = cleanText(req.body?.ku ?? current.ku);
       const ar = cleanText(req.body?.ar ?? current.ar);
       if (!ku && !ar) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            error: true,
-            message: "A Kurdish or Arabic subcategory name is required",
-          });
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: "A Kurdish or Arabic subcategory name is required",
+        });
       }
 
       map[categoryKey].subcategories[subcategoryKey] = { ku, ar };
@@ -423,13 +413,11 @@ router.delete("/subcategories", jwtVerifySellerToken, async (req, res) => {
       : null;
 
     if (!categoryKey || !subcategoryKey) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          error: true,
-          message: "Subcategory not found",
-        });
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "Subcategory not found",
+      });
     }
 
     delete map[categoryKey].subcategories[subcategoryKey];
@@ -466,13 +454,11 @@ router.put(
     try {
       const sellerId = req.user?.id || req.user?.seller_id;
       if (!req.file) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            error: true,
-            message: "No image file provided",
-          });
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: "No image file provided",
+        });
       }
 
       const seller = await findSeller(sellerId);
@@ -511,13 +497,11 @@ router.put(
       });
     } catch (error) {
       console.error("Error uploading category image:", error);
-      return res
-        .status(500)
-        .json({
-          success: false,
-          error: true,
-          message: error.message || "Server error",
-        });
+      return res.status(500).json({
+        success: false,
+        error: true,
+        message: error.message || "Server error",
+      });
     }
   },
 );
