@@ -131,5 +131,3 @@ export function applyItemStockDecrement(product, item) {
   update.stock = nextStock;
   return update;
 }
-
-

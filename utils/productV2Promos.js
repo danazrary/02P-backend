@@ -1,84 +1,66 @@
-// backend/utils/productV2Promos.js
-//
-// Helpers for ProductV2's JSON promo bundles (discount, cashback,
-// free_delivery). Each bundle shares the same shape:
-//   {
-//     is_active: boolean,
-//     mode: "running" | "timer",   // "running" = active until manually
-//                                   // stopped, "timer" = has an end_at
-//     start_at: string|null,
-//     end_at: string|null,
-//     ...bundle-specific fields (type/value for discount,
-//        value_type/value/currency for cashback)
-//   }
-//
-// A "running" bundle never auto-expires — only a "timer" bundle with a
-// past end_at is considered expired.
+import Product from "../database/products.js";
+import { Op } from "sequelize";
 
 /**
- * Returns true if a promo bundle is currently within its active window.
- * A null/missing bundle, or one with is_active !== true, is never active.
+ * Checks and cleans expired discounts, free delivery, and cashback on products table rows.
  */
-export function isPromoCurrentlyActive(bundle, now = new Date()) {
-  if (!bundle || bundle.is_active !== true) return false;
-
-  if (bundle.start_at) {
-    const start = new Date(bundle.start_at);
-    if (!Number.isNaN(start.getTime()) && now < start) return false;
-  }
-
-  if (bundle.mode === "timer") {
-    if (!bundle.end_at) return false; // timer mode requires an end date
-    const end = new Date(bundle.end_at);
-    if (Number.isNaN(end.getTime())) return false;
-    return now <= end;
-  }
-
-  // mode === "running" (or unspecified, treated as running): active
-  // indefinitely once started, regardless of end_at.
-  return true;
-}
-
-/**
- * Returns true if a "timer" mode bundle's end_at has passed, meaning it
- * should be cleared (is_active flipped false) on the next write. Running
- * bundles are never expired this way — they only stop when the seller
- * deactivates them.
- */
-export function isPromoExpired(bundle, now = new Date()) {
-  if (!bundle || bundle.is_active !== true) return false;
-  if (bundle.mode !== "timer") return false;
-  if (!bundle.end_at) return false;
-  const end = new Date(bundle.end_at);
-  if (Number.isNaN(end.getTime())) return false;
-  return now > end;
-}
-
-/**
- * Given an array of ProductV2 instances (or plain objects with .discount /
- * .cashback / .free_delivery), finds any whose "timer" bundles have
- * expired, clears is_active on those bundles in the DB, and returns the
- * same array with in-memory bundles updated to match — so callers always
- * see accurate, already-expired-cleared data without a second read.
- */
-export async function checkAndCleanProductV2Expiration(products) {
+export async function checkAndCleanProductExpiration(products) {
   const now = new Date();
   const updates = [];
 
   for (const product of products) {
     const patch = {};
 
-    for (const field of ["discount", "cashback", "free_delivery"]) {
-      const bundle = product[field];
-      if (isPromoExpired(bundle, now)) {
-        const cleared = { ...bundle, is_active: false };
-        patch[field] = cleared;
-        product[field] = cleared; // keep in-memory row in sync
-      }
+    // Discount timer expiration
+    if (
+      product.hasDiscount &&
+      product.discountType === "timer" &&
+      product.discountEndDate &&
+      new Date(product.discountEndDate) < now
+    ) {
+      patch.hasDiscount = false;
+      patch.discount_percent = null;
+      patch.discountType = null;
+      patch.discountStartDate = null;
+      patch.discountEndDate = null;
+      product.hasDiscount = false;
+      product.discount_percent = null;
+      product.discountType = null;
+    }
+
+    // Free delivery expiration
+    if (
+      product.free_delivery &&
+      product.freeDeliveryEndDate &&
+      new Date(product.freeDeliveryEndDate) < now
+    ) {
+      patch.free_delivery = false;
+      patch.freeDeliveryStartDate = null;
+      patch.freeDeliveryEndDate = null;
+      product.free_delivery = false;
+    }
+
+    // Cashback expiration
+    if (
+      product.hasCashback &&
+      product.cashbackEndDate &&
+      new Date(product.cashbackEndDate) < now
+    ) {
+      patch.hasCashback = false;
+      patch.cashbackValue = null;
+      patch.cashbackStartDate = null;
+      patch.cashbackEndDate = null;
+      patch.cashbackMinOrderAmount = null;
+      product.hasCashback = false;
+      product.cashbackValue = null;
     }
 
     if (Object.keys(patch).length > 0) {
-      updates.push(product.update ? product.update(patch) : Promise.resolve());
+      if (typeof product.update === "function") {
+        updates.push(product.update(patch));
+      } else if (product.id) {
+        updates.push(Product.update(patch, { where: { id: product.id } }));
+      }
     }
   }
 
@@ -90,116 +72,87 @@ export async function checkAndCleanProductV2Expiration(products) {
 }
 
 /**
- * Maps a ProductV2 row (with its productImages include) into the flat
- * shape the frontend (ProductCard.jsx, cart flow, etc.) expects. Fields
- * that no longer exist on ProductV2 (variant pricing, per-language price
- * overrides, custom badges baked into the product itself) are omitted —
- * those are handled elsewhere (seller-level product_badges) or don't
- * apply to the new schema.
+ * Normalizes a row from the `products` table for consistent frontend display.
  */
-export function normalizeProductV2(row, { lang = "ku" } = {}) {
+export function normalizeProduct(row) {
   const p = row?.toJSON ? row.toJSON() : row;
   if (!p) return p;
 
-  const title = p.title || {};
-  const titleKu = title.ku || "";
-  const titleAr = title.ar || "";
+  const rawImages = Array.isArray(p.images) ? p.images : [];
+  const productImages =
+    Array.isArray(p.productImages) && p.productImages.length > 0
+      ? p.productImages
+      : rawImages.map((img, idx) => ({
+          image_key:
+            typeof img === "string" ? img : img?.image_key || img?.thumb_key,
+          thumb_key:
+            typeof img === "string" ? img : img?.thumb_key || img?.image_key,
+          is_main: idx === 0,
+        }));
 
-  const discount = p.discount || null;
-  const cashback = p.cashback || null;
-  const freeDelivery = p.free_delivery || null;
+  const mainImage = productImages.find((i) => i.is_main) || productImages[0];
+  const thumbKey = mainImage?.thumb_key || mainImage?.image_key || null;
 
-  const discountActive = isPromoCurrentlyActive(discount);
-  const cashbackActive = isPromoCurrentlyActive(cashback);
-  const freeDeliveryActive = isPromoCurrentlyActive(freeDelivery);
-
-  const retailPrice = Number(p.retail_price) || 0;
-  const discountPercent =
-    discountActive && discount?.type === "percent"
-      ? Number(discount.value) || 0
-      : 0;
-  const discountFixed =
-    discountActive && discount?.type === "fixed"
-      ? Number(discount.value) || 0
-      : 0;
-
-  const images = Array.isArray(p.images) ? p.images : [];
-  const productImages = Array.isArray(p.productImages)
-    ? p.productImages
-    : images.map((url, idx) => ({
-        image_key: url,
-        thumb_key: url,
-        is_main: idx === 0,
-      }));
-
-  const isWholesaleOnly = !!p.is_wholesale_only;
-  const stock = Number.isFinite(Number(p.stock_quantity))
-    ? Number(p.stock_quantity)
-    : 0;
-  // Wholesale-only items aren't tracked by unit stock the same way —
-  // don't treat stock 0 as "out of stock" for them.
-  const isAvailable =
-    p.is_published !== false && (isWholesaleOnly || stock > 0);
-
-  const variantR = Array.isArray(p.variant_r) ? p.variant_r : [];
-  const variantRAr = Array.isArray(p.variant_r_ar) ? p.variant_r_ar : [];
-  const hasVariantPrices = variantR.length > 0 || variantRAr.length > 0;
+  const variantPrices = Array.isArray(p.variantPrices) ? p.variantPrices : [];
+  const variantPricesAr = Array.isArray(p.variantPricesAr)
+    ? p.variantPricesAr
+    : [];
+  const hasVariants = variantPrices.length > 0 || variantPricesAr.length > 0;
 
   return {
     id: p.id,
     seller_id: p.seller_id,
-    titleKu,
-    titleAr,
     language: p.language || "both",
-    description: p.description || null,
-    custom_inputs: p.custom_inputs || null,
-    barcode: p.barcode || null,
-    sku: p.sku || null,
+    titleKu: p.titleKu || "",
+    titleAr: p.titleAr || "",
+    descriptionKu: p.descriptionKu || "",
+    descriptionAr: p.descriptionAr || "",
     category: p.category || null,
     subcategory: p.subcategory || null,
+    category_id: p.category_id || null,
+    subcategory_id: p.subcategory_id || null,
 
-    hasRealPrice: !hasVariantPrices,
-    realPrice: retailPrice,
-    priceType: p.price_type || "iqd",
+    realPrice: Number(p.realPrice) || 0,
+    priceType: p.priceType || "USD",
+    hasRealPrice: p.hasRealPrice !== false && !hasVariants,
 
-    // ڤاریانتەکانی تاک‌فرۆشی — بە زمانی کوردی و عەرەبی
-    variantPrices: variantR,
-    variantPricesAr: variantRAr,
+    variantPrices,
+    variantPricesAr,
+    options: p.options || null,
+    variants: p.variants || null,
+    colors: p.colors || [],
+    sizes: p.sizes || [],
+    customInputs: p.customInputs || null,
+    customInputsAr: p.customInputsAr || null,
 
-    // ڤاریانتەکانی جوملە (وەسفی دەقی + مەودای بڕ)
-    variant_w: Array.isArray(p.variant_w) ? p.variant_w : [],
+    hasDiscount: !!p.hasDiscount,
+    discount_percent: p.hasDiscount ? Number(p.discount_percent) || 0 : 0,
+    discountType: p.discountType || "timer",
+    discountStartDate: p.discountStartDate || null,
+    discountEndDate: p.discountEndDate || null,
 
-    video_links: Array.isArray(p.video_links) ? p.video_links : [],
-    views: Number.isFinite(Number(p.views)) ? Number(p.views) : 0,
+    free_delivery: !!p.free_delivery,
+    freeDeliveryStartDate: p.freeDeliveryStartDate || null,
+    freeDeliveryEndDate: p.freeDeliveryEndDate || null,
 
-    hasDiscount: discountActive && (discountPercent > 0 || discountFixed > 0),
-    discount_percent: discountPercent,
-    discount_fixed: discountFixed,
-    discountType: discount?.mode === "timer" ? "timer" : "running",
-    discountStartDate: discount?.start_at || null,
-    discountEndDate: discount?.end_at || null,
+    hasCashback: !!p.hasCashback,
+    cashbackType: p.cashbackType || "percentage",
+    cashbackValue: p.hasCashback ? Number(p.cashbackValue) || 0 : 0,
+    cashbackStartDate: p.cashbackStartDate || null,
+    cashbackEndDate: p.cashbackEndDate || null,
+    cashbackMinOrderAmount: p.cashbackMinOrderAmount || null,
 
-    free_delivery: freeDeliveryActive,
-    freeDeliveryStartDate: freeDelivery?.start_at || null,
-    freeDeliveryEndDate: freeDelivery?.end_at || null,
-
-    hasCashback: cashbackActive,
-    cashbackType: cashback?.value_type || null,
-    cashbackValue: cashbackActive ? Number(cashback?.value) || 0 : 0,
-    cashbackCurrency: cashback?.currency || null,
-
+    stock: p.stock ?? null,
+    isAvailable: p.isAvailable !== false,
+    views: Number(p.views) || 0,
     images: productImages,
     productImages,
-
-    stock: isWholesaleOnly ? null : stock,
-    isAvailable,
-    is_wholesale_only: isWholesaleOnly,
-    wholesale_price:
-      p.wholesale_price != null ? Number(p.wholesale_price) : null,
-    min_wholesale_quantity: p.min_wholesale_quantity || 1,
-    wholesale_tier_pricing: p.wholesale_tier_pricing || null,
-
-    extra_attributes: p.extra_attributes || null,
-    sort_order: p.sort_order || 0,
+    thumb_key: thumbKey,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
   };
 }
+
+// Backward-compatibility aliases
+export const checkAndCleanProductV2Expiration = checkAndCleanProductExpiration;
+export const normalizeProductV2 = normalizeProduct;

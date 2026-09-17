@@ -1,6 +1,6 @@
-// backend/routes/seller/sellersCustomer.js
 import { Router } from "express";
-import ProductV2 from "../../database/productv2.js";
+import Product from "../../database/products.js";
+import ProductImage from "../../database/productImages.js";
 import SellerV2 from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
@@ -9,9 +9,8 @@ import ShopSection from "../../database/ShopSection.js";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import { Op } from "sequelize";
 import {
-  checkAndCleanProductV2Expiration,
-  normalizeProductV2,
-  isPromoCurrentlyActive,
+  checkAndCleanProductExpiration,
+  normalizeProduct,
 } from "../../utils/productV2Promos.js";
 import {
   processRedLineData,
@@ -52,49 +51,11 @@ const DEFAULT_SECTION_CONFIGS = {
     items: [],
   },
   discount: {},
-  // category_keys: up to 6 category keys the seller picked to showcase.
-  // Empty means "not configured yet" — the customer page falls back to
-  // the seller's first 6 categories.
   featured_categories: { category_keys: [] },
 };
 
-const PRODUCT_V2_ATTRIBUTES = [
-  "id",
-  "seller_id",
-  "title",
-  "description",
-  "custom_inputs",
-  "language",
-  "barcode",
-  "sku",
-  "category",
-  "subcategory",
-  "cost_price",
-  "retail_price",
-  "price_type",
-  "variant_r",
-  "variant_r_ar",
-  "is_wholesale_only",
-  "wholesale_price",
-  "min_wholesale_quantity",
-  "wholesale_tier_pricing",
-  "variant_w",
-  "discount",
-  "cashback",
-  "free_delivery",
-  "stock_quantity",
-  "low_stock_alert",
-  "images",
-  "video_links",
-  "views",
-  "extra_attributes",
-  "is_published",
-  "sort_order",
-];
-
 function normalizeBrandItems(items) {
   if (!Array.isArray(items)) return [];
-
   return items
     .filter((item) => item?.isActive !== false && item?.logo)
     .map((item, index) => ({
@@ -144,9 +105,7 @@ async function getShopSections(sellerId) {
   const sectionRows = await ShopSection.findAll({
     where: {
       seller_id: sellerId,
-      section_key: {
-        [Op.in]: SECTION_KEYS,
-      },
+      section_key: { [Op.in]: SECTION_KEYS },
     },
     attributes: ["section_key", "is_visible", "config"],
   });
@@ -162,25 +121,16 @@ async function getShopSections(sellerId) {
 
     if (!row) {
       if (key === "brands") return null;
-      return {
-        section_key: key,
-        is_visible: true,
-        config: defaultConfig,
-      };
+      return { section_key: key, is_visible: true, config: defaultConfig };
     }
 
     if (key === "brands") {
       const activeItems = normalizeBrandItems(row.config?.items);
       if (row.is_visible !== true || activeItems.length === 0) return null;
-
       return {
         section_key: key,
         is_visible: true,
-        config: {
-          ...defaultConfig,
-          ...(row.config || {}),
-          items: activeItems,
-        },
+        config: { ...defaultConfig, ...(row.config || {}), items: activeItems },
       };
     }
 
@@ -201,10 +151,7 @@ async function getShopSections(sellerId) {
     return {
       section_key: key,
       is_visible: row.is_visible,
-      config: {
-        ...defaultConfig,
-        ...(row.config || {}),
-      },
+      config: { ...defaultConfig, ...(row.config || {}) },
     };
   }).filter(Boolean);
 }
@@ -215,7 +162,6 @@ router.get(
   detectSeller,
   async (req, res) => {
     const { shopName } = req.params;
-
     try {
       let role = false;
       let sellerShop = null;
@@ -259,7 +205,6 @@ router.get(
       const sellerPlanRecord = await SellerPlan.findOne({
         where: { seller_id: seller.id },
       });
-
       if (!sellerPlanRecord) {
         return res.status(200).json({
           success: true,
@@ -275,80 +220,6 @@ router.get(
             shop_image: seller.shop_image,
           },
         });
-      }
-
-      const plan = await Plan.findByPk(sellerPlanRecord.plan_id, {
-        attributes: ["name"],
-      });
-      const planName = plan ? plan.name : "";
-
-      if (
-        planName === "free_seller" ||
-        planName === "Free" ||
-        sellerPlanRecord.plan_id === 1
-      ) {
-        return res.status(200).json({
-          success: true,
-          error: false,
-          isSeller: role,
-          shopName: sellerShop,
-          yourShopClose: true,
-          closeReason: "free_plan",
-          seller: {
-            id: seller.id,
-            name: seller.name,
-            shop_name: seller.shop_name,
-            shop_image: seller.shop_image,
-          },
-        });
-      }
-
-      if (planName === "trial_seller" || sellerPlanRecord.plan_id === 9) {
-        const { baghdadFull: now } = getCurrentTimeBaghdad();
-        const endDate = dayjs(sellerPlanRecord.end_date).tz("Asia/Baghdad");
-        if (now.isAfter(endDate) && now.diff(endDate, "day") > 1) {
-          return res.status(200).json({
-            success: true,
-            error: false,
-            isSeller: role,
-            shopName: sellerShop,
-            yourShopClose: true,
-            closeReason: "trial_expired",
-            seller: {
-              id: seller.id,
-              name: seller.name,
-              shop_name: seller.shop_name,
-              shop_image: seller.shop_image,
-            },
-          });
-        }
-      }
-
-      if (
-        planName !== "free_seller" &&
-        planName !== "Free" &&
-        planName !== "trial_seller" &&
-        sellerPlanRecord.plan_id !== 1 &&
-        sellerPlanRecord.plan_id !== 9
-      ) {
-        const { baghdadFull: now } = getCurrentTimeBaghdad();
-        const endDate = dayjs(sellerPlanRecord.end_date).tz("Asia/Baghdad");
-        if (now.isAfter(endDate) && now.diff(endDate, "day") > 1) {
-          return res.status(200).json({
-            success: true,
-            error: false,
-            isSeller: role,
-            shopName: sellerShop,
-            yourShopClose: true,
-            closeReason: "plan_expired",
-            seller: {
-              id: seller.id,
-              name: seller.name,
-              shop_name: seller.shop_name,
-              shop_image: seller.shop_image,
-            },
-          });
-        }
       }
 
       return res.status(200).json({
@@ -374,11 +245,9 @@ router.get(
       });
     } catch (error) {
       console.error("[SHOP CATEGORY] ERROR:", error.message);
-      return res.status(500).json({
-        success: false,
-        error: true,
-        message: "Server error",
-      });
+      return res
+        .status(500)
+        .json({ success: false, error: true, message: "Server error" });
     }
   },
 );
@@ -413,134 +282,19 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     }
 
     const sellerId = seller.id;
-
-    let sellerPlanRecord = await SellerPlan.findOne({
+    const sellerPlanRecord = await SellerPlan.findOne({
       where: { seller_id: sellerId },
     });
-
-    if (!sellerPlanRecord) {
-      return res.status(200).json({
-        success: true,
-        error: false,
-        isSeller: role,
-        shopName: sellerShop || null,
-        yourShopClose: true,
-        closeReason: "no_plan",
-        message: "This shop is currently closed",
-        seller: {
-          id: seller.id,
-          name: seller.name,
-          shop_name: seller.shop_name,
-          shop_image: seller.shop_image,
-        },
-      });
-    }
-
-    const plan = await Plan.findByPk(sellerPlanRecord.plan_id);
-    const planName = plan ? plan.name : "";
-
-    if (
-      planName === "free_seller" ||
-      planName === "Free" ||
-      sellerPlanRecord.plan_id === 1
-    ) {
-      return res.status(200).json({
-        success: true,
-        error: false,
-        isSeller: role,
-        shopName: sellerShop || null,
-        yourShopClose: true,
-        closeReason: "free_plan",
-        message: "This shop is currently closed",
-        seller: {
-          id: seller.id,
-          name: seller.name,
-          shop_name: seller.shop_name,
-          shop_image: seller.shop_image,
-        },
-      });
-    }
-
-    if (planName === "trial_seller" || sellerPlanRecord.plan_id === 9) {
-      const { baghdadFull: currentBaghdad } = getCurrentTimeBaghdad();
-      const endDateBaghdad = dayjs(sellerPlanRecord.end_date).tz(
-        "Asia/Baghdad",
-      );
-      const daysDiff = currentBaghdad.diff(endDateBaghdad, "day");
-
-      if (currentBaghdad.isAfter(endDateBaghdad) && daysDiff > 1) {
-        return res.status(200).json({
-          success: true,
-          error: false,
-          isSeller: role,
-          shopName: sellerShop || null,
-          yourShopClose: true,
-          closeReason: "trial_expired",
-          message: "This shop is currently closed",
-          seller: {
-            id: seller.id,
-            name: seller.name,
-            shop_name: seller.shop_name,
-            shop_image: seller.shop_image,
-          },
-        });
-      }
-    }
-
-    if (
-      planName !== "free_seller" &&
-      planName !== "Free" &&
-      planName !== "trial_seller" &&
-      sellerPlanRecord.plan_id !== 1 &&
-      sellerPlanRecord.plan_id !== 9
-    ) {
-      const { baghdadFull: currentBaghdad } = getCurrentTimeBaghdad();
-      const endDateBaghdad = dayjs(sellerPlanRecord.end_date).tz(
-        "Asia/Baghdad",
-      );
-      const daysDiff = currentBaghdad.diff(endDateBaghdad, "day");
-
-      if (currentBaghdad.isAfter(endDateBaghdad) && daysDiff > 1) {
-        return res.status(200).json({
-          success: true,
-          error: false,
-          isSeller: role,
-          shopName: sellerShop || null,
-          yourShopClose: true,
-          closeReason: "plan_expired",
-          message: "This shop is currently closed",
-          seller: {
-            id: seller.id,
-            name: seller.name,
-            shop_name: seller.shop_name,
-            shop_image: seller.shop_image,
-          },
-        });
-      }
-    }
+    const plan = sellerPlanRecord
+      ? await Plan.findByPk(sellerPlanRecord.plan_id)
+      : null;
 
     const allOffers = await SellerOffer.findAll({
       where: {
         seller_id: sellerId,
         is_active: true,
-        type_offer: {
-          [Op.ne]: "discount_delivery",
-        },
+        type_offer: { [Op.ne]: "discount_delivery" },
       },
-      attributes: [
-        "id",
-        "titleKu",
-        "titleAr",
-        "cover_image",
-        "type_offer",
-        "start_date",
-        "end_date",
-        "language",
-        "discount_price_type",
-        "discount_price",
-        "discount_percent",
-        "discount_or_free_delivery",
-      ],
     });
 
     const { baghdadFull: currentBaghdad } = getCurrentTimeBaghdad();
@@ -565,16 +319,24 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     const productOffset = parseInt(req.query.productOffset) || 0;
 
     const { count: totalProducts, rows: rawProducts } =
-      await ProductV2.findAndCountAll({
-        where: { seller_id: sellerId, is_published: true },
-        attributes: PRODUCT_V2_ATTRIBUTES,
+      await Product.findAndCountAll({
+        where: { seller_id: sellerId, isAvailable: true },
+        include: [
+          {
+            model: ProductImage,
+            as: "productImages",
+            attributes: ["image_key", "thumb_key", "is_main"],
+            required: false,
+          },
+        ],
         limit: productLimit,
         offset: productOffset,
         order: [["id", "DESC"]],
+        distinct: true,
       });
 
-    const cleanedRows = await checkAndCleanProductV2Expiration(rawProducts);
-    let products = cleanedRows.map((row) => normalizeProductV2(row));
+    const cleanedRows = await checkAndCleanProductExpiration(rawProducts);
+    const products = cleanedRows.map((row) => normalizeProduct(row));
     const hasMoreProducts = productOffset + productLimit < totalProducts;
 
     let redLineKu = null;
@@ -586,7 +348,6 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       redLineKu = kuResult.data;
       needsCleanup.ku = kuResult.needsCleanup;
     }
-
     if (seller.red_lineAr) {
       const arResult = processRedLineData(seller.red_lineAr);
       redLineAr = arResult.data;
@@ -602,10 +363,8 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
 
     let redLine = null;
     if (redLineKu || redLineAr) {
-      let language = "both";
-      if (redLineKu && !redLineAr) language = "kurdish";
-      else if (!redLineKu && redLineAr) language = "arabic";
-
+      const language =
+        redLineKu && redLineAr ? "both" : redLineKu ? "kurdish" : "arabic";
       const kuStatus = redLineKu
         ? getRedLineStatus(redLineKu.start_time, redLineKu.end_time)
         : null;
@@ -683,18 +442,24 @@ router.get("/more-products/:sellerId", async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 30, 100);
     const offset = parseInt(req.query.offset) || 0;
 
-    const { count: total, rows: rawProducts } = await ProductV2.findAndCountAll(
-      {
-        where: { seller_id: sellerId, is_published: true },
-        attributes: PRODUCT_V2_ATTRIBUTES,
-        limit,
-        offset,
-        order: [["id", "DESC"]],
-      },
-    );
+    const { count: total, rows: rawProducts } = await Product.findAndCountAll({
+      where: { seller_id: sellerId, isAvailable: true },
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "thumb_key", "is_main"],
+          required: false,
+        },
+      ],
+      limit,
+      offset,
+      order: [["id", "DESC"]],
+      distinct: true,
+    });
 
-    const cleanedRows = await checkAndCleanProductV2Expiration(rawProducts);
-    const products = cleanedRows.map((row) => normalizeProductV2(row));
+    const cleanedRows = await checkAndCleanProductExpiration(rawProducts);
+    const products = cleanedRows.map((row) => normalizeProduct(row));
 
     return res.status(200).json({
       success: true,
@@ -704,10 +469,7 @@ router.get("/more-products/:sellerId", async (req, res) => {
     });
   } catch (error) {
     console.error("Error loading more products:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
@@ -719,22 +481,28 @@ router.get("/products-by-category/:sellerId", async (req, res) => {
     const offset = parseInt(req.query.offset) || 0;
     const { category, subcategory } = req.query;
 
-    const whereClause = { seller_id: sellerId, is_published: true };
+    const whereClause = { seller_id: sellerId, isAvailable: true };
     if (category) whereClause.category = category;
     if (subcategory) whereClause.subcategory = subcategory;
 
-    const { count: total, rows: rawProducts } = await ProductV2.findAndCountAll(
-      {
-        where: whereClause,
-        attributes: PRODUCT_V2_ATTRIBUTES,
-        limit,
-        offset,
-        order: [["id", "DESC"]],
-      },
-    );
+    const { count: total, rows: rawProducts } = await Product.findAndCountAll({
+      where: whereClause,
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "thumb_key", "is_main"],
+          required: false,
+        },
+      ],
+      limit,
+      offset,
+      order: [["id", "DESC"]],
+      distinct: true,
+    });
 
-    const cleanedRows = await checkAndCleanProductV2Expiration(rawProducts);
-    const products = cleanedRows.map((row) => normalizeProductV2(row));
+    const cleanedRows = await checkAndCleanProductExpiration(rawProducts);
+    const products = cleanedRows.map((row) => normalizeProduct(row));
 
     return res.status(200).json({
       success: true,
@@ -744,10 +512,7 @@ router.get("/products-by-category/:sellerId", async (req, res) => {
     });
   } catch (error) {
     console.error("Error loading products by category:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
@@ -762,9 +527,16 @@ router.get("/product-for-cart/:productId", async (req, res) => {
         .json({ success: false, message: "Invalid product ID" });
     }
 
-    const product = await ProductV2.findOne({
-      where: { id, is_published: true },
-      attributes: PRODUCT_V2_ATTRIBUTES,
+    const product = await Product.findOne({
+      where: { id, isAvailable: true },
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "thumb_key", "is_main"],
+          required: false,
+        },
+      ],
     });
 
     if (!product) {
@@ -775,7 +547,7 @@ router.get("/product-for-cart/:productId", async (req, res) => {
 
     return res
       .status(200)
-      .json({ success: true, product: normalizeProductV2(product) });
+      .json({ success: true, product: normalizeProduct(product) });
   } catch (error) {
     console.error("Error fetching product for cart:", error);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -801,21 +573,25 @@ router.get("/shop-discounts/:shopName", async (req, res) => {
         .json({ success: false, error: true, message: "Shop not found" });
     }
 
-    const rawProducts = await ProductV2.findAll({
-      where: { seller_id: seller.id, is_published: true },
-      attributes: PRODUCT_V2_ATTRIBUTES,
+    const rawProducts = await Product.findAll({
+      where: {
+        seller_id: seller.id,
+        isAvailable: true,
+        [Op.or]: [{ hasDiscount: true }, { free_delivery: true }],
+      },
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "thumb_key", "is_main"],
+          required: false,
+        },
+      ],
       order: [["id", "DESC"]],
     });
 
-    const cleanedRows = await checkAndCleanProductV2Expiration(rawProducts);
-    const allProducts = cleanedRows.map((row) => normalizeProductV2(row));
-    // Only keep products that actually have an active discount or active
-    // free delivery — the DB can't filter this directly since both live
-    // inside JSON bundles, so we filter the normalized (already
-    // active/inactive resolved) rows here instead.
-    const products = allProducts.filter(
-      (p) => p.hasDiscount || p.free_delivery,
-    );
+    const cleanedRows = await checkAndCleanProductExpiration(rawProducts);
+    const products = cleanedRows.map((row) => normalizeProduct(row));
 
     const now = new Date();
     const in24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -841,7 +617,6 @@ router.get("/shop-discounts/:shopName", async (req, res) => {
     const freeDeliveryOnly = [];
 
     for (const p of products) {
-      if (!p.hasDiscount && !p.free_delivery) continue;
       if (isExpiringSoon(p)) {
         expiringSoon.push(p);
       } else if (p.hasDiscount && p.free_delivery) {

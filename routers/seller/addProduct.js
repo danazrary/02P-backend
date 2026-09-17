@@ -1,15 +1,12 @@
-// backend/routes/seller/addProduct.js
 import express from "express";
 import { v4 as uuidv4 } from "uuid";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
-import SellerV2 from "../../database/sellerv2.js";
+import Seller from "../../database/seller.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { uploadRateLimiter } from "../../middlewares/rateLimitReq.js";
-import ProductV2 from "../../database/productv2.js";
-import { requireSellerOrStaff } from "../../middlewares/verifySellerOrStaff.js";
 import {
   checkStorageLimit,
   incrementSellerStorage,
@@ -17,10 +14,12 @@ import {
 } from "../../middlewares/checkStorageLimit.js";
 import {
   createR2Multer,
+  buildR2Key,
+  uploadToR2,
   uploadColorImageToR2,
   uploadToR2WithThumb,
-  deleteMultipleFromR2,
   deleteFromR2,
+  deleteMultipleFromR2,
   isLocalEnv,
 } from "../../utils/r2.js";
 import getTikTokEmbedUrl, {
@@ -29,10 +28,13 @@ import getTikTokEmbedUrl, {
 import { getProductImageRecordBytes } from "../../utils/sellerStorageUsage.js";
 import { notifyGoogle } from "../../utils/googleIndexing.js";
 import { parseOptionalCashbackDate } from "../../utils/cashbackDates.js";
-import { generateUniqueProductV2Id } from "../../utils/generateProductV2Id.js";
 
 const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
 
+/**
+ * Build the canonical product URL for Google Indexing API notifications.
+ * shopName may come from req.user JWT (fast) or a fresh DB lookup (reliable).
+ */
 function productUrl(shopName, productId) {
   return `https://${shopName}.${BASE_DOMAIN}/p/${productId}`;
 }
@@ -51,11 +53,7 @@ const ADVANCED_PLAN_ALIASES = new Set([
 ]);
 const R2_PUBLIC_URL = (process.env.R2_PUBLIC_URL || "").replace(/\/$/, "");
 
-const upload = createR2Multer({
-  fileSize: 5 * 1024 * 1024,
-  files: 10,
-}).fields([{ name: "images", maxCount: 8 }]);
-
+/** Accept product images + up to 15 per-color images. */
 const productUploadMiddleware = createR2Multer({
   fileSize: MAX_PRODUCT_IMAGE_BYTES,
   files: 20,
@@ -73,30 +71,37 @@ const productUploadMiddleware = createR2Multer({
 
 function productUpload(req, res, next) {
   productUploadMiddleware(req, res, (err) => {
-    if (!err) return next();
+    if (!err) {
+      next();
+      return;
+    }
 
     if (err.code === "LIMIT_FILE_SIZE") {
-      return res.status(413).json({
+      res.status(413).json({
         success: false,
         error: true,
-        message: "Each product image must be 2MB or smaller.",
+        message:
+          "Each product image must be 2MB or smaller after frontend compression.",
       });
+      return;
     }
 
     if (err.code === "LIMIT_FILE_COUNT") {
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
         error: true,
         message: "You can upload up to 20 product images per request.",
       });
+      return;
     }
 
     if (err.code === "LIMIT_UNEXPECTED_FILE") {
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
         error: true,
         message: "Unexpected product image field in upload request.",
       });
+      return;
     }
 
     next(err);
@@ -120,6 +125,7 @@ function extractDynamicVariantOptions(row) {
   if (!row || typeof row !== "object" || Array.isArray(row)) return {};
 
   const dynamicOptions = {};
+
   const optionsObject =
     row.options &&
     typeof row.options === "object" &&
@@ -208,6 +214,7 @@ function normalizeOptionsPayload(rawOptions) {
           if (Object.keys(text).length === 0) return null;
 
           const normalized = { text };
+          // Only the first option group (index 0) may have images
           if (
             groupIndex === 0 &&
             typeof value?.image === "string" &&
@@ -412,6 +419,18 @@ function parseOptionalDecimal(value, fieldName) {
   return parsed;
 }
 
+function parseOptionalDate(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    const err = new Error(`Invalid ${fieldName}`);
+    err.statusCode = 400;
+    err.clientMessage = `${fieldName} must be a valid date.`;
+    throw err;
+  }
+  return parsed;
+}
+
 function normalizeCashbackPayload(body = {}) {
   const hasCashback = parseBooleanInput(body.hasCashback);
 
@@ -427,6 +446,13 @@ function normalizeCashbackPayload(body = {}) {
   }
 
   const cashbackType = body.cashbackType || "percentage";
+  if (!["percentage", "fixed"].includes(cashbackType)) {
+    const err = new Error("Invalid cashbackType");
+    err.statusCode = 400;
+    err.clientMessage = "cashbackType must be percentage or fixed.";
+    throw err;
+  }
+
   const cashbackValue = parseOptionalDecimal(
     body.cashbackValue,
     "cashbackValue",
@@ -435,6 +461,21 @@ function normalizeCashbackPayload(body = {}) {
     const err = new Error("Missing cashbackValue");
     err.statusCode = 400;
     err.clientMessage = "cashbackValue is required when cashback is enabled.";
+    throw err;
+  }
+  if (
+    cashbackType === "percentage" &&
+    (cashbackValue < 1 || cashbackValue > 100)
+  ) {
+    const err = new Error("Invalid cashback percentage");
+    err.statusCode = 400;
+    err.clientMessage = "Percentage cashback must be between 1 and 100.";
+    throw err;
+  }
+  if (cashbackType === "fixed" && cashbackValue <= 0) {
+    const err = new Error("Invalid fixed cashback");
+    err.statusCode = 400;
+    err.clientMessage = "Fixed cashback must be positive.";
     throw err;
   }
 
@@ -446,11 +487,27 @@ function normalizeCashbackPayload(body = {}) {
     body.cashbackEndDate,
     "cashbackEndDate",
   );
+  if (
+    cashbackStartDate &&
+    cashbackEndDate &&
+    cashbackEndDate.getTime() <= cashbackStartDate.getTime()
+  ) {
+    const err = new Error("Invalid cashback date range");
+    err.statusCode = 400;
+    err.clientMessage = "cashbackEndDate must be after cashbackStartDate.";
+    throw err;
+  }
 
   const cashbackMinOrderAmount = parseOptionalDecimal(
     body.cashbackMinOrderAmount,
     "cashbackMinOrderAmount",
   );
+  if (cashbackMinOrderAmount !== null && cashbackMinOrderAmount < 0) {
+    const err = new Error("Invalid cashbackMinOrderAmount");
+    err.statusCode = 400;
+    err.clientMessage = "cashbackMinOrderAmount must be zero or greater.";
+    throw err;
+  }
 
   return {
     hasCashback: true,
@@ -461,7 +518,6 @@ function normalizeCashbackPayload(body = {}) {
     cashbackMinOrderAmount,
   };
 }
-
 function normalizePlanValue(planName) {
   return String(planName || "")
     .trim()
@@ -482,7 +538,10 @@ function isFreeSellerPlan(plan) {
 }
 
 function getProductFieldLimit(plan) {
-  if (isFreeSellerPlan(plan)) return 2;
+  // Free plan (ID 30) - max 2 options
+  if (isFreeSellerPlan(plan)) {
+    return 2;
+  }
 
   const normalizedPlan = normalizePlanValue(plan?.name);
   const compactPlan = normalizedPlan.replace(/\s+/g, "");
@@ -494,6 +553,11 @@ function getProductFieldLimit(plan) {
   return isAdvancedPlan ? 15 : 5;
 }
 
+/**
+ * Returns max allowed price combinations for the plan:
+ *   Basic/Pro  -> 25   (5�5)
+ *   Plus/Business Pro -> 225 (15�15)
+ */
 function getMaxVariantPriceCombinations(plan) {
   return getProductFieldLimit(plan) === 15 ? 225 : 125;
 }
@@ -509,21 +573,23 @@ function validateVariantPriceCombinations(plan, variantPrices) {
 }
 
 function getProductImageLimits(plan) {
+  // Free plan (ID 30) - max 3 main images, no color/option images
   if (isFreeSellerPlan(plan)) {
     return {
       mainImages: 3,
       colorImages: 0,
       totalImages: 3,
-      maxOptionsValues: 5,
+      maxOptionsValues: 5, // Max 5 values per option
     };
   }
 
   const colorImages = getProductFieldLimit(plan);
+
   return {
     mainImages: 5,
     colorImages,
     totalImages: colorImages + 5,
-    maxOptionsValues: 0,
+    maxOptionsValues: 0, // No limit for paid plans
   };
 }
 
@@ -568,6 +634,30 @@ function validateProductImageUploadLimits({
 
   if (totalImages > limits.totalImages) {
     const err = new Error("Total image limit exceeded");
+    err.statusCode = 400;
+    err.clientMessage = `Your current seller plan allows up to ${limits.totalImages} product images in total.`;
+    throw err;
+  }
+
+  if (existingMainImages + mainImages > limits.mainImages) {
+    const err = new Error("Final main image limit exceeded");
+    err.statusCode = 400;
+    err.clientMessage = `Your current seller plan allows up to ${limits.mainImages} main product images.`;
+    throw err;
+  }
+
+  if (existingColorImages + colorImages > limits.colorImages) {
+    const err = new Error("Final color image limit exceeded");
+    err.statusCode = 400;
+    err.clientMessage = `Your current seller plan allows up to ${limits.colorImages} color images.`;
+    throw err;
+  }
+
+  if (
+    existingMainImages + existingColorImages + totalImages >
+    limits.totalImages
+  ) {
+    const err = new Error("Final total image limit exceeded");
     err.statusCode = 400;
     err.clientMessage = `Your current seller plan allows up to ${limits.totalImages} product images in total.`;
     throw err;
@@ -664,6 +754,7 @@ async function uploadFirstOptionGroupImagesToR2({
     const optionSegment = normalizeColorSegment(valueText);
     const key = `shops/${sellerId}/products/${productId}/colors/${optionSegment}-${uuidv4()}.webp`;
 
+    // Upload first-group option image using the same color-image compression flow.
     const { sizeBytes } = await uploadColorImageToR2(optionFile.buffer, key);
     uploadedBytes += sizeBytes;
     firstGroupValues[valueIndex].image = toPublicR2Url(key);
@@ -689,7 +780,10 @@ function validateProductFieldLimits({
   ];
 
   const exceededField = counts.find(({ count }) => count > fieldLimit);
-  if (!exceededField) return fieldLimit;
+
+  if (!exceededField) {
+    return fieldLimit;
+  }
 
   const planLimitError = new Error(
     `Plan field limit exceeded for ${exceededField.label}`,
@@ -727,9 +821,7 @@ function validateProductOptionsLimits(plan, options = []) {
   }
 }
 
-// ==========================================
-// POST /add-product
-// ==========================================
+// Route to create product
 router.post(
   "/add-product",
   jwtVerifySellerToken,
@@ -738,8 +830,13 @@ router.post(
   checkStorageLimit,
   async (req, res) => {
     try {
-      const id = req.user?.id || req.user?.seller_id;
+      const tRequest = Date.now();
+      const { id } = req.user;
+      console.log(
+        `?? Add-product  seller ${id} env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
+      );
 
+      // Check seller plan and product limit
       const sellerPlan = await SellerPlan.findOne({
         where: { seller_id: id },
       });
@@ -753,6 +850,8 @@ router.post(
       }
 
       const plan = await Plan.findByPk(sellerPlan.plan_id);
+
+      // Check if free plan - don't allow adding products
       if (
         sellerPlan.plan_id === 1 ||
         plan?.name === "free_seller" ||
@@ -767,6 +866,7 @@ router.post(
       }
 
       const maxProducts = plan ? plan.max_products : 0;
+
       const currentProductCount = await Product.count({
         where: { seller_id: id },
       });
@@ -790,15 +890,7 @@ router.post(
         descriptionAr,
         youtubeLinks,
         realPrice,
-        cost_price,
-        wholesale_price,
-        min_wholesale_quantity,
-        is_wholesale_only,
-        wholesale_tier_pricing,
-        sale_type,
         priceType,
-        barcode,
-        sku,
         options: optionsBody,
         variantPrices,
         variantPricesAr,
@@ -812,6 +904,13 @@ router.post(
         isAvailable: isAvailableBody,
       } = req.body;
 
+      console.log(
+        "[add-product] req.body:",
+        req.body,
+        "--------------------------",
+      );
+
+      // Validate stock
       let parsedStock = null;
       if (stockBody !== undefined && stockBody !== "" && stockBody !== null) {
         const rawStock = Number(stockBody);
@@ -825,15 +924,19 @@ router.post(
         parsedStock = rawStock;
       }
 
+      // Validate isAvailable
       const isAvailablePost =
         isAvailableBody === "false" || isAvailableBody === false ? false : true;
 
       const cashbackPayload = normalizeCashbackPayload(req.body);
+
       const parsedYoutubeLinks = youtubeLinks ? JSON.parse(youtubeLinks) : [];
       const normalizedYoutubeLinks =
         await normalizeVideoLinks(parsedYoutubeLinks);
 
       const isRealPricePost = hasRealPrice === "true" || hasRealPrice === true;
+
+      // Parse colors [{nameKu, nameAr}] and sizes [{nameKu, nameAr}]
       const rawColors = colorsBody ? JSON.parse(colorsBody) : [];
       const parsedSizes = sizesBody
         ? JSON.parse(sizesBody).filter((s) => {
@@ -849,7 +952,6 @@ router.post(
         : [];
       const parsedOptionsInput = parseOptionsInput(optionsBody);
       const parsedOptions = parsedOptionsInput.rows;
-
       validateUploadedOptionImageIndexes({
         files: req.files,
         options: parsedOptions,
@@ -861,6 +963,7 @@ router.post(
         colorCount: rawColors.length,
       });
 
+      // Parse variant price combinations
       const parsedVariantPricesInput = parseVariantPricesInput(
         variantPrices,
         "variantPrices",
@@ -888,6 +991,7 @@ router.post(
         validateVariantPriceCombinations(plan, parsedVariantPricesAr);
       }
 
+      // Enforce: base price is not allowed when colors or sizes are present
       const hasColorsOrSizes =
         rawColors.some((c) => (c.nameKu || c.nameAr || "").trim()) ||
         parsedSizes.length > 0;
@@ -913,33 +1017,22 @@ router.post(
               )
             : null;
 
-      let parsedTiers = null;
-      if (wholesale_tier_pricing) {
-        try {
-          parsedTiers =
-            typeof wholesale_tier_pricing === "string"
-              ? JSON.parse(wholesale_tier_pricing)
-              : wholesale_tier_pricing;
-        } catch (e) {
-          parsedTiers = null;
-        }
-      }
+      console.log("variantPrices BEFORE SAVE", parsedVariantPrices);
+      console.log("variantPricesAr BEFORE SAVE", parsedVariantPricesAr);
 
+      // Create product first so we have its ID for R2 key paths
       const createPayload = {
         seller_id: id,
-        language: language || "kurdish",
+        language,
         hasRealPrice: isRealPricePost,
-        titleKu: titleKu || "",
-        titleAr: titleAr || "",
-        descriptionKu: descriptionKu || "",
-        descriptionAr: descriptionAr || "",
+        titleKu,
+        titleAr,
+        descriptionKu,
+        descriptionAr,
         images: [],
         youtubeLinks: normalizedYoutubeLinks,
-        realPrice:
-          isRealPricePost && realPrice !== ""
-            ? realPrice
-            : Number(wholesale_price) || null,
-        priceType: priceType || "USD",
+        realPrice: isRealPricePost && realPrice !== "" ? realPrice : null,
+        priceType,
         options: parsedOptions.length > 0 ? parsedOptions : null,
         variantPrices: finalVariantPricesPayload,
         variantPricesAr: finalVariantPricesArPayload,
@@ -947,12 +1040,15 @@ router.post(
         sizes: parsedSizes.length > 0 ? parsedSizes : null,
         customInputs: parsedCustomInputs,
         customInputsAr: parsedCustomInputsAr,
+        // stock only tracked when product has no variants
         stock: hasColorsOrSizes ? null : parsedStock,
         isAvailable: isAvailablePost,
         category: category || null,
         subcategory: subcategory || null,
         ...cashbackPayload,
       };
+
+      console.log("FINAL DB PAYLOAD", createPayload);
 
       const product = await Product.create(createPayload);
 
@@ -969,6 +1065,8 @@ router.post(
         );
       }
 
+      // Upload product images to R2 (main 1400px + thumbnail 300px)  parallel
+      const tUploadStart = Date.now();
       let totalUploadedBytes = uploadedOptionImages.uploadedBytes;
       const imageFiles = req.files?.images || [];
       const basePath = `shops/${id}/products/${product.id}`;
@@ -997,8 +1095,14 @@ router.post(
         },
       );
       if (imageRecords.length > 0) await ProductImage.bulkCreate(imageRecords);
+      console.log(
+        `[Upload] ${imageFiles.length} main images uploaded in ${Date.now() - tUploadStart}ms`,
+      );
 
+      // Upload per-color images in parallel and attach imageKey to each color
       const finalColors = rawColors.map((c) => ({ ...c }));
+      const tColorStart = Date.now();
+
       await Promise.all(
         finalColors.map(async (color, i) => {
           const colorFile = req.files?.[`colorImage_${i}`]?.[0];
@@ -1021,113 +1125,27 @@ router.post(
         }),
       );
 
+      const colorCount = finalColors.filter((c) => c.imageKey).length;
+      console.log(
+        `[Upload] ${colorCount} color images uploaded in ${Date.now() - tColorStart}ms`,
+      );
       if (finalColors.length > 0) {
+        // Use static update  instance .update() on a JSON column may skip the
+        // SQL write if Sequelize thinks the value hasn't changed after create().
         await Product.update(
           { colors: finalColors },
           { where: { id: product.id } },
         );
       }
 
-      if (totalUploadedBytes > 0) {
+      if (totalUploadedBytes > 0)
         await incrementSellerStorage(id, totalUploadedBytes);
-      }
-
-      // Sync with ProductV2
-      // ============================================================
-      // Sync with ProductV2 (Fixed Mapping)
-      // ============================================================
-      try {
-        const v2Id = await generateUniqueProductV2Id();
-
-        // 1. Combine Custom Inputs into: [{ ku: {name, value}, ar: {name, value} }]
-        const combinedCustomInputs = [];
-        const maxInputsLength = Math.max(
-          parsedCustomInputs.length,
-          parsedCustomInputsAr.length,
-        );
-        for (let i = 0; i < maxInputsLength; i++) {
-          const kuItem = parsedCustomInputs[i] || { name: "", value: "" };
-          const arItem = parsedCustomInputsAr[i] || { name: "", value: "" };
-          if (kuItem.name || kuItem.value || arItem.name || arItem.value) {
-            combinedCustomInputs.push({
-              ku: { name: kuItem.name || "", value: kuItem.value || "" },
-              ar: { name: arItem.name || "", value: arItem.value || "" },
-            });
-          }
-        }
-
-        // 2. Determine default retail price if using variants
-        let computedRetailPrice = Number(realPrice) || 0;
-        if (!computedRetailPrice && parsedVariantPrices.length > 0) {
-          computedRetailPrice = Number(parsedVariantPrices[0].price) || 0;
-        } else if (
-          !computedRetailPrice &&
-          parsedTiers &&
-          parsedTiers.length > 0
-        ) {
-          computedRetailPrice = Number(parsedTiers[0]?.tiers?.[0]?.price) || 0;
-        }
-
-        await ProductV2.create({
-          id: v2Id,
-          seller_id: id,
-          language: ["kurdish", "arabic", "both"].includes(language)
-            ? language
-            : "both",
-          title: {
-            ku: titleKu || "",
-            ar: titleAr || titleKu || "",
-            en: "",
-          },
-          description: {
-            ku: descriptionKu || "",
-            ar: descriptionAr || descriptionKu || "",
-            en: "",
-          },
-          barcode: barcode ? String(barcode).trim() : null,
-          sku: sku ? String(sku).trim() : null,
-
-          // Pricing & Currency
-          cost_price: Number(cost_price) || 0,
-          retail_price: computedRetailPrice,
-          price_type: (priceType || "iqd").toLowerCase(), // MySQL enum expects lowercase ('iqd' or 'usd')
-
-          // Retail Variants
-          variant_r: finalVariantPricesPayload,
-          variant_r_ar: finalVariantPricesArPayload,
-
-          // Wholesale Data
-          is_wholesale_only:
-            is_wholesale_only === "true" || is_wholesale_only === true,
-          wholesale_price:
-            Number(wholesale_price) ||
-            (parsedTiers?.[0]?.tiers?.[0]?.price
-              ? Number(parsedTiers[0].tiers[0].price)
-              : null),
-          min_wholesale_quantity: Number(min_wholesale_quantity) || 1,
-          wholesale_tier_pricing: parsedTiers,
-          variant_w: parsedTiers, // Wholesale variant groups
-
-          // Categories (Direct Columns)
-          category: category || null,
-          subcategory: subcategory || null,
-
-          // Custom Fields, Media & Stock
-          custom_inputs:
-            combinedCustomInputs.length > 0 ? combinedCustomInputs : null,
-          stock_quantity: parsedStock || 0,
-          images: imageUploadResults.map((r) => r.mainKey),
-          video_links: normalizedYoutubeLinks.filter(Boolean),
-          is_published: isAvailablePost,
-          extra_attributes: {
-            sale_type: sale_type || "retail",
-          },
-        });
-      } catch (v2Err) {
-        console.error("Warning: ProductV2 sync error:", v2Err);
-      }
 
       await product.reload();
+
+      console.log(
+        `[Upload] Total add-product request: ${Date.now() - tRequest}ms`,
+      );
 
       res.status(201).json({
         success: true,
@@ -1136,9 +1154,11 @@ router.post(
         product,
       });
 
+      // Fire-and-forget: notify Google to index the new product page.
+      // Fetches fresh shop_name from DB in case JWT is stale.
       const _createdProductId = product.id;
       const _createdSellerId = id;
-      SellerV2.findByPk(_createdSellerId, {
+      Seller.findByPk(_createdSellerId, {
         attributes: ["shop_name"],
         raw: true,
       })
@@ -1156,16 +1176,12 @@ router.post(
       res.status(error.statusCode || 500).json({
         success: false,
         error: true,
-        message:
-          error.clientMessage || error.message || "Failed to create product",
+        message: error.clientMessage || "Failed to create product",
       });
     }
   },
 );
 
-// ==========================================
-// PUT /edit-product/:productId
-// ==========================================
 router.put(
   "/edit-product/:productId",
   jwtVerifySellerToken,
@@ -1174,8 +1190,11 @@ router.put(
   checkStorageLimit,
   async (req, res) => {
     try {
-      const sellerId = req.user?.id || req.user?.seller_id;
+      const sellerId = req.user.id;
       const { productId } = req.params;
+      console.log(
+        `[Edit-product] ${productId} seller ${sellerId}  env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
+      );
 
       const product = await Product.findOne({
         where: { id: productId, seller_id: sellerId },
@@ -1225,6 +1244,7 @@ router.put(
         isAvailable: isAvailableBody,
       } = req.body;
 
+      // Validate stock
       let parsedStockEdit = null;
       if (stockBody !== undefined && stockBody !== "" && stockBody !== null) {
         const rawStock = Number(stockBody);
@@ -1238,6 +1258,7 @@ router.put(
         parsedStockEdit = rawStock;
       }
 
+      // Validate isAvailable
       const isAvailableEdit =
         isAvailableBody === "false" || isAvailableBody === false ? false : true;
 
@@ -1271,12 +1292,10 @@ router.put(
       const parsedVariantPricesAr = parsedVariantPricesArInput.rows;
       const parsedOptionsInput = parseOptionsInput(optionsBody);
       const parsedOptions = parsedOptionsInput.rows;
-
       validateUploadedOptionImageIndexes({
         files: req.files,
         options: parsedOptions,
       });
-
       const parsedCustomInputs = customInputs
         ? JSON.parse(customInputs).filter((c) => c.name && c.name !== "")
         : [];
@@ -1331,6 +1350,7 @@ router.put(
         validateVariantPriceCombinations(plan, parsedVariantPricesAr);
       }
 
+      // Enforce: base price is not allowed when colors or sizes are present
       const isRealPrice = hasRealPrice === "true" || hasRealPrice === true;
       const hasColorsOrSizesEdit =
         rawColors.some((c) => (c.nameKu || c.nameAr || "").trim()) ||
@@ -1345,6 +1365,7 @@ router.put(
         throw basePriceConflictError;
       }
 
+      // Delete removed product images (main + thumb) and update storage
       if (removedImageKeys) {
         const keys = removedMainImageKeys;
         if (keys.length > 0) {
@@ -1356,7 +1377,7 @@ router.put(
               records.map((record) => getProductImageRecordBytes(record)),
             )
           ).reduce((sum, bytes) => sum + bytes, 0);
-
+          // Delete both the main key and its thumbnail from R2
           const allR2Keys = records.flatMap((r) =>
             [r.image_key, r.thumb_key].filter(Boolean),
           );
@@ -1368,6 +1389,7 @@ router.put(
         }
       }
 
+      // Delete removed color images from R2 and decrement storage
       if (removedColorImageKeys) {
         const keys = removedColorKeys;
         if (keys.length > 0) {
@@ -1376,12 +1398,12 @@ router.put(
             .filter((c) => keys.includes(c.imageKey))
             .reduce((sum, c) => sum + (c.imageSizeBytes || 0), 0);
           await deleteMultipleFromR2(keys);
-          if (removedColorBytes > 0) {
+          if (removedColorBytes > 0)
             await decrementSellerStorage(sellerId, removedColorBytes);
-          }
         }
       }
 
+      // Upload new product images to R2 (main 1280px + thumbnail 300px)
       let totalUploadedBytes = 0;
       const imageFiles = req.files?.images || [];
       if (imageFiles.length > 0) {
@@ -1410,6 +1432,8 @@ router.put(
       for (let i = 0; i < finalColors.length; i++) {
         const colorFile = req.files?.[`colorImage_${i}`]?.[0];
         if (colorFile) {
+          // Always read the old key from the DB record by index never trust
+          // what the frontend sends, as it may have already cleared imageKey.
           const oldImageKey = dbColors[i]?.imageKey || null;
           const filename = `${uuidv4()}.webp`;
           const colorSegment = normalizeColorSegment(
@@ -1417,6 +1441,7 @@ router.put(
           );
           const key = `shops/${sellerId}/products/${productId}/colors/${colorSegment}/${filename}`;
 
+          // Upload new image FIRST only delete old after confirmed success
           const { sizeBytes } = await uploadColorImageToR2(
             colorFile.buffer,
             key,
@@ -1425,14 +1450,15 @@ router.put(
           finalColors[i].imageKey = key;
           finalColors[i].imageSizeBytes = sizeBytes;
 
+          // Now safely delete the old image and decrement its storage
           if (oldImageKey) {
             const oldDbColor = dbColors.find((c) => c.imageKey === oldImageKey);
-            if (oldDbColor?.imageSizeBytes) {
+            if (oldDbColor?.imageSizeBytes)
               await decrementSellerStorage(sellerId, oldDbColor.imageSizeBytes);
-            }
             await deleteFromR2(oldImageKey);
           }
         } else {
+          // No new file  keep existing imageKey and imageSizeBytes from DB
           if (dbColors[i]?.imageKey) {
             finalColors[i].imageKey = dbColors[i].imageKey;
             finalColors[i].imageSizeBytes = dbColors[i].imageSizeBytes || 0;
@@ -1450,7 +1476,6 @@ router.put(
       let finalOptionsPayload = parsedOptionsInput.provided
         ? parsedOptions
         : existingOptions;
-
       validateProductOptionsLimits(plan, finalOptionsPayload);
       const uploadedOptionImages = await uploadFirstOptionGroupImagesToR2({
         sellerId,
@@ -1458,11 +1483,9 @@ router.put(
         options: finalOptionsPayload,
         files: req.files,
       });
-
       if (uploadedOptionImages.changed) {
         finalOptionsPayload = uploadedOptionImages.options;
       }
-
       const finalVariantPricesPayload = parsedVariantPricesInput.provided
         ? parsedVariantPrices
         : existingVariantPrices;
@@ -1477,10 +1500,14 @@ router.put(
 
       totalUploadedBytes += uploadedOptionImages.uploadedBytes;
 
-      if (totalUploadedBytes > 0) {
+      if (totalUploadedBytes > 0)
         await incrementSellerStorage(sellerId, totalUploadedBytes);
-      }
 
+      console.log("variantPrices BEFORE SAVE", finalVariantPricesPayload);
+      console.log("variantPricesAr BEFORE SAVE", finalVariantPricesArPayload);
+
+      // Use static update  instance .update() on JSON columns can silently
+      // skip writing if Sequelize's change-detection gives a false negative.
       const updatePayload = {
         language,
         hasRealPrice: isRealPrice,
@@ -1508,10 +1535,13 @@ router.put(
         customInputs: parsedCustomInputs,
         customInputsAr: parsedCustomInputsAr,
         category: category || null,
+        // stock only tracked when product has no variants
         stock: hasColorsOrSizesEdit ? null : parsedStockEdit,
         isAvailable: isAvailableEdit,
         ...cashbackPayload,
       };
+
+      console.log("FINAL DB PAYLOAD", updatePayload);
 
       await Product.update(updatePayload, {
         where: { id: productId, seller_id: sellerId },
@@ -1525,12 +1555,10 @@ router.put(
         product,
       });
 
+      // Fire-and-forget: notify Google that the product page was updated.
       const _editedProductId = productId;
       const _editedSellerId = sellerId;
-      SellerV2.findByPk(_editedSellerId, {
-        attributes: ["shop_name"],
-        raw: true,
-      })
+      Seller.findByPk(_editedSellerId, { attributes: ["shop_name"], raw: true })
         .then((s) => {
           if (s?.shop_name) {
             return notifyGoogle(
@@ -1551,15 +1579,12 @@ router.put(
   },
 );
 
-// ==========================================
-// DELETE /delete-product/:productId
-// ==========================================
 router.delete(
   "/delete-product/:productId",
   jwtVerifySellerToken,
   async (req, res) => {
     try {
-      const sellerId = req.user?.id || req.user?.seller_id;
+      const sellerId = req.user.id;
       const { productId } = req.params;
 
       const product = await Product.findOne({
@@ -1572,6 +1597,7 @@ router.delete(
           .json({ success: false, error: true, message: "Product not found" });
       }
 
+      // Delete all R2 images for this product and update storage
       const imageRecords = await ProductImage.findAll({
         where: { product_id: productId },
       });
@@ -1584,12 +1610,13 @@ router.delete(
             imageRecords.map((record) => getProductImageRecordBytes(record)),
           )
         ).reduce((sum, bytes) => sum + bytes, 0);
-
         await deleteMultipleFromR2([...keys, ...thumbKeys]);
         await ProductImage.destroy({ where: { product_id: productId } });
         await decrementSellerStorage(sellerId, totalBytes);
       }
 
+      // Delete color images from R2 and decrement their storage
+      // Safely parse colors  Sequelize may return a raw string for JSON columns
       const _rawProductColors = product.colors;
       const _parsedProductColors = Array.isArray(_rawProductColors)
         ? _rawProductColors
@@ -1602,7 +1629,6 @@ router.delete(
               }
             })()
           : [];
-
       const colorImages = _parsedProductColors.filter((c) => c && c.imageKey);
       if (colorImages.length > 0) {
         const colorKeys = colorImages.map((c) => c.imageKey);
@@ -1622,9 +1648,10 @@ router.delete(
         message: "Product deleted successfully",
       });
 
+      // Fire-and-forget: notify Google to remove this product URL from the index.
       const _deletedProductId = productId;
       const _deletedSellerId = sellerId;
-      SellerV2.findByPk(_deletedSellerId, {
+      Seller.findByPk(_deletedSellerId, {
         attributes: ["shop_name"],
         raw: true,
       })
@@ -1648,17 +1675,16 @@ router.delete(
   },
 );
 
-// ==========================================
-// GET /products/shop/:shopName
-// ==========================================
+// Route to get products by seller shop name (paginated, lightweight fields)
 router.get("/products/shop/:shopName", async (req, res) => {
   try {
     const { shopName } = req.params;
     const limit = Math.min(parseInt(req.query.limit) || 50, 100);
     const offset = parseInt(req.query.offset) || 0;
 
-    const seller = await SellerV2.findOne({
-      where: { shop_name: shopName.trim().toLowerCase() },
+    // Find seller by shop name
+    const seller = await Seller.findOne({
+      where: { shop_name: shopName },
       attributes: ["id", "shop_name"],
     });
 
@@ -1670,6 +1696,7 @@ router.get("/products/shop/:shopName", async (req, res) => {
       });
     }
 
+    // Get products with only the fields needed by frontend
     const { count, rows: products } = await Product.findAndCountAll({
       where: { seller_id: seller.id },
       attributes: [
@@ -1706,6 +1733,7 @@ router.get("/products/shop/:shopName", async (req, res) => {
       offset,
     });
 
+    // Filter out products that have variantPrices or variantPricesAr but no realPrice
     const filteredProducts = products.filter((p) => {
       const hasVariants =
         (p.variantPrices && p.variantPrices.length > 0) ||
@@ -1731,113 +1759,5 @@ router.get("/products/shop/:shopName", async (req, res) => {
     });
   }
 });
-
-// ==========================================
-// POST /add-product-v2
-// ==========================================
-router.post(
-  "/add-product-v2",
-  requireSellerOrStaff(["manager", "warehouse", "cashier"]),
-  uploadRateLimiter,
-  upload,
-  async (req, res) => {
-    try {
-      const sellerId = req.sellerId;
-      const {
-        titleKu,
-        titleAr,
-        titleEn,
-        descriptionKu,
-        descriptionAr,
-        descriptionEn,
-        cost_price,
-        realPrice,
-        priceType,
-        barcode,
-        sku,
-        stock,
-        isAvailable,
-        is_wholesale_only,
-        wholesale_tier_pricing,
-        category,
-        subcategory,
-      } = req.body;
-
-      const titleJson = {
-        ku: String(titleKu || "").trim(),
-        ar: String(titleAr || titleKu || "").trim(),
-        en: String(titleEn || "").trim(),
-      };
-
-      const descriptionJson = {
-        ku: String(descriptionKu || "").trim(),
-        ar: String(descriptionAr || descriptionKu || "").trim(),
-        en: String(descriptionEn || "").trim(),
-      };
-
-      let parsedTiers = null;
-      if (wholesale_tier_pricing) {
-        try {
-          parsedTiers =
-            typeof wholesale_tier_pricing === "string"
-              ? JSON.parse(wholesale_tier_pricing)
-              : wholesale_tier_pricing;
-        } catch (e) {
-          parsedTiers = null;
-        }
-      }
-
-      let uploadedImageUrls = [];
-      const imageFiles = req.files?.images || [];
-      if (imageFiles.length > 0) {
-        const basePath = `shops/${sellerId}/products_v2`;
-        const uploadResults = await Promise.all(
-          imageFiles.map((f) =>
-            uploadToR2WithThumb(f.buffer, basePath, titleKu || "prod"),
-          ),
-        );
-        uploadedImageUrls = uploadResults.map((r) => r.mainKey);
-      }
-
-      const v2Id = await generateUniqueProductV2Id();
-      const newProduct = await ProductV2.create({
-        id: v2Id,
-        seller_id: sellerId,
-        title: titleJson,
-        description: descriptionJson,
-        barcode: barcode ? String(barcode).trim() : null,
-        sku: sku ? String(sku).trim() : null,
-        cost_price: Number(cost_price) || 0,
-        retail_price: Number(realPrice) || 0,
-        is_wholesale_only:
-          is_wholesale_only === "true" || is_wholesale_only === true,
-        wholesale_tier_pricing: parsedTiers,
-        stock_quantity: stock !== "" && stock != null ? Number(stock) : 0,
-        is_published: isAvailable !== "false" && isAvailable !== false,
-        images: uploadedImageUrls,
-        extra_attributes: {
-          price_currency: priceType || "USD",
-          category: category || null,
-          subcategory: subcategory || null,
-          created_by_role: req.userRole || "owner",
-        },
-      });
-
-      return res.status(201).json({
-        success: true,
-        error: false,
-        message: "Product created successfully in ProductV2",
-        product: newProduct,
-      });
-    } catch (error) {
-      console.error("Add Product V2 Error:", error);
-      return res.status(500).json({
-        success: false,
-        error: true,
-        message: error.message || "Failed to create product in V2",
-      });
-    }
-  },
-);
 
 export default router;

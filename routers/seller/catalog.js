@@ -1,9 +1,7 @@
-﻿// backend/routes/seller/catalog.js
-import { Router } from "express";
+﻿import { Router } from "express";
 import { Op } from "sequelize";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
-import SellerV2 from "../../database/sellerv2.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { decrementSellerStorage } from "../../middlewares/checkStorageLimit.js";
 import { deleteMultipleFromR2 } from "../../utils/r2.js";
@@ -14,7 +12,7 @@ import {
 
 const router = Router();
 
-// 1) GET /catalog/products
+// GET /catalog/products
 router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
   try {
     const sellerId = req.user?.id || req.user?.seller_id;
@@ -40,17 +38,22 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
         "titleAr",
         "realPrice",
         "priceType",
+        "hasDiscount",
+        "discount_percent",
+        "discountType",
+        "free_delivery",
         "category",
         "subcategory",
         "language",
         "hasCashback",
         "cashbackType",
         "cashbackValue",
-        "cashbackStartDate",
-        "cashbackEndDate",
-        "cashbackMinOrderAmount",
+        "stock",
+        "isAvailable",
         "options",
         "variants",
+        "variantPrices",
+        "variantPricesAr",
         "createdAt",
       ],
       include: [
@@ -65,7 +68,6 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
       limit,
       offset,
       distinct: true,
-      subQuery: false,
     });
 
     const data = rows.map((p) => {
@@ -77,12 +79,20 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
         titleAr: p.titleAr,
         realPrice: p.realPrice,
         priceType: p.priceType,
+        hasDiscount: p.hasDiscount,
+        discount_percent: p.discount_percent,
+        free_delivery: p.free_delivery,
         category: p.category,
         subcategory: p.subcategory,
         language: p.language,
         options: p.options,
         variants: p.variants,
+        variantPrices: p.variantPrices,
+        variantPricesAr: p.variantPricesAr,
+        stock: p.stock,
+        isAvailable: p.isAvailable,
         thumb_key: mainImg?.thumb_key || mainImg?.image_key || null,
+        productImages: p.productImages || [],
       };
     });
 
@@ -101,7 +111,7 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
   }
 });
 
-// 2) PUT /catalog/bulk-category
+// PUT /catalog/bulk-category
 router.put("/catalog/bulk-category", jwtVerifySellerToken, async (req, res) => {
   try {
     const sellerId = req.user?.id || req.user?.seller_id;
@@ -112,14 +122,6 @@ router.put("/catalog/bulk-category", jwtVerifySellerToken, async (req, res) => {
         success: false,
         error: true,
         message: "productIds must be a non-empty array",
-      });
-    }
-
-    if (productIds.length > 200) {
-      return res.status(400).json({
-        success: false,
-        error: true,
-        message: "Too many products selected (max 200)",
       });
     }
 
@@ -154,7 +156,7 @@ router.put("/catalog/bulk-category", jwtVerifySellerToken, async (req, res) => {
   }
 });
 
-// 3) DELETE /catalog/bulk-delete (تەنها خاوەنکار دەسەڵاتی هەیە)
+// DELETE /catalog/bulk-delete
 router.delete(
   "/catalog/bulk-delete",
   jwtVerifySellerToken,
@@ -163,8 +165,11 @@ router.delete(
       const sellerId = req.user?.id || req.user?.seller_id;
       const userType = req.user?.userType || req.user?.role;
 
-      // ئەگەر کارمەند بوو و دەسەڵاتی خاوەنکاری نەبوو
-      if (req.user?.userType === "staff" && userType !== "manager" && userType !== "owner") {
+      if (
+        req.user?.userType === "staff" &&
+        userType !== "manager" &&
+        userType !== "owner"
+      ) {
         return res.status(403).json({
           success: false,
           error: true,
@@ -173,20 +178,11 @@ router.delete(
       }
 
       const { productIds } = req.body;
-
       if (!Array.isArray(productIds) || productIds.length === 0) {
         return res.status(400).json({
           success: false,
           error: true,
           message: "productIds must be a non-empty array",
-        });
-      }
-
-      if (productIds.length > 50) {
-        return res.status(400).json({
-          success: false,
-          error: true,
-          message: "Too many products selected at once (max 50)",
         });
       }
 
@@ -217,7 +213,9 @@ router.delete(
 
       let colorBytes = 0;
       for (const product of products) {
-        const colorImages = (product.colors || []).filter((c) => c && c.imageKey);
+        const colorImages = (product.colors || []).filter(
+          (c) => c && c.imageKey,
+        );
         for (const ci of colorImages) {
           r2Keys.push(ci.imageKey);
           colorBytes +=

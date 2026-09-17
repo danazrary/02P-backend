@@ -1,18 +1,18 @@
-﻿// backend/routes/seller/dashboard.js
-import { Router } from "express";
+﻿import { Router } from "express";
 import { Op } from "sequelize";
 import sequelize from "../../database/sequelize.js";
 
-import ProductV2 from "../../database/productv2.js";
-import SellerV2 from "../../database/sellerv2.js"; // 👈 گۆڕدرا بۆ SellerV2
+import Product from "../../database/products.js";
+import ProductImage from "../../database/productImages.js";
+import SellerV2 from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { clearCookieOpts } from "../../utils/addingToken.js";
 import {
-  checkAndCleanProductV2Expiration,
-  normalizeProductV2,
+  checkAndCleanProductExpiration,
+  normalizeProduct,
 } from "../../utils/productV2Promos.js";
 import { ensureSellerStorageUsage } from "../../utils/sellerStorageUsage.js";
 import {
@@ -25,7 +25,6 @@ import { getCategoryMap } from "../../utils/categoryTranslations.js";
 
 const router = Router();
 
-// Constants
 const FREE_PLAN_ID = 1;
 const TRIAL_PLAN_ID = 9;
 const FREE_PLAN_END_DATE = new Date("2099-12-31");
@@ -55,15 +54,12 @@ function parseSelectedPlan(raw) {
     ) {
       return { name: parsed.name };
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
   return null;
 }
 
 function getExpiryState(endDate, now) {
   if (endDate >= now) return null;
-
   const hoursElapsed = (now - endDate) / (1000 * 60 * 60);
   const daysElapsed = hoursElapsed / 24;
 
@@ -184,9 +180,7 @@ function parseRedLine(raw) {
   };
 }
 
-// ==========================================
 // GET /dashboard
-// ==========================================
 router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
   try {
     const id = req.user?.id || req.user?.seller_id;
@@ -205,7 +199,6 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       0,
     );
 
-    // 1. گەڕان تەنها لە خشتەی sellers_v2
     const seller = await SellerV2.findByPk(id);
     if (!seller) {
       res.clearCookie("s_t", clearCookieOpts());
@@ -290,40 +283,6 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       if (expiredResponse) return res.status(200).json(expiredResponse);
     }
 
-    const PRODUCT_V2_ATTRIBUTES = [
-      "id",
-      "seller_id",
-      "title",
-      "description",
-      "custom_inputs",
-      "language",
-      "barcode",
-      "sku",
-      "category",
-      "subcategory",
-      "cost_price",
-      "retail_price",
-      "price_type",
-      "variant_r",
-      "variant_r_ar",
-      "is_wholesale_only",
-      "wholesale_price",
-      "min_wholesale_quantity",
-      "wholesale_tier_pricing",
-      "variant_w",
-      "discount",
-      "cashback",
-      "free_delivery",
-      "stock_quantity",
-      "low_stock_alert",
-      "images",
-      "video_links",
-      "views",
-      "extra_attributes",
-      "is_published",
-      "sort_order",
-    ];
-
     const [
       currentProductCount,
       currentOfferCount,
@@ -331,7 +290,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       { count: totalProductsCount, rows: rawProducts },
       storageUsedMb,
     ] = await Promise.all([
-      ProductV2.count({ where: { seller_id: id } }),
+      Product.count({ where: { seller_id: id } }),
       SellerOffer.count({ where: { seller_id: id, is_active: true } }),
       SellerOffer.findAll({
         where: {
@@ -354,12 +313,20 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
           "discount_or_free_delivery",
         ],
       }),
-      ProductV2.findAndCountAll({
+      Product.findAndCountAll({
         where: { seller_id: id },
-        attributes: PRODUCT_V2_ATTRIBUTES,
+        include: [
+          {
+            model: ProductImage,
+            as: "productImages",
+            attributes: ["image_key", "thumb_key", "is_main"],
+            required: false,
+          },
+        ],
         limit: productLimit,
         offset: productOffset,
         order: [["id", "DESC"]],
+        distinct: true,
       }),
       ensureSellerStorageUsage(id, planRow, { force: false }),
     ]);
@@ -370,8 +337,8 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       console.error("[dashboard] Failed to delete expired offers:", err),
     );
 
-    const cleanedRows = await checkAndCleanProductV2Expiration(rawProducts);
-    const products = cleanedRows.map((row) => normalizeProductV2(row));
+    const cleanedRows = await checkAndCleanProductExpiration(rawProducts);
+    const products = cleanedRows.map((row) => normalizeProduct(row));
     const hasMoreProducts = productOffset + productLimit < totalProductsCount;
 
     const ku = parseRedLine(seller.red_line);
@@ -431,7 +398,6 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
       show_plan_selection: sellerPlanRecord.plan_id === FREE_PLAN_ID,
       selected_plan_info: selectedPlan,
       brand_color: seller.brand_color ?? null,
-      // seller_name: seller.name ?? "",
       category_translations: getCategoryMap(seller),
       red_line: redLine,
       products,
@@ -462,9 +428,7 @@ router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
   }
 });
 
-// ==========================================
-// Product Badges
-// ==========================================
+// Badges
 router.post("/product-badges", jwtVerifySellerToken, async (req, res) => {
   try {
     const sellerId = req.user?.id || req.user?.seller_id;
@@ -478,7 +442,7 @@ router.post("/product-badges", jwtVerifySellerToken, async (req, res) => {
       });
     }
 
-    const productExists = await ProductV2.findOne({
+    const productExists = await Product.findOne({
       where: { id: parsedProductId, seller_id: sellerId },
     });
 
@@ -533,18 +497,16 @@ router.delete(
 
       const parsedProductId = Number(productId);
       if (!parsedProductId) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid product ID.",
-        });
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid product ID." });
       }
 
       const seller = await SellerV2.findByPk(sellerId);
       if (!seller) {
-        return res.status(404).json({
-          success: false,
-          message: "Seller not found.",
-        });
+        return res
+          .status(404)
+          .json({ success: false, message: "Seller not found." });
       }
 
       let currentBadges = seller.product_badges || [];
@@ -569,10 +531,7 @@ router.delete(
       });
     } catch (error) {
       console.error("Error deleting product badge:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Server error.",
-      });
+      return res.status(500).json({ success: false, message: "Server error." });
     }
   },
 );
