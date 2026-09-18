@@ -9,13 +9,23 @@ import {
   getProductImageRecordBytes,
   getStoredAssetBytes,
 } from "../../utils/sellerStorageUsage.js";
+import {
+  attachActor,
+  canViewCatalog,
+  canManageCategories,
+  canDeleteProduct,
+} from "../../middlewares/staffPermissions.js";
 
 const router = Router();
 
+// Attach actor info (sellerId, role, isStaff) to res.locals on every request
+router.use(jwtVerifySellerToken, attachActor);
+
 // GET /catalog/products
-router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
+// Allowed: seller, admin, product_manager
+router.get("/catalog/products", canViewCatalog, async (req, res) => {
   try {
-    const sellerId = req.user?.id || req.user?.seller_id;
+    const sellerId = res.locals.sellerId;
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 100);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
     const search = req.query.search?.trim() || "";
@@ -112,9 +122,10 @@ router.get("/catalog/products", jwtVerifySellerToken, async (req, res) => {
 });
 
 // PUT /catalog/bulk-category
-router.put("/catalog/bulk-category", jwtVerifySellerToken, async (req, res) => {
+// Allowed: seller, admin, product_manager (reassigning their own products' categories)
+router.put("/catalog/bulk-category", canViewCatalog, async (req, res) => {
   try {
-    const sellerId = req.user?.id || req.user?.seller_id;
+    const sellerId = res.locals.sellerId;
     const { productIds, category, subcategory } = req.body;
 
     if (!Array.isArray(productIds) || productIds.length === 0) {
@@ -157,105 +168,87 @@ router.put("/catalog/bulk-category", jwtVerifySellerToken, async (req, res) => {
 });
 
 // DELETE /catalog/bulk-delete
-router.delete(
-  "/catalog/bulk-delete",
-  jwtVerifySellerToken,
-  async (req, res) => {
-    try {
-      const sellerId = req.user?.id || req.user?.seller_id;
-      const userType = req.user?.userType || req.user?.role;
+// Allowed: seller, admin ONLY — product_manager, shop_editor, cashier are denied
+router.delete("/catalog/bulk-delete", canDeleteProduct, async (req, res) => {
+  try {
+    const sellerId = res.locals.sellerId;
 
-      if (
-        req.user?.userType === "staff" &&
-        userType !== "manager" &&
-        userType !== "owner"
-      ) {
-        return res.status(403).json({
-          success: false,
-          error: true,
-          message: "تەنها خاوەنی فرۆشگا دەتوانێت بەرهەمەکان بسڕێتەوە.",
-        });
-      }
-
-      const { productIds } = req.body;
-      if (!Array.isArray(productIds) || productIds.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: true,
-          message: "productIds must be a non-empty array",
-        });
-      }
-
-      const products = await Product.findAll({
-        where: { id: { [Op.in]: productIds }, seller_id: sellerId },
+    const { productIds } = req.body;
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "productIds must be a non-empty array",
       });
+    }
 
-      if (products.length === 0) {
-        return res.status(404).json({
-          success: false,
-          error: true,
-          message: "No matching products found",
-        });
+    const products = await Product.findAll({
+      where: { id: { [Op.in]: productIds }, seller_id: sellerId },
+    });
+
+    if (products.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "No matching products found",
+      });
+    }
+
+    const foundIds = products.map((p) => p.id);
+    const imageRecords = await ProductImage.findAll({
+      where: { product_id: { [Op.in]: foundIds } },
+    });
+
+    const r2Keys = [];
+    let totalBytes = 0;
+    for (const rec of imageRecords) {
+      if (rec.image_key) r2Keys.push(rec.image_key);
+      if (rec.thumb_key) r2Keys.push(rec.thumb_key);
+      totalBytes += await getProductImageRecordBytes(rec);
+    }
+
+    let colorBytes = 0;
+    for (const product of products) {
+      const colorImages = (product.colors || []).filter((c) => c && c.imageKey);
+      for (const ci of colorImages) {
+        r2Keys.push(ci.imageKey);
+        colorBytes +=
+          Number(ci.imageSizeBytes || 0) ||
+          (ci.imageKey ? await getStoredAssetBytes(ci.imageKey) : 0);
       }
+    }
 
-      const foundIds = products.map((p) => p.id);
-      const imageRecords = await ProductImage.findAll({
+    if (r2Keys.length > 0) {
+      await deleteMultipleFromR2(r2Keys);
+    }
+
+    if (imageRecords.length > 0) {
+      await ProductImage.destroy({
         where: { product_id: { [Op.in]: foundIds } },
       });
-
-      const r2Keys = [];
-      let totalBytes = 0;
-      for (const rec of imageRecords) {
-        if (rec.image_key) r2Keys.push(rec.image_key);
-        if (rec.thumb_key) r2Keys.push(rec.thumb_key);
-        totalBytes += await getProductImageRecordBytes(rec);
-      }
-
-      let colorBytes = 0;
-      for (const product of products) {
-        const colorImages = (product.colors || []).filter(
-          (c) => c && c.imageKey,
-        );
-        for (const ci of colorImages) {
-          r2Keys.push(ci.imageKey);
-          colorBytes +=
-            Number(ci.imageSizeBytes || 0) ||
-            (ci.imageKey ? await getStoredAssetBytes(ci.imageKey) : 0);
-        }
-      }
-
-      if (r2Keys.length > 0) {
-        await deleteMultipleFromR2(r2Keys);
-      }
-
-      if (imageRecords.length > 0) {
-        await ProductImage.destroy({
-          where: { product_id: { [Op.in]: foundIds } },
-        });
-      }
-
-      const storageBytes = totalBytes + colorBytes;
-      if (storageBytes > 0) {
-        await decrementSellerStorage(sellerId, storageBytes);
-      }
-
-      await Product.destroy({
-        where: { id: { [Op.in]: foundIds }, seller_id: sellerId },
-      });
-
-      return res.status(200).json({
-        success: true,
-        error: false,
-        deletedCount: foundIds.length,
-        message: `Deleted ${foundIds.length} product(s)`,
-      });
-    } catch (error) {
-      console.error("Error bulk deleting products:", error);
-      return res
-        .status(500)
-        .json({ success: false, error: true, message: "Server error" });
     }
-  },
-);
+
+    const storageBytes = totalBytes + colorBytes;
+    if (storageBytes > 0) {
+      await decrementSellerStorage(sellerId, storageBytes);
+    }
+
+    await Product.destroy({
+      where: { id: { [Op.in]: foundIds }, seller_id: sellerId },
+    });
+
+    return res.status(200).json({
+      success: true,
+      error: false,
+      deletedCount: foundIds.length,
+      message: `Deleted ${foundIds.length} product(s)`,
+    });
+  } catch (error) {
+    console.error("Error bulk deleting products:", error);
+    return res
+      .status(500)
+      .json({ success: false, error: true, message: "Server error" });
+  }
+});
 
 export default router;

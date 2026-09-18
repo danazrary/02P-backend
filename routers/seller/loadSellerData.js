@@ -2,12 +2,13 @@
 import { Router } from "express";
 import sequelize from "../../database/sequelize.js";
 import Product from "../../database/products.js";
-import SellerV2 from "../../database/sellerv2.js";
+import Seller from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { clearCookieOpts } from "../../utils/addingToken.js";
 import { ensureSellerStorageUsage } from "../../utils/sellerStorageUsage.js";
+import { attachActor } from "../../middlewares/staffPermissions.js";
 
 const router = Router();
 
@@ -96,114 +97,121 @@ async function handleExpiredPlan(sellerPlanRecord, closeReason, now) {
   };
 }
 
-router.get("/load-info", jwtVerifySellerToken, async (req, res) => {
-  try {
-    const sellerId = req.user?.id || req.user?.seller_id;
-    const now = new Date();
+// /load-info کراوەیە بۆ هەموو ڕۆڵەکان بەبێ جیاوازی
+router.get(
+  "/load-info",
+  jwtVerifySellerToken,
+  attachActor,
+  async (req, res) => {
+    try {
+      const sellerId =
+        res.locals.sellerId || req.user?.seller_id || req.user?.id;
+      const now = new Date();
 
-    const seller = await SellerV2.findByPk(sellerId, {
-      attributes: [
-        "id",
-        "name",
-        "shop_name",
-        "default_shop_lang",
-        "business_type",
-        "created_at",
-      ],
-    });
+      const seller = await Seller.findByPk(sellerId, {
+        attributes: [
+          "id",
+          "name",
+          "shop_name",
+          "default_shop_lang",
+          "business_type",
+          "created_at",
+        ],
+      });
 
-    if (!seller) {
-      res.clearCookie("s_t", clearCookieOpts());
-      return res.status(404).json({
+      if (!seller) {
+        res.clearCookie("s_t", clearCookieOpts());
+        return res.status(404).json({
+          success: false,
+          error: true,
+          logout: true,
+          message: "Seller not found",
+        });
+      }
+
+      let sellerPlanRecord = await SellerPlan.findOne({
+        where: { seller_id: sellerId },
+      });
+
+      if (!sellerPlanRecord) {
+        return res.status(404).json({
+          success: false,
+          error: true,
+          message: "Plan not found",
+        });
+      }
+
+      const planRow = await Plan.findByPk(sellerPlanRecord.plan_id);
+      const planName = planRow?.name ?? "Free";
+
+      const isTrial = sellerPlanRecord.plan_id === TRIAL_PLAN_ID;
+      const isPaid = !isTrial && sellerPlanRecord.plan_id !== FREE_PLAN_ID;
+
+      let warningAndClosedStatus = {
+        showPlanWarning: false,
+        warningType: "",
+        hoursRemaining: 0,
+        minutesRemaining: 0,
+        showShopClosed: false,
+        closeReason: "",
+      };
+
+      if (isTrial) {
+        const expired = await handleExpiredPlan(
+          sellerPlanRecord,
+          "trial_expired",
+          now,
+        );
+        if (expired) {
+          warningAndClosedStatus = { ...warningAndClosedStatus, ...expired };
+        }
+      } else if (isPaid) {
+        const expired = await handleExpiredPlan(
+          sellerPlanRecord,
+          "plan_expired",
+          now,
+        );
+        if (expired) {
+          warningAndClosedStatus = { ...warningAndClosedStatus, ...expired };
+        }
+      }
+
+      const [currentProductCount, storageUsedMb] = await Promise.all([
+        Product.count({ where: { seller_id: sellerId } }),
+        ensureSellerStorageUsage(sellerId, planRow, { force: false }),
+      ]);
+
+      const maxProducts = planRow?.max_products ?? 0;
+
+      return res.status(200).json({
+        success: true,
+        error: false,
+        productLimitReached: currentProductCount >= maxProducts,
+        maxProducts,
+        currentProductCount,
+        sellerPlan: planName,
+        planId: sellerPlanRecord.plan_id,
+        planStartDate: sellerPlanRecord.start_date,
+        planEndDate: sellerPlanRecord.end_date,
+        sellerId: seller.id,
+        sellerName: seller.name,
+        shopName: seller.shop_name,
+        business_type: seller.business_type || "retail",
+        defaultShopLang: seller.default_shop_lang || "ku",
+        sellerRegistrationDate: seller.created_at || seller.createdAt,
+        storageLimitMb: planRow?.storage_limit_mb ?? 0,
+        storageUsedMb: parseFloat(storageUsedMb ?? 0),
+        ...warningAndClosedStatus,
+      });
+    } catch (error) {
+      console.error("[loadSellerData] Error:", error);
+      return res.status(500).json({
         success: false,
         error: true,
-        logout: true,
-        message: "Seller not found",
+        message: "Server error",
       });
     }
-
-    let sellerPlanRecord = await SellerPlan.findOne({
-      where: { seller_id: sellerId },
-    });
-
-    if (!sellerPlanRecord) {
-      return res.status(404).json({
-        success: false,
-        error: true,
-        message: "Plan not found",
-      });
-    }
-
-    const planRow = await Plan.findByPk(sellerPlanRecord.plan_id);
-    const planName = planRow?.name ?? "Free";
-
-    const isTrial = sellerPlanRecord.plan_id === TRIAL_PLAN_ID;
-    const isPaid = !isTrial && sellerPlanRecord.plan_id !== FREE_PLAN_ID;
-
-    let warningAndClosedStatus = {
-      showPlanWarning: false,
-      warningType: "",
-      hoursRemaining: 0,
-      minutesRemaining: 0,
-      showShopClosed: false,
-      closeReason: "",
-    };
-
-    if (isTrial) {
-      const expired = await handleExpiredPlan(
-        sellerPlanRecord,
-        "trial_expired",
-        now,
-      );
-      if (expired) {
-        warningAndClosedStatus = { ...warningAndClosedStatus, ...expired };
-      }
-    } else if (isPaid) {
-      const expired = await handleExpiredPlan(
-        sellerPlanRecord,
-        "plan_expired",
-        now,
-      );
-      if (expired) {
-        warningAndClosedStatus = { ...warningAndClosedStatus, ...expired };
-      }
-    }
-
-    const [currentProductCount, storageUsedMb] = await Promise.all([
-      Product.count({ where: { seller_id: sellerId } }),
-      ensureSellerStorageUsage(sellerId, planRow, { force: false }),
-    ]);
-
-    const maxProducts = planRow?.max_products ?? 0;
-
-    return res.status(200).json({
-      success: true,
-      error: false,
-      productLimitReached: currentProductCount >= maxProducts,
-      maxProducts,
-      currentProductCount,
-      sellerPlan: planName,
-      planId: sellerPlanRecord.plan_id,
-      planStartDate: sellerPlanRecord.start_date,
-      planEndDate: sellerPlanRecord.end_date,
-      sellerId: seller.id,
-      sellerName: seller.name,
-      shopName: seller.shop_name,
-      business_type: seller.business_type || "retail",
-      defaultShopLang: seller.default_shop_lang || "ku",
-      sellerRegistrationDate: seller.created_at || seller.createdAt,
-      storageLimitMb: planRow?.storage_limit_mb ?? 0,
-      storageUsedMb: parseFloat(storageUsedMb ?? 0),
-      ...warningAndClosedStatus,
-    });
-  } catch (error) {
-    console.error("[loadSellerData] Error:", error);
-    return res.status(500).json({
-      success: false,
-      error: true,
-      message: "Server error",
-    });
-  }
-});
+  },
+);
 
 export default router;

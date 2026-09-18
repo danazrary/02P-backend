@@ -1,7 +1,7 @@
 // backend/routes/seller/setting.js
 import { Router } from "express";
 import { v4 as uuidv4 } from "uuid";
-import SellerV2 from "../../database/sellerv2.js";
+import Seller from "../../database/sellerv2.js";
 import { sellerToken } from "../../utils/addingToken.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { deleteFile } from "../../utils/deleteFile.js";
@@ -16,6 +16,11 @@ import { createR2Multer, uploadToR2, deleteFromR2 } from "../../utils/r2.js";
 import { normalizeUiSettings } from "../../utils/uiSettings.js";
 import { getCategoryMap } from "../../utils/categoryTranslations.js";
 import { notifyGoogle } from "../../utils/googleIndexing.js";
+import {
+  attachActor,
+  canManageSettings,
+  canChangeShopIdentity,
+} from "../../middlewares/staffPermissions.js";
 
 const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
 const router = Router();
@@ -83,13 +88,15 @@ function parseUiSettingsPayload(payload, fallbackSettings) {
   }
 }
 
-// 1) COMPLETE PROFILE CHECK
+// 1) COMPLETE PROFILE CHECK — seller only (initial onboarding)
 router.post(
   "/complete-profile-check",
   jwtVerifySellerToken,
+  attachActor,
+  canChangeShopIdentity,
   async (req, res) => {
     try {
-      const id = req.user?.id || req.user?.seller_id;
+      const id = res.locals.sellerId;
 
       if (!id) {
         return res.status(401).json({
@@ -99,7 +106,7 @@ router.post(
         });
       }
 
-      const seller = await SellerV2.findByPk(id);
+      const seller = await Seller.findByPk(id);
 
       if (!seller) {
         return res.status(404).json({
@@ -151,14 +158,16 @@ router.post(
   },
 );
 
-// 2) COMPLETE PROFILE
+// 2) COMPLETE PROFILE — seller only (sets shop_name, phone, brand_color)
 router.post(
   "/complete-profile",
   jwtVerifySellerToken,
+  attachActor,
+  canChangeShopIdentity,
   sellerImageUpload.single("shopImage"),
   async (req, res) => {
     try {
-      const id = req.user?.id || req.user?.seller_id;
+      const id = res.locals.sellerId;
       const {
         shopName,
         shop_name,
@@ -234,7 +243,7 @@ router.post(
         });
       }
 
-      const existingShop = await SellerV2.findOne({
+      const existingShop = await Seller.findOne({
         where: { shop_name: finalShopName },
       });
       if (existingShop && existingShop.id !== id) {
@@ -245,7 +254,7 @@ router.post(
         });
       }
 
-      const seller = await SellerV2.findByPk(id);
+      const seller = await Seller.findByPk(id);
       if (!seller) {
         return res.status(404).json({
           success: false,
@@ -256,7 +265,7 @@ router.post(
 
       const emailIsMissing = !seller.email || seller.email === "null";
       if (emailIsMissing && email) {
-        const existingEmail = await SellerV2.findOne({
+        const existingEmail = await Seller.findOne({
           where: { email: email.trim() },
         });
         if (existingEmail && existingEmail.id !== id) {
@@ -345,54 +354,68 @@ router.post(
   },
 );
 
-// 3) GET SELLER INFO
-router.get("/seller-info", jwtVerifySellerToken, async (req, res) => {
-  try {
-    const id = req.user?.id || req.user?.seller_id;
-    const seller = await SellerV2.findByPk(id);
-    if (!seller) {
-      return res
-        .status(404)
-        .json({ error: true, success: false, message: "Seller not found" });
-    }
+// 3) GET SELLER INFO — seller + admin can read settings
+router.get(
+  "/seller-info",
+  jwtVerifySellerToken,
+  attachActor,
+  canManageSettings,
+  async (req, res) => {
+    try {
+      const id = res.locals.sellerId;
+      const seller = await Seller.findByPk(id);
+      if (!seller) {
+        return res
+          .status(404)
+          .json({ error: true, success: false, message: "Seller not found" });
+      }
 
-    return res.status(200).json({
-      success: true,
-      error: false,
-      email: seller.email || "",
-      sellerName: seller.name,
-      sellerNumber: seller.phone || "",
-      shopName: seller.shop_name,
-      shopImage: seller.shop_image,
-      phone: seller.phone,
-      business_type: seller.business_type,
-      brandColor: seller.brand_color || null,
-      socialLinks: seller.social_links || {},
-      bio: seller.bio || "",
-      shopLocation: seller.shop_location || "",
-      category_translations: getCategoryMap(seller),
-      defaultShopLang: seller.default_shop_lang || "ku",
-      orderType: seller.order_type || "both",
-      uiSettings: normalizeUiSettings(seller.ui_settings),
-    });
-  } catch (err) {
-    return res
-      .status(500)
-      .json({ message: "Server error", error: true, success: false });
-  }
-});
+      return res.status(200).json({
+        success: true,
+        error: false,
+        email: seller.email || "",
+        sellerName: seller.name,
+        sellerNumber: seller.phone || "",
+        shopName: seller.shop_name,
+        shopImage: seller.shop_image,
+        phone: seller.phone,
+        business_type: seller.business_type,
+        brandColor: seller.brand_color || null,
+        socialLinks: seller.social_links || {},
+        bio: seller.bio || "",
+        shopLocation: seller.shop_location || "",
+        category_translations: getCategoryMap(seller),
+        defaultShopLang: seller.default_shop_lang || "ku",
+        orderType: seller.order_type || "both",
+        uiSettings: normalizeUiSettings(seller.ui_settings),
+      });
+    } catch (err) {
+      return res
+        .status(500)
+        .json({ message: "Server error", error: true, success: false });
+    }
+  },
+);
 
 // 4) UPDATE SELLER INFO
+// General fields (bio, social, location, lang, orderType, uiSettings) → seller + admin
+// Identity fields (shopName, whatsappNumber, brandColor, shop_image) → seller ONLY
 router.post(
   "/seller-info-update",
   jwtVerifySellerToken,
+  attachActor,
+  canManageSettings,
   sellerSettingsUpload.fields([
     { name: "shop_image", maxCount: 1 },
     { name: "hero_image", maxCount: 1 },
   ]),
   async (req, res) => {
     try {
-      const id = req.user?.id || req.user?.seller_id;
+      const id = res.locals.sellerId;
+      const isStaff = res.locals.isStaff;
+      const role = res.locals.role;
+      const isOwner = !isStaff || role === "seller";
+
       const {
         sellerName,
         shopName,
@@ -408,7 +431,7 @@ router.post(
         business_type,
       } = req.body;
 
-      const seller = await SellerV2.findByPk(id);
+      const seller = await Seller.findByPk(id);
       if (!seller) {
         return res.status(404).json({
           success: false,
@@ -419,17 +442,33 @@ router.post(
 
       const updateData = {};
 
-      if (sellerName) updateData.name = sellerName;
-      if (whatsappNumber) updateData.phone = whatsappNumber;
-      if (business_type) updateData.business_type = business_type;
-
-      if (brandColor !== undefined || theme_colors !== undefined) {
-        const incomingColor = theme_colors || brandColor;
-        updateData.brand_color =
-          typeof incomingColor === "string" && incomingColor.startsWith("{")
-            ? JSON.parse(incomingColor)
-            : incomingColor;
+      // Identity fields — seller (owner) only
+      if (isOwner) {
+        if (sellerName) updateData.name = sellerName;
+        if (whatsappNumber) updateData.phone = whatsappNumber;
+        if (brandColor !== undefined || theme_colors !== undefined) {
+          const incomingColor = theme_colors || brandColor;
+          updateData.brand_color =
+            typeof incomingColor === "string" && incomingColor.startsWith("{")
+              ? JSON.parse(incomingColor)
+              : incomingColor;
+        }
+      } else if (
+        shopName ||
+        whatsappNumber ||
+        brandColor ||
+        theme_colors ||
+        req.files?.shop_image
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          message:
+            "تەنها خاوەنی فرۆشگا دەتوانێت ناوی فرۆشگا، ژمارە، یان ڕەنگی براند بگۆڕێت.",
+        });
       }
+
+      if (business_type) updateData.business_type = business_type;
 
       if (bio !== undefined) updateData.bio = bio || null;
       if (shopLocation !== undefined) {
@@ -445,7 +484,7 @@ router.post(
             : socialLinks;
       }
 
-      const shopImageFile = req.files?.shop_image?.[0] || null;
+      const shopImageFile = isOwner ? req.files?.shop_image?.[0] || null : null;
       if (shopImageFile) {
         if (seller.shop_image) {
           const oldImageBytes = await getStoredAssetBytes(seller.shop_image);
@@ -492,33 +531,39 @@ router.post(
   },
 );
 
-// 5) GET UI SETTINGS
-router.get("/ui-settings", jwtVerifySellerToken, async (req, res) => {
-  try {
-    const id = req.user?.id || req.user?.seller_id;
-    const seller = await SellerV2.findByPk(id, {
-      attributes: ["id", "ui_settings"],
-    });
-
-    if (!seller) {
-      return res.status(404).json({
-        success: false,
-        error: true,
-        message: "Seller not found",
+// 5) GET UI SETTINGS — seller + admin
+router.get(
+  "/ui-settings",
+  jwtVerifySellerToken,
+  attachActor,
+  canManageSettings,
+  async (req, res) => {
+    try {
+      const id = res.locals.sellerId;
+      const seller = await Seller.findByPk(id, {
+        attributes: ["id", "ui_settings"],
       });
-    }
 
-    return res.status(200).json({
-      success: true,
-      error: false,
-      uiSettings: normalizeUiSettings(seller.ui_settings),
-    });
-  } catch (err) {
-    return res
-      .status(500)
-      .json({ success: false, error: true, message: "Server error" });
-  }
-});
+      if (!seller) {
+        return res.status(404).json({
+          success: false,
+          error: true,
+          message: "Seller not found",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        error: false,
+        uiSettings: normalizeUiSettings(seller.ui_settings),
+      });
+    } catch (err) {
+      return res
+        .status(500)
+        .json({ success: false, error: true, message: "Server error" });
+    }
+  },
+);
 
 router.use((err, req, res, next) => {
   if (err?.code === "LIMIT_FILE_SIZE") {

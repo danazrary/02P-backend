@@ -4,7 +4,7 @@ import sequelize from "../../database/sequelize.js";
 
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
-import SellerV2 from "../../database/sellerv2.js";
+import Seller from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
@@ -22,6 +22,12 @@ import {
 } from "../../utils/timezoneHandler.js";
 import { normalizeUiSettings } from "../../utils/uiSettings.js";
 import { getCategoryMap } from "../../utils/categoryTranslations.js";
+import {
+  attachActor,
+  canViewAnalytics,
+  canManageSettings,
+  canChangeShopIdentity,
+} from "../../middlewares/staffPermissions.js";
 
 const router = Router();
 
@@ -180,319 +186,334 @@ function parseRedLine(raw) {
   };
 }
 
-// GET /dashboard
-router.get("/dashboard", jwtVerifySellerToken, async (req, res) => {
-  try {
-    const id = req.user?.id || req.user?.seller_id;
-    const now = new Date();
+// GET /dashboard — Allowed: seller, admin
+router.get(
+  "/dashboard",
+  jwtVerifySellerToken,
+  attachActor,
+  canViewAnalytics,
+  async (req, res) => {
+    try {
+      const id = res.locals.sellerId;
+      const now = new Date();
 
-    const selectedPlan = parseSelectedPlan(req.query.selectedPlan);
-    const productLimit = Math.min(
-      Math.max(
-        parseInt(req.query.productLimit, 10) || DEFAULT_PRODUCT_LIMIT,
-        1,
-      ),
-      MAX_PRODUCT_LIMIT,
-    );
-    const productOffset = Math.max(
-      parseInt(req.query.productOffset, 10) || 0,
-      0,
-    );
+      const selectedPlan = parseSelectedPlan(req.query.selectedPlan);
+      const productLimit = Math.min(
+        Math.max(
+          parseInt(req.query.productLimit, 10) || DEFAULT_PRODUCT_LIMIT,
+          1,
+        ),
+        MAX_PRODUCT_LIMIT,
+      );
+      const productOffset = Math.max(
+        parseInt(req.query.productOffset, 10) || 0,
+        0,
+      );
 
-    const seller = await SellerV2.findByPk(id);
-    if (!seller) {
-      res.clearCookie("s_t", clearCookieOpts());
-      return res.status(404).json({
+      const seller = await Seller.findByPk(id);
+      if (!seller) {
+        res.clearCookie("s_t", clearCookieOpts());
+        return res.status(404).json({
+          success: false,
+          error: true,
+          logout: true,
+          message: "Seller not found in V2",
+        });
+      }
+
+      let sellerPlanRecord = await SellerPlan.findOne({
+        where: { seller_id: id },
+      });
+
+      if (!sellerPlanRecord) {
+        const wantsTrial = selectedPlan?.name === "trial";
+        let newPlanData;
+
+        if (wantsTrial) {
+          const trialPlan = await Plan.findByPk(TRIAL_PLAN_ID);
+          const trialDays = trialPlan?.duration_days ?? 7;
+          newPlanData = {
+            seller_id: id,
+            plan_id: TRIAL_PLAN_ID,
+            start_date: toUTC(now),
+            end_date: toUTC(new Date(now.getTime() + trialDays * 86_400_000)),
+            is_trial: true,
+            trial_ended: false,
+            status: true,
+          };
+        } else {
+          newPlanData = {
+            seller_id: id,
+            plan_id: FREE_PLAN_ID,
+            start_date: toUTC(now),
+            end_date: toUTC(FREE_PLAN_END_DATE),
+            is_trial: false,
+            trial_ended: false,
+            status: true,
+          };
+        }
+
+        const t = await sequelize.transaction();
+        try {
+          sellerPlanRecord = await SellerPlan.create(newPlanData, {
+            transaction: t,
+          });
+          await t.commit();
+        } catch (err) {
+          await t.rollback();
+          throw err;
+        }
+      }
+
+      const planRow = await Plan.findByPk(sellerPlanRecord.plan_id);
+      const planName = planRow?.name ?? "Free";
+
+      const isTrial = sellerPlanRecord.plan_id === TRIAL_PLAN_ID;
+      const isFree = sellerPlanRecord.plan_id === FREE_PLAN_ID;
+      const isPaid = !isTrial && !isFree;
+
+      if (isTrial) {
+        const expiredResponse = await handleExpiredPlan(
+          seller,
+          sellerPlanRecord,
+          planName,
+          "trial_expired",
+          now,
+        );
+        if (expiredResponse) return res.status(200).json(expiredResponse);
+      }
+
+      if (isPaid) {
+        const expiredResponse = await handleExpiredPlan(
+          seller,
+          sellerPlanRecord,
+          planName,
+          "plan_expired",
+          now,
+        );
+        if (expiredResponse) return res.status(200).json(expiredResponse);
+      }
+
+      const [
+        currentProductCount,
+        currentOfferCount,
+        offers,
+        { count: totalProductsCount, rows: rawProducts },
+        storageUsedMb,
+      ] = await Promise.all([
+        Product.count({ where: { seller_id: id } }),
+        SellerOffer.count({ where: { seller_id: id, is_active: true } }),
+        SellerOffer.findAll({
+          where: {
+            seller_id: id,
+            is_active: true,
+            end_date: { [Op.gte]: now },
+          },
+          attributes: [
+            "id",
+            "titleKu",
+            "titleAr",
+            "cover_image",
+            "type_offer",
+            "start_date",
+            "end_date",
+            "language",
+            "discount_price_type",
+            "discount_price",
+            "discount_percent",
+            "discount_or_free_delivery",
+          ],
+        }),
+        Product.findAndCountAll({
+          where: { seller_id: id },
+          include: [
+            {
+              model: ProductImage,
+              as: "productImages",
+              attributes: ["image_key", "thumb_key", "is_main"],
+              required: false,
+            },
+          ],
+          limit: productLimit,
+          offset: productOffset,
+          order: [["id", "DESC"]],
+          distinct: true,
+        }),
+        ensureSellerStorageUsage(id, planRow, { force: false }),
+      ]);
+
+      SellerOffer.destroy({
+        where: { seller_id: id, end_date: { [Op.lt]: now } },
+      }).catch((err) =>
+        console.error("[dashboard] Failed to delete expired offers:", err),
+      );
+
+      const cleanedRows = await checkAndCleanProductExpiration(rawProducts);
+      const products = cleanedRows.map((row) => normalizeProduct(row));
+      const hasMoreProducts = productOffset + productLimit < totalProductsCount;
+
+      const ku = parseRedLine(seller.red_line);
+      const ar = parseRedLine(seller.red_lineAr);
+
+      if (ku.needsCleanup || ar.needsCleanup) {
+        const updateObj = {};
+        if (ku.needsCleanup) updateObj.red_line = null;
+        if (ar.needsCleanup) updateObj.red_lineAr = null;
+        Seller.update(updateObj, { where: { id } }).catch((err) =>
+          console.error("[dashboard] Failed to clean red_line fields:", err),
+        );
+      }
+
+      let redLine = null;
+      if (ku.data || ar.data) {
+        const language =
+          ku.data && ar.data ? "both" : ku.data ? "kurdish" : "arabic";
+        const kuStatus = ku.data
+          ? getRedLineStatus(ku.data.start_time, ku.data.end_time)
+          : null;
+        const arStatus = ar.data
+          ? getRedLineStatus(ar.data.start_time, ar.data.end_time)
+          : null;
+
+        redLine = {
+          textKu: ku.data?.text ?? "",
+          textAr: ar.data?.text ?? "",
+          language,
+          start_time: ku.data?.start_time ?? ar.data?.start_time,
+          end_time: ku.data?.end_time ?? ar.data?.end_time,
+          status: kuStatus || arStatus,
+        };
+      }
+
+      let productBadges = seller.product_badges || [];
+      if (typeof productBadges === "string") {
+        try {
+          productBadges = JSON.parse(productBadges);
+        } catch {
+          productBadges = [];
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        error: false,
+        logout: false,
+        message: "Dashboard loaded successfully",
+        ...sellerBase(seller, sellerPlanRecord, planName),
+        sellerRegistrationDate: seller.created_at || seller.createdAt,
+        product_badges: Array.isArray(productBadges) ? productBadges : [],
+        yourShopClose: false,
+        is_trial: sellerPlanRecord.is_trial,
+        trial_ended: sellerPlanRecord.trial_ended,
+        plan_start_date: sellerPlanRecord.start_date,
+        show_plan_selection: sellerPlanRecord.plan_id === FREE_PLAN_ID,
+        selected_plan_info: selectedPlan,
+        brand_color: seller.brand_color ?? null,
+        category_translations: getCategoryMap(seller),
+        red_line: redLine,
+        products,
+        totalProducts: totalProductsCount,
+        hasMoreProducts,
+        offers,
+        product_limit_reached:
+          currentProductCount >= (planRow?.max_products ?? 0),
+        offer_limit_reached: currentOfferCount >= (planRow?.max_offers ?? 0),
+        max_products: planRow?.max_products ?? 0,
+        max_offers: planRow?.max_offers ?? 0,
+        current_product_count: currentProductCount,
+        current_offer_count: currentOfferCount,
+        storage_limit_mb: planRow?.storage_limit_mb ?? 0,
+        storage_used_mb: parseFloat(storageUsedMb ?? 0),
+        default_shop_lang: seller.default_shop_lang || "ku",
+        order_type: seller.order_type || "both",
+        ui_settings: normalizeUiSettings(seller.ui_settings),
+      });
+    } catch (error) {
+      console.error("[dashboard] Unhandled error:", error);
+      return res.status(500).json({
         success: false,
         error: true,
-        logout: true,
-        message: "Seller not found in V2",
+        logout: false,
+        message: "Server error",
       });
     }
+  },
+);
 
-    let sellerPlanRecord = await SellerPlan.findOne({
-      where: { seller_id: id },
-    });
+// Badges — Allowed: seller, admin
+router.post(
+  "/product-badges",
+  jwtVerifySellerToken,
+  attachActor,
+  canManageSettings,
+  async (req, res) => {
+    try {
+      const sellerId = res.locals.sellerId;
+      const { productId, titleKu, titleAr, bgColor } = req.body;
 
-    if (!sellerPlanRecord) {
-      const wantsTrial = selectedPlan?.name === "trial";
-      let newPlanData;
-
-      if (wantsTrial) {
-        const trialPlan = await Plan.findByPk(TRIAL_PLAN_ID);
-        const trialDays = trialPlan?.duration_days ?? 7;
-        newPlanData = {
-          seller_id: id,
-          plan_id: TRIAL_PLAN_ID,
-          start_date: toUTC(now),
-          end_date: toUTC(new Date(now.getTime() + trialDays * 86_400_000)),
-          is_trial: true,
-          trial_ended: false,
-          status: true,
-        };
-      } else {
-        newPlanData = {
-          seller_id: id,
-          plan_id: FREE_PLAN_ID,
-          start_date: toUTC(now),
-          end_date: toUTC(FREE_PLAN_END_DATE),
-          is_trial: false,
-          trial_ended: false,
-          status: true,
-        };
-      }
-
-      const t = await sequelize.transaction();
-      try {
-        sellerPlanRecord = await SellerPlan.create(newPlanData, {
-          transaction: t,
+      const parsedProductId = Number(productId);
+      if (!parsedProductId || !titleKu?.trim() || !titleAr?.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Product ID and titles for both languages are required.",
         });
-        await t.commit();
-      } catch (err) {
-        await t.rollback();
-        throw err;
       }
-    }
 
-    const planRow = await Plan.findByPk(sellerPlanRecord.plan_id);
-    const planName = planRow?.name ?? "Free";
+      const productExists = await Product.findOne({
+        where: { id: parsedProductId, seller_id: sellerId },
+      });
 
-    const isTrial = sellerPlanRecord.plan_id === TRIAL_PLAN_ID;
-    const isFree = sellerPlanRecord.plan_id === FREE_PLAN_ID;
-    const isPaid = !isTrial && !isFree;
+      if (!productExists) {
+        return res.status(404).json({
+          success: false,
+          message: "Product not found or does not belong to your shop.",
+        });
+      }
 
-    if (isTrial) {
-      const expiredResponse = await handleExpiredPlan(
-        seller,
-        sellerPlanRecord,
-        planName,
-        "trial_expired",
-        now,
+      const seller = await Seller.findByPk(sellerId);
+      let currentBadges = seller.product_badges || [];
+      if (typeof currentBadges === "string") {
+        try {
+          currentBadges = JSON.parse(currentBadges);
+        } catch {
+          currentBadges = [];
+        }
+      }
+
+      const updatedBadges = currentBadges.filter(
+        (b) => Number(b.productId) !== parsedProductId,
       );
-      if (expiredResponse) return res.status(200).json(expiredResponse);
-    }
-
-    if (isPaid) {
-      const expiredResponse = await handleExpiredPlan(
-        seller,
-        sellerPlanRecord,
-        planName,
-        "plan_expired",
-        now,
-      );
-      if (expiredResponse) return res.status(200).json(expiredResponse);
-    }
-
-    const [
-      currentProductCount,
-      currentOfferCount,
-      offers,
-      { count: totalProductsCount, rows: rawProducts },
-      storageUsedMb,
-    ] = await Promise.all([
-      Product.count({ where: { seller_id: id } }),
-      SellerOffer.count({ where: { seller_id: id, is_active: true } }),
-      SellerOffer.findAll({
-        where: {
-          seller_id: id,
-          is_active: true,
-          end_date: { [Op.gte]: now },
-        },
-        attributes: [
-          "id",
-          "titleKu",
-          "titleAr",
-          "cover_image",
-          "type_offer",
-          "start_date",
-          "end_date",
-          "language",
-          "discount_price_type",
-          "discount_price",
-          "discount_percent",
-          "discount_or_free_delivery",
-        ],
-      }),
-      Product.findAndCountAll({
-        where: { seller_id: id },
-        include: [
-          {
-            model: ProductImage,
-            as: "productImages",
-            attributes: ["image_key", "thumb_key", "is_main"],
-            required: false,
-          },
-        ],
-        limit: productLimit,
-        offset: productOffset,
-        order: [["id", "DESC"]],
-        distinct: true,
-      }),
-      ensureSellerStorageUsage(id, planRow, { force: false }),
-    ]);
-
-    SellerOffer.destroy({
-      where: { seller_id: id, end_date: { [Op.lt]: now } },
-    }).catch((err) =>
-      console.error("[dashboard] Failed to delete expired offers:", err),
-    );
-
-    const cleanedRows = await checkAndCleanProductExpiration(rawProducts);
-    const products = cleanedRows.map((row) => normalizeProduct(row));
-    const hasMoreProducts = productOffset + productLimit < totalProductsCount;
-
-    const ku = parseRedLine(seller.red_line);
-    const ar = parseRedLine(seller.red_lineAr);
-
-    if (ku.needsCleanup || ar.needsCleanup) {
-      const updateObj = {};
-      if (ku.needsCleanup) updateObj.red_line = null;
-      if (ar.needsCleanup) updateObj.red_lineAr = null;
-      SellerV2.update(updateObj, { where: { id } }).catch((err) =>
-        console.error("[dashboard] Failed to clean red_line fields:", err),
-      );
-    }
-
-    let redLine = null;
-    if (ku.data || ar.data) {
-      const language =
-        ku.data && ar.data ? "both" : ku.data ? "kurdish" : "arabic";
-      const kuStatus = ku.data
-        ? getRedLineStatus(ku.data.start_time, ku.data.end_time)
-        : null;
-      const arStatus = ar.data
-        ? getRedLineStatus(ar.data.start_time, ar.data.end_time)
-        : null;
-
-      redLine = {
-        textKu: ku.data?.text ?? "",
-        textAr: ar.data?.text ?? "",
-        language,
-        start_time: ku.data?.start_time ?? ar.data?.start_time,
-        end_time: ku.data?.end_time ?? ar.data?.end_time,
-        status: kuStatus || arStatus,
+      const newBadge = {
+        productId: parsedProductId,
+        titleKu: titleKu.trim(),
+        titleAr: titleAr.trim(),
+        bgColor: bgColor || "#000000",
       };
-    }
+      updatedBadges.push(newBadge);
 
-    let productBadges = seller.product_badges || [];
-    if (typeof productBadges === "string") {
-      try {
-        productBadges = JSON.parse(productBadges);
-      } catch {
-        productBadges = [];
-      }
-    }
+      await seller.update({ product_badges: updatedBadges });
 
-    return res.status(200).json({
-      success: true,
-      error: false,
-      logout: false,
-      message: "Dashboard loaded successfully",
-      ...sellerBase(seller, sellerPlanRecord, planName),
-      sellerRegistrationDate: seller.created_at || seller.createdAt,
-      product_badges: Array.isArray(productBadges) ? productBadges : [],
-      yourShopClose: false,
-      is_trial: sellerPlanRecord.is_trial,
-      trial_ended: sellerPlanRecord.trial_ended,
-      plan_start_date: sellerPlanRecord.start_date,
-      show_plan_selection: sellerPlanRecord.plan_id === FREE_PLAN_ID,
-      selected_plan_info: selectedPlan,
-      brand_color: seller.brand_color ?? null,
-      category_translations: getCategoryMap(seller),
-      red_line: redLine,
-      products,
-      totalProducts: totalProductsCount,
-      hasMoreProducts,
-      offers,
-      product_limit_reached:
-        currentProductCount >= (planRow?.max_products ?? 0),
-      offer_limit_reached: currentOfferCount >= (planRow?.max_offers ?? 0),
-      max_products: planRow?.max_products ?? 0,
-      max_offers: planRow?.max_offers ?? 0,
-      current_product_count: currentProductCount,
-      current_offer_count: currentOfferCount,
-      storage_limit_mb: planRow?.storage_limit_mb ?? 0,
-      storage_used_mb: parseFloat(storageUsedMb ?? 0),
-      default_shop_lang: seller.default_shop_lang || "ku",
-      order_type: seller.order_type || "both",
-      ui_settings: normalizeUiSettings(seller.ui_settings),
-    });
-  } catch (error) {
-    console.error("[dashboard] Unhandled error:", error);
-    return res.status(500).json({
-      success: false,
-      error: true,
-      logout: false,
-      message: "Server error",
-    });
-  }
-});
-
-// Badges
-router.post("/product-badges", jwtVerifySellerToken, async (req, res) => {
-  try {
-    const sellerId = req.user?.id || req.user?.seller_id;
-    const { productId, titleKu, titleAr, bgColor } = req.body;
-
-    const parsedProductId = Number(productId);
-    if (!parsedProductId || !titleKu?.trim() || !titleAr?.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Product ID and titles for both languages are required.",
+      return res.status(200).json({
+        success: true,
+        message: "Badge saved successfully.",
+        product_badges: updatedBadges,
       });
+    } catch (error) {
+      console.error("Error saving product badge:", error);
+      return res.status(500).json({ success: false, message: "Server error." });
     }
+  },
+);
 
-    const productExists = await Product.findOne({
-      where: { id: parsedProductId, seller_id: sellerId },
-    });
-
-    if (!productExists) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found or does not belong to your shop.",
-      });
-    }
-
-    const seller = await SellerV2.findByPk(sellerId);
-    let currentBadges = seller.product_badges || [];
-    if (typeof currentBadges === "string") {
-      try {
-        currentBadges = JSON.parse(currentBadges);
-      } catch {
-        currentBadges = [];
-      }
-    }
-
-    const updatedBadges = currentBadges.filter(
-      (b) => Number(b.productId) !== parsedProductId,
-    );
-    const newBadge = {
-      productId: parsedProductId,
-      titleKu: titleKu.trim(),
-      titleAr: titleAr.trim(),
-      bgColor: bgColor || "#000000",
-    };
-    updatedBadges.push(newBadge);
-
-    await seller.update({ product_badges: updatedBadges });
-
-    return res.status(200).json({
-      success: true,
-      message: "Badge saved successfully.",
-      product_badges: updatedBadges,
-    });
-  } catch (error) {
-    console.error("Error saving product badge:", error);
-    return res.status(500).json({ success: false, message: "Server error." });
-  }
-});
-
+// Allowed: seller, admin
 router.delete(
   "/product-badges/:productId",
   jwtVerifySellerToken,
+  attachActor,
+  canManageSettings,
   async (req, res) => {
     try {
-      const sellerId = req.user?.id || req.user?.seller_id;
+      const sellerId = res.locals.sellerId;
       const { productId } = req.params;
 
       const parsedProductId = Number(productId);
@@ -502,7 +523,7 @@ router.delete(
           .json({ success: false, message: "Invalid product ID." });
       }
 
-      const seller = await SellerV2.findByPk(sellerId);
+      const seller = await Seller.findByPk(sellerId);
       if (!seller) {
         return res
           .status(404)

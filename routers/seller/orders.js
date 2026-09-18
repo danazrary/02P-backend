@@ -4,13 +4,18 @@ import { Op, fn, col } from "sequelize";
 import sequelize from "../../database/sequelize.js";
 import Order from "../../database/order.js";
 import OrderItem from "../../database/orderItem.js";
-import SellerV2 from "../../database/sellerv2.js";
+import Seller from "../../database/sellerv2.js";
 import Product from "../../database/products.js";
 import Report from "../../database/report.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { notifySellerNewOrder } from "../../utils/webPush.js";
 import { normalizeUiSettings } from "../../utils/uiSettings.js";
 import { applyItemStockDecrement } from "../../utils/productStock.js";
+import {
+  attachActor,
+  canViewOrders,
+  canUpdateOrderStatus,
+} from "../../middlewares/staffPermissions.js";
 
 const router = Router();
 
@@ -378,7 +383,7 @@ router.post("/orders/create", async (req, res) => {
         .json({ success: false, message: "seller_id is required" });
     }
 
-    const seller = await SellerV2.findByPk(Number(seller_id));
+    const seller = await Seller.findByPk(Number(seller_id));
     if (!seller) {
       return res
         .status(404)
@@ -393,12 +398,10 @@ router.post("/orders/create", async (req, res) => {
     }
 
     if (!["COD", "Card"].includes(payment_method)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "payment_method must be COD or Card",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "payment_method must be COD or Card",
+      });
     }
 
     if (
@@ -654,192 +657,138 @@ router.post("/orders/create", async (req, res) => {
   }
 });
 
-// 2) GET /orders
-router.get("/orders", jwtVerifySellerToken, async (req, res) => {
-  try {
-    const sellerId = req.user?.id || req.user?.seller_id;
-    const { status, search, page = 1, limit = 20 } = req.query;
-
-    const pageNum = Math.max(1, parseInt(page, 10));
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
-    const offset = (pageNum - 1) * limitNum;
-
-    const where = { seller_id: sellerId };
-
-    if (
-      status &&
-      ["pending", "accepted", "shipping", "completed", "canceled"].includes(
-        status,
-      )
-    ) {
-      where.status = status;
-    }
-
-    if (search && typeof search === "string" && search.trim()) {
-      const term = `%${search.trim()}%`;
-      where[Op.or] = [
-        { order_id: { [Op.like]: term } },
-        { customer_name: { [Op.like]: term } },
-        { customer_phone: { [Op.like]: term } },
-      ];
-    }
-
-    const buildQueryOptions = (
-      withVariantSnapshot = true,
-      withSelectedOptions = true,
-    ) => ({
-      where,
-      attributes: [
-        "id",
-        "order_id",
-        "seller_id",
-        "customer_name",
-        "customer_phone",
-        "customer_city",
-        "customer_location_detail",
-        "customer_contact_preference",
-        "payment_method",
-        "currency",
-        "subtotal",
-        "delivery_fee",
-        "discount",
-        "cashback",
-        "total_price",
-        "status",
-        "notes",
-        "createdAt",
-        "updatedAt",
-      ],
-      include: [
-        {
-          model: OrderItem,
-          as: "items",
-          attributes: [
-            "id",
-            "product_name_snapshot",
-            "quantity",
-            "unit_price",
-            "total_price",
-            "cashback_amount",
-            "color",
-            "size",
-            ...(withVariantSnapshot ? ["variant_options_snapshot"] : []),
-            ...(withSelectedOptions ? ["selected_options"] : []),
-            "currency",
-          ],
-        },
-      ],
-      order: [["createdAt", "DESC"]],
-      limit: limitNum,
-      offset,
-    });
-
-    let count;
-    let rows;
+// 2) GET /orders — Allowed: seller, admin
+router.get(
+  "/orders",
+  jwtVerifySellerToken,
+  attachActor,
+  canViewOrders,
+  async (req, res) => {
     try {
-      ({ count, rows } = await Order.findAndCountAll(
-        buildQueryOptions(true, true),
-      ));
-    } catch (error) {
-      if (!isMissingOrderItemOptionalColumnError(error)) throw error;
-      const missing = getMissingOptionalColumns(error);
-      ({ count, rows } = await Order.findAndCountAll(
-        buildQueryOptions(
-          !missing.variant_options_snapshot,
-          !missing.selected_options,
-        ),
-      ));
-    }
+      const sellerId = res.locals.sellerId;
+      const { status, search, page = 1, limit = 20 } = req.query;
 
-    return res.json({
-      success: true,
-      orders: rows,
-      pagination: {
-        total: count,
-        page: pageNum,
-        limit: limitNum,
-        totalPages: Math.ceil(count / limitNum),
-      },
-    });
-  } catch (err) {
-    console.error("Get orders error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-});
+      const pageNum = Math.max(1, parseInt(page, 10));
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
+      const offset = (pageNum - 1) * limitNum;
 
-// 3) GET /orders/stats
-router.get("/orders/stats", jwtVerifySellerToken, async (req, res) => {
-  try {
-    const sellerId = req.user?.id || req.user?.seller_id;
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
+      const where = { seller_id: sellerId };
 
-    const [
-      totalOrders,
-      todayOrders,
-      pending,
-      accepted,
-      shipping,
-      completed,
-      canceled,
-      revenueIQD,
-      revenueUSD,
-      productsSold,
-      lastSevenDays,
-    ] = await Promise.all([
-      Order.count({ where: { seller_id: sellerId } }),
-      Order.count({
-        where: { seller_id: sellerId, createdAt: { [Op.gte]: todayStart } },
-      }),
-      Order.count({ where: { seller_id: sellerId, status: "pending" } }),
-      Order.count({ where: { seller_id: sellerId, status: "accepted" } }),
-      Order.count({ where: { seller_id: sellerId, status: "shipping" } }),
-      Order.count({ where: { seller_id: sellerId, status: "completed" } }),
-      Order.count({ where: { seller_id: sellerId, status: "canceled" } }),
-      Order.sum("total_price", {
-        where: {
-          seller_id: sellerId,
-          currency: "IQD",
-          status: { [Op.ne]: "canceled" },
-        },
-      }),
-      Order.sum("total_price", {
-        where: {
-          seller_id: sellerId,
-          currency: "USD",
-          status: { [Op.ne]: "canceled" },
-        },
-      }),
-      OrderItem.sum("quantity", {
+      if (
+        status &&
+        ["pending", "accepted", "shipping", "completed", "canceled"].includes(
+          status,
+        )
+      ) {
+        where.status = status;
+      }
+
+      if (search && typeof search === "string" && search.trim()) {
+        const term = `%${search.trim()}%`;
+        where[Op.or] = [
+          { order_id: { [Op.like]: term } },
+          { customer_name: { [Op.like]: term } },
+          { customer_phone: { [Op.like]: term } },
+        ];
+      }
+
+      const buildQueryOptions = (
+        withVariantSnapshot = true,
+        withSelectedOptions = true,
+      ) => ({
+        where,
+        attributes: [
+          "id",
+          "order_id",
+          "seller_id",
+          "customer_name",
+          "customer_phone",
+          "customer_city",
+          "customer_location_detail",
+          "customer_contact_preference",
+          "payment_method",
+          "currency",
+          "subtotal",
+          "delivery_fee",
+          "discount",
+          "cashback",
+          "total_price",
+          "status",
+          "notes",
+          "createdAt",
+          "updatedAt",
+        ],
         include: [
           {
-            model: Order,
-            as: "order",
-            where: { seller_id: sellerId, status: { [Op.ne]: "canceled" } },
-            attributes: [],
+            model: OrderItem,
+            as: "items",
+            attributes: [
+              "id",
+              "product_name_snapshot",
+              "quantity",
+              "unit_price",
+              "total_price",
+              "cashback_amount",
+              "color",
+              "size",
+              ...(withVariantSnapshot ? ["variant_options_snapshot"] : []),
+              ...(withSelectedOptions ? ["selected_options"] : []),
+              "currency",
+            ],
           },
         ],
-      }),
-      Order.findAll({
-        where: {
-          seller_id: sellerId,
-          createdAt: {
-            [Op.gte]: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-          },
-        },
-        attributes: [
-          [fn("DATE", col("createdAt")), "date"],
-          [fn("COUNT", col("id")), "count"],
-        ],
-        group: [fn("DATE", col("createdAt"))],
-        order: [[fn("DATE", col("createdAt")), "ASC"]],
-        raw: true,
-      }),
-    ]);
+        order: [["createdAt", "DESC"]],
+        limit: limitNum,
+        offset,
+      });
 
-    return res.json({
-      success: true,
-      stats: {
+      let count;
+      let rows;
+      try {
+        ({ count, rows } = await Order.findAndCountAll(
+          buildQueryOptions(true, true),
+        ));
+      } catch (error) {
+        if (!isMissingOrderItemOptionalColumnError(error)) throw error;
+        const missing = getMissingOptionalColumns(error);
+        ({ count, rows } = await Order.findAndCountAll(
+          buildQueryOptions(
+            !missing.variant_options_snapshot,
+            !missing.selected_options,
+          ),
+        ));
+      }
+
+      return res.json({
+        success: true,
+        orders: rows,
+        pagination: {
+          total: count,
+          page: pageNum,
+          limit: limitNum,
+          totalPages: Math.ceil(count / limitNum),
+        },
+      });
+    } catch (err) {
+      console.error("Get orders error:", err);
+      return res.status(500).json({ success: false, message: "Server error" });
+    }
+  },
+);
+
+// 3) GET /orders/stats — Allowed: seller, admin
+router.get(
+  "/orders/stats",
+  jwtVerifySellerToken,
+  attachActor,
+  canViewOrders,
+  async (req, res) => {
+    try {
+      const sellerId = res.locals.sellerId;
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      const [
         totalOrders,
         todayOrders,
         pending,
@@ -847,103 +796,175 @@ router.get("/orders/stats", jwtVerifySellerToken, async (req, res) => {
         shipping,
         completed,
         canceled,
-        totalIQD: parseFloat(revenueIQD || 0),
-        totalUSD: parseFloat(revenueUSD || 0),
-        productsSold: parseInt(productsSold || 0, 10),
+        revenueIQD,
+        revenueUSD,
+        productsSold,
         lastSevenDays,
-      },
-    });
-  } catch (err) {
-    console.error("Stats error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-// 4) GET /orders/:orderId
-router.get("/orders/:orderId", jwtVerifySellerToken, async (req, res) => {
-  try {
-    const sellerId = req.user?.id || req.user?.seller_id;
-    const { orderId } = req.params;
-
-    const buildDetailQuery = (
-      withVariantSnapshot = true,
-      withSelectedOptions = true,
-    ) => ({
-      where: { id: orderId, seller_id: sellerId },
-      attributes: [
-        "id",
-        "order_id",
-        "seller_id",
-        "customer_name",
-        "customer_phone",
-        "customer_city",
-        "customer_location_detail",
-        "customer_contact_preference",
-        "payment_method",
-        "currency",
-        "subtotal",
-        "delivery_fee",
-        "discount",
-        "cashback",
-        "total_price",
-        "status",
-        "notes",
-        "createdAt",
-        "updatedAt",
-      ],
-      include: [
-        {
-          model: OrderItem,
-          as: "items",
-          attributes: [
-            "id",
-            "order_id",
-            "product_id",
-            "product_name_snapshot",
-            "product_image_snapshot",
-            "color",
-            "size",
-            ...(withVariantSnapshot ? ["variant_options_snapshot"] : []),
-            ...(withSelectedOptions ? ["selected_options"] : []),
-            "quantity",
-            "unit_price",
-            "total_price",
-            "cashback_amount",
-            "currency",
-            "createdAt",
-            "updatedAt",
+      ] = await Promise.all([
+        Order.count({ where: { seller_id: sellerId } }),
+        Order.count({
+          where: { seller_id: sellerId, createdAt: { [Op.gte]: todayStart } },
+        }),
+        Order.count({ where: { seller_id: sellerId, status: "pending" } }),
+        Order.count({ where: { seller_id: sellerId, status: "accepted" } }),
+        Order.count({ where: { seller_id: sellerId, status: "shipping" } }),
+        Order.count({ where: { seller_id: sellerId, status: "completed" } }),
+        Order.count({ where: { seller_id: sellerId, status: "canceled" } }),
+        Order.sum("total_price", {
+          where: {
+            seller_id: sellerId,
+            currency: "IQD",
+            status: { [Op.ne]: "canceled" },
+          },
+        }),
+        Order.sum("total_price", {
+          where: {
+            seller_id: sellerId,
+            currency: "USD",
+            status: { [Op.ne]: "canceled" },
+          },
+        }),
+        OrderItem.sum("quantity", {
+          include: [
+            {
+              model: Order,
+              as: "order",
+              where: { seller_id: sellerId, status: { [Op.ne]: "canceled" } },
+              attributes: [],
+            },
           ],
+        }),
+        Order.findAll({
+          where: {
+            seller_id: sellerId,
+            createdAt: {
+              [Op.gte]: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+            },
+          },
+          attributes: [
+            [fn("DATE", col("createdAt")), "date"],
+            [fn("COUNT", col("id")), "count"],
+          ],
+          group: [fn("DATE", col("createdAt"))],
+          order: [[fn("DATE", col("createdAt")), "ASC"]],
+          raw: true,
+        }),
+      ]);
+
+      return res.json({
+        success: true,
+        stats: {
+          totalOrders,
+          todayOrders,
+          pending,
+          accepted,
+          shipping,
+          completed,
+          canceled,
+          totalIQD: parseFloat(revenueIQD || 0),
+          totalUSD: parseFloat(revenueUSD || 0),
+          productsSold: parseInt(productsSold || 0, 10),
+          lastSevenDays,
         },
-      ],
-    });
+      });
+    } catch (err) {
+      console.error("Stats error:", err);
+      return res.status(500).json({ success: false, message: "Server error" });
+    }
+  },
+);
 
-    let order;
+// 4) GET /orders/:orderId — Allowed: seller, admin
+router.get(
+  "/orders/:orderId",
+  jwtVerifySellerToken,
+  attachActor,
+  canViewOrders,
+  async (req, res) => {
     try {
-      order = await Order.findOne(buildDetailQuery(true, true));
-    } catch (error) {
-      if (!isMissingOrderItemOptionalColumnError(error)) throw error;
-      const missing = getMissingOptionalColumns(error);
-      order = await Order.findOne(
-        buildDetailQuery(
-          !missing.variant_options_snapshot,
-          !missing.selected_options,
-        ),
-      );
-    }
+      const sellerId = res.locals.sellerId;
+      const { orderId } = req.params;
 
-    if (!order) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Order not found" });
-    }
+      const buildDetailQuery = (
+        withVariantSnapshot = true,
+        withSelectedOptions = true,
+      ) => ({
+        where: { id: orderId, seller_id: sellerId },
+        attributes: [
+          "id",
+          "order_id",
+          "seller_id",
+          "customer_name",
+          "customer_phone",
+          "customer_city",
+          "customer_location_detail",
+          "customer_contact_preference",
+          "payment_method",
+          "currency",
+          "subtotal",
+          "delivery_fee",
+          "discount",
+          "cashback",
+          "total_price",
+          "status",
+          "notes",
+          "createdAt",
+          "updatedAt",
+        ],
+        include: [
+          {
+            model: OrderItem,
+            as: "items",
+            attributes: [
+              "id",
+              "order_id",
+              "product_id",
+              "product_name_snapshot",
+              "product_image_snapshot",
+              "color",
+              "size",
+              ...(withVariantSnapshot ? ["variant_options_snapshot"] : []),
+              ...(withSelectedOptions ? ["selected_options"] : []),
+              "quantity",
+              "unit_price",
+              "total_price",
+              "cashback_amount",
+              "currency",
+              "createdAt",
+              "updatedAt",
+            ],
+          },
+        ],
+      });
 
-    const orderResponse = await buildOrderResponseWithLegacyCashback(order);
-    return res.json({ success: true, order: orderResponse });
-  } catch (err) {
-    console.error("Get order error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-});
+      let order;
+      try {
+        order = await Order.findOne(buildDetailQuery(true, true));
+      } catch (error) {
+        if (!isMissingOrderItemOptionalColumnError(error)) throw error;
+        const missing = getMissingOptionalColumns(error);
+        order = await Order.findOne(
+          buildDetailQuery(
+            !missing.variant_options_snapshot,
+            !missing.selected_options,
+          ),
+        );
+      }
+
+      if (!order) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Order not found" });
+      }
+
+      const orderResponse = await buildOrderResponseWithLegacyCashback(order);
+      return res.json({ success: true, order: orderResponse });
+    } catch (err) {
+      console.error("Get order error:", err);
+      return res.status(500).json({ success: false, message: "Server error" });
+    }
+  },
+);
 
 // 5) PUT /orders/:orderId/status
 const ALLOWED_STATUSES = [
@@ -954,12 +975,15 @@ const ALLOWED_STATUSES = [
   "canceled",
 ];
 
+// 5) PUT /orders/:orderId/status — Allowed: seller, admin
 router.put(
   "/orders/:orderId/status",
   jwtVerifySellerToken,
+  attachActor,
+  canUpdateOrderStatus,
   async (req, res) => {
     try {
-      const sellerId = req.user?.id || req.user?.seller_id;
+      const sellerId = res.locals.sellerId;
       const { orderId } = req.params;
       const { status } = req.body;
 

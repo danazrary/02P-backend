@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import Product from "../../database/products.js";
-import Seller from "../../database/seller.js";
+import Seller from "../../database/sellerv2.js";
 import ProductImage from "../../database/productImages.js";
 import Report from "../../database/report.js";
 import SellerOffer from "../../database/sellerOffer.js";
@@ -69,7 +69,7 @@ router.post("/cart-products", async (req, res) => {
     });
 
     // Get seller info (phone for WhatsApp)
-    const { default: Seller } = await import("../../database/seller.js");
+    const { default: Seller } = await import("../../database/sellerv2.js");
     const seller = await Seller.findByPk(sellerId, {
       attributes: [
         "id",
@@ -100,8 +100,6 @@ router.post("/cart-products", async (req, res) => {
   }
 });
 
-// Multer setup to save images in /uploads folder
-
 // Route to get product details
 router.get("/product/:id", detectSeller, async (req, res) => {
   try {
@@ -112,6 +110,7 @@ router.get("/product/:id", detectSeller, async (req, res) => {
       include: [
         {
           model: Seller,
+          as: "seller", // کلیلە دیاریکراوەکە لێرە زیادکراوە
           attributes: ["id", "shop_name"],
         },
         {
@@ -130,8 +129,9 @@ router.get("/product/:id", detectSeller, async (req, res) => {
       });
     }
 
-    // Validate product belongs to the requested shop (prevents cross-shop leakage)
-    if (shopName && product.Seller && product.Seller.shop_name !== shopName) {
+    // پشکنینی ناوی فرۆشگا بە هەردوو شێوازی پیتەکان (seller / Seller)
+    const sellerData = product.seller || product.Seller;
+    if (shopName && sellerData && sellerData.shop_name !== shopName) {
       return res.status(404).json({
         success: false,
         error: true,
@@ -180,6 +180,7 @@ router.get("/product/:id", detectSeller, async (req, res) => {
     });
   }
 });
+
 router.post("/add-feedback", async (req, res) => {
   try {
     const { message, rating, type } = req.body;

@@ -4,6 +4,10 @@ import { v4 as uuidv4 } from "uuid";
 import ShopSection from "../../database/ShopSection.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { createR2Multer, uploadToR2, deleteFromR2 } from "../../utils/r2.js";
+import {
+  attachActor,
+  canManageShopSections,
+} from "../../middlewares/staffPermissions.js";
 
 const router = Router();
 
@@ -15,7 +19,6 @@ const MAX_BRAND_FILES = MAX_BRAND_ITEMS;
 const MAX_BRAND_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_FEATURED_CATEGORY_KEYS = 6;
 
-// زیادکردنی featured_categories بۆ لیستی ڕێگەپێدراوەکان
 const VALID_SECTION_KEYS = [
   "hero",
   "flash_banner",
@@ -283,7 +286,7 @@ function toCssLength(val, { minPx, maxPx, fallbackPx, defaultUnit = "rem" }) {
 // 1) GET ALL SECTIONS
 async function getAllSections(req, res) {
   try {
-    const sellerId = req.user?.id || req.user?.seller_id;
+    const sellerId = res.locals.sellerId || req.user?.seller_id || req.user?.id;
     const rows = await ShopSection.findAll({ where: { seller_id: sellerId } });
 
     const sectionMap = {};
@@ -324,7 +327,7 @@ async function getAllSections(req, res) {
 // 2) GET ONE SECTION
 async function getSection(req, res) {
   try {
-    const sellerId = req.user?.id || req.user?.seller_id;
+    const sellerId = res.locals.sellerId || req.user?.seller_id || req.user?.id;
     const { key } = req.params;
 
     if (!VALID_SECTION_KEYS.includes(key)) {
@@ -369,10 +372,10 @@ async function getSection(req, res) {
   }
 }
 
-// 3) UPSERT SECTION (چاککراو بۆ هەموو سێکشنەکان بەبێ 400)
+// 3) UPSERT SECTION
 async function upsertSection(req, res) {
   try {
-    const sellerId = req.user?.id || req.user?.seller_id;
+    const sellerId = res.locals.sellerId || req.user?.seller_id || req.user?.id;
     const { section_key, is_visible, config } = req.body;
 
     if (!VALID_SECTION_KEYS.includes(section_key)) {
@@ -423,7 +426,6 @@ async function upsertSection(req, res) {
     });
 
     if (!created) {
-      // ئەگەر config نەگۆڕابێت با هی پێشوو بپارێزرێت
       const finalConfig = config !== undefined ? parsedConfig : section.config;
       await section.update({ is_visible: isVisible, config: finalConfig });
     }
@@ -448,7 +450,7 @@ async function upsertSection(req, res) {
 // 4) BRANDS
 async function getBrandsSection(req, res) {
   try {
-    const sellerId = req.user?.id || req.user?.seller_id;
+    const sellerId = res.locals.sellerId || req.user?.seller_id || req.user?.id;
     const [section] = await ShopSection.findOrCreate({
       where: { seller_id: sellerId, section_key: "brands" },
       defaults: {
@@ -480,7 +482,7 @@ async function getBrandsSection(req, res) {
 
 async function upsertBrandsSection(req, res) {
   try {
-    const sellerId = req.user?.id || req.user?.seller_id;
+    const sellerId = res.locals.sellerId || req.user?.seller_id || req.user?.id;
     const files = req.files || [];
     const { is_visible, config, new_logos_meta, delete_keys } = req.body;
 
@@ -573,7 +575,7 @@ async function upsertBrandsSection(req, res) {
 // 5) HERO WITH IMAGES
 async function upsertHeroSection(req, res) {
   try {
-    const sellerId = req.user?.id || req.user?.seller_id;
+    const sellerId = res.locals.sellerId || req.user?.seller_id || req.user?.id;
     const files = req.files || [];
     const { is_visible, items_json, new_images_meta, delete_keys } = req.body;
 
@@ -706,19 +708,48 @@ async function upsertHeroSection(req, res) {
   }
 }
 
-router.get("/sections", jwtVerifySellerToken, getAllSections);
-router.get("/sections/:key", jwtVerifySellerToken, getSection);
-router.post("/sections/upsert", jwtVerifySellerToken, upsertSection);
-router.get("/shop-sections/brands", jwtVerifySellerToken, getBrandsSection);
+// لێرەدا دەسەڵاتەکە تەنها بەسەر ڕاوتەکانی سێکشن دانراوە تا لەسەر هیچی تر کاریگەر نەبێت
+router.get(
+  "/sections",
+  jwtVerifySellerToken,
+  attachActor,
+  canManageShopSections,
+  getAllSections,
+);
+router.get(
+  "/sections/:key",
+  jwtVerifySellerToken,
+  attachActor,
+  canManageShopSections,
+  getSection,
+);
+router.post(
+  "/sections/upsert",
+  jwtVerifySellerToken,
+  attachActor,
+  canManageShopSections,
+  upsertSection,
+);
+router.get(
+  "/shop-sections/brands",
+  jwtVerifySellerToken,
+  attachActor,
+  canManageShopSections,
+  getBrandsSection,
+);
 router.put(
   "/shop-sections/brands",
   jwtVerifySellerToken,
+  attachActor,
+  canManageShopSections,
   brandUploadMiddleware,
   upsertBrandsSection,
 );
 router.post(
   "/sections/hero/upsert",
   jwtVerifySellerToken,
+  attachActor,
+  canManageShopSections,
   heroUploadMiddleware,
   upsertHeroSection,
 );

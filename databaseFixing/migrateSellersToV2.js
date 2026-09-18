@@ -1,6 +1,6 @@
 // migrateSellersToV2.js
 import sequelize from "../database/sequelize.js";
-import SellerV2 from "../database/sellerv2.js"; // ناوی فایلەکە ڕاستکرایەوە
+import Seller from "../database/sellerv2.js"; // ناوی فایلەکە ڕاستکرایەوە
 
 async function migrateSellers() {
   const transaction = await sequelize.transaction();
@@ -15,7 +15,7 @@ async function migrateSellers() {
     for (const old of oldSellers) {
       const fallbackShopName = old.shop_name || `shop_${old.id}_${Date.now()}`;
 
-      await SellerV2.upsert(
+      await Seller.upsert(
         {
           id: old.id,
           googleId: old.googleId || null,

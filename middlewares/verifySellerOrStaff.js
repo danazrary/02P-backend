@@ -1,6 +1,6 @@
 // backend/middlewares/verifySellerOrStaff.js
 import jwt from "jsonwebtoken";
-import SellerV2 from "../database/sellerv2.js";
+import Seller from "../database/sellerv2.js";
 
 /**
  * ڕێگەدان تەنها بە خاوەنی فرۆشگا (Owner) یان ستافی خاوەن دەسەڵات
@@ -27,15 +27,13 @@ export function requireSellerOrStaff(
       // ئەگەر فرۆشیاری سەرەکی بوو (Owner)
       if (decoded.role === "seller" || decoded.seller_id || decoded.id) {
         const sellerId = decoded.seller_id || decoded.id;
-        const seller = await SellerV2.findByPk(sellerId);
+        const seller = await Seller.findByPk(sellerId);
         if (!seller || !seller.is_active) {
-          return res
-            .status(403)
-            .json({
-              success: false,
-              error: true,
-              message: "Seller inactive or not found",
-            });
+          return res.status(403).json({
+            success: false,
+            error: true,
+            message: "Seller inactive or not found",
+          });
         }
         req.seller = seller;
         req.sellerId = seller.id;
@@ -45,7 +43,7 @@ export function requireSellerOrStaff(
 
       // ئەگەر کارمەند بوو (Staff)
       if (decoded.staff_id && decoded.parent_seller_id) {
-        const seller = await SellerV2.findByPk(decoded.parent_seller_id);
+        const seller = await Seller.findByPk(decoded.parent_seller_id);
         if (!seller) {
           return res
             .status(403)
@@ -60,13 +58,11 @@ export function requireSellerOrStaff(
         );
 
         if (!staffMember) {
-          return res
-            .status(403)
-            .json({
-              success: false,
-              error: true,
-              message: "Staff member not active or removed",
-            });
+          return res.status(403).json({
+            success: false,
+            error: true,
+            message: "Staff member not active or removed",
+          });
         }
 
         // پشکنینی ڕۆڵ
@@ -88,13 +84,11 @@ export function requireSellerOrStaff(
         return next();
       }
 
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: true,
-          message: "Invalid authorization",
-        });
+      return res.status(403).json({
+        success: false,
+        error: true,
+        message: "Invalid authorization",
+      });
     } catch (err) {
       console.error("Auth Middleware Error:", err);
       return res

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { Op } from "sequelize";
 import sequelize from "../database/sequelize.js";
-import Seller from "../database/seller.js";
+import Seller from "../database/sellerv2.js";
 import SellerAiBalance from "../database/sellerAiBalance.js";
 import AiCreditPlan from "../database/aiCreditPlan.js";
 import AiCreditPurchaseRequest from "../database/aiCreditPurchaseRequest.js";
@@ -78,20 +78,30 @@ function buildWhatsAppUrl({ seller, balance, request, plan }) {
     "",
     "I accepted the AI import package conditions.",
     "Please contact me to confirm payment and activate the package.",
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   return `https://wa.me/${encodeURIComponent(number)}?text=${encodeURIComponent(message)}`;
 }
 
-export async function createAiCreditPurchaseRequest({ sellerId, planId, agreementAccepted }) {
+export async function createAiCreditPurchaseRequest({
+  sellerId,
+  planId,
+  agreementAccepted,
+}) {
   if (agreementAccepted !== true) {
-    const error = new Error("You must accept the AI import package conditions.");
+    const error = new Error(
+      "You must accept the AI import package conditions.",
+    );
     error.code = "AGREEMENT_REQUIRED";
     throw error;
   }
 
   const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-  const plan = await AiCreditPlan.findOne({ where: { id: planId, is_active: true } });
+  const plan = await AiCreditPlan.findOne({
+    where: { id: planId, is_active: true },
+  });
   if (!plan) {
     const error = new Error("Selected AI credit plan is not available.");
     error.code = "INVALID_AI_CREDIT_PLAN";
@@ -107,7 +117,9 @@ export async function createAiCreditPurchaseRequest({ sellerId, planId, agreemen
     },
   });
   if (duplicate) {
-    const error = new Error("You already requested this package. Please wait a few minutes before requesting again.");
+    const error = new Error(
+      "You already requested this package. Please wait a few minutes before requesting again.",
+    );
     error.code = "DUPLICATE_PURCHASE_REQUEST";
     throw error;
   }
@@ -217,7 +229,11 @@ export async function addSellerAiCreditsByAdmin({ sellerId, credits }) {
     };
   });
 }
-export async function rejectAiCreditPurchaseRequest({ requestId, adminId, notes }) {
+export async function rejectAiCreditPurchaseRequest({
+  requestId,
+  adminId,
+  notes,
+}) {
   return sequelize.transaction(async (transaction) => {
     const request = await AiCreditPurchaseRequest.findOne({
       where: { request_code: requestId },

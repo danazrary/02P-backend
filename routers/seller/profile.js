@@ -1,6 +1,6 @@
 // backend/routes/seller/profile.js
 import { Router } from "express";
-import SellerV2 from "../../database/sellerv2.js";
+import Seller from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import ShopSection from "../../database/ShopSection.js";
 import {
@@ -31,7 +31,7 @@ router.get("/:shopName/profile", async (req, res) => {
   try {
     const { shopName } = req.params;
 
-    const sellerData = await SellerV2.findOne({
+    const sellerData = await Seller.findOne({
       where: {
         shop_name: shopName.trim().toLowerCase(),
       },

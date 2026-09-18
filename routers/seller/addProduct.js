@@ -2,7 +2,7 @@ import express from "express";
 import { v4 as uuidv4 } from "uuid";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
-import Seller from "../../database/seller.js";
+import Seller from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
@@ -28,6 +28,12 @@ import getTikTokEmbedUrl, {
 import { getProductImageRecordBytes } from "../../utils/sellerStorageUsage.js";
 import { notifyGoogle } from "../../utils/googleIndexing.js";
 import { parseOptionalCashbackDate } from "../../utils/cashbackDates.js";
+import {
+  attachActor,
+  canAddProduct,
+  canEditProduct,
+  canDeleteProduct,
+} from "../../middlewares/staffPermissions.js";
 
 const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
 
@@ -825,13 +831,15 @@ function validateProductOptionsLimits(plan, options = []) {
 router.post(
   "/add-product",
   jwtVerifySellerToken,
+  attachActor,
+  canAddProduct,
   uploadRateLimiter,
   productUpload,
   checkStorageLimit,
   async (req, res) => {
     try {
       const tRequest = Date.now();
-      const { id } = req.user;
+      const id = res.locals.sellerId;
       console.log(
         `?? Add-product  seller ${id} env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
       );
@@ -1185,12 +1193,14 @@ router.post(
 router.put(
   "/edit-product/:productId",
   jwtVerifySellerToken,
+  attachActor,
+  canEditProduct,
   uploadRateLimiter,
   productUpload,
   checkStorageLimit,
   async (req, res) => {
     try {
-      const sellerId = req.user.id;
+      const sellerId = res.locals.sellerId;
       const { productId } = req.params;
       console.log(
         `[Edit-product] ${productId} seller ${sellerId}  env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
@@ -1582,9 +1592,11 @@ router.put(
 router.delete(
   "/delete-product/:productId",
   jwtVerifySellerToken,
+  attachActor,
+  canDeleteProduct,
   async (req, res) => {
     try {
-      const sellerId = req.user.id;
+      const sellerId = res.locals.sellerId;
       const { productId } = req.params;
 
       const product = await Product.findOne({

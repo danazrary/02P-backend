@@ -2,8 +2,8 @@
 import { DataTypes } from "sequelize";
 import sequelize from "./sequelize.js";
 
-const SellerV2 = sequelize.define(
-  "SellerV2",
+const Seller = sequelize.define(
+  "Seller",
   {
     id: {
       type: DataTypes.INTEGER.UNSIGNED,
@@ -181,7 +181,7 @@ const SellerV2 = sequelize.define(
       allowNull: true,
       defaultValue: null,
     },
-    // لەناو مۆدێلی SellerV2 لە فایلی sellerv2.js
+    // لەناو مۆدێلی Seller لە فایلی sellerv2.js
     brand_color: {
       type: DataTypes.JSON, // 👈 گۆڕدرا بۆ JSON تا هەرسێ ڕەنگەکە بگرێتە خۆ
       allowNull: true,
@@ -260,4 +260,4 @@ const SellerV2 = sequelize.define(
   },
 );
 
-export default SellerV2;
+export default Seller;

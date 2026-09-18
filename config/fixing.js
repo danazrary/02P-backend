@@ -1,4 +1,4 @@
-import Seller from "../database/seller.js";
+import Seller from "../database/sellerv2.js";
 
 const sellers = await Seller.findAll();
 

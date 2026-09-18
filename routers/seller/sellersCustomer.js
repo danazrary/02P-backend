@@ -1,7 +1,7 @@
 import { Router } from "express";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
-import SellerV2 from "../../database/sellerv2.js";
+import Seller from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
@@ -167,14 +167,14 @@ router.get(
       let sellerShop = null;
 
       if (req.isSeller && req.seller) {
-        const findSeller = await SellerV2.findByPk(req.seller.id, {
+        const findSeller = await Seller.findByPk(req.seller.id, {
           attributes: ["shop_name"],
         });
         role = true;
         sellerShop = findSeller ? findSeller.shop_name : null;
       }
 
-      const seller = await SellerV2.findOne({
+      const seller = await Seller.findOne({
         where: { shop_name: shopName.trim().toLowerCase() },
         attributes: [
           "id",
@@ -260,14 +260,14 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
     const { shopName } = req.params;
 
     if (req.isSeller && req.seller) {
-      const findSeller = await SellerV2.findByPk(req.seller.id, {
+      const findSeller = await Seller.findByPk(req.seller.id, {
         attributes: ["shop_name"],
       });
       role = true;
       sellerShop = findSeller ? findSeller.shop_name : null;
     }
 
-    const seller = await SellerV2.findOne({
+    const seller = await Seller.findOne({
       where: { shop_name: shopName.trim().toLowerCase() },
     });
 
@@ -358,7 +358,7 @@ router.get("/sellers-customer/:shopName", detectSeller, async (req, res) => {
       const updateObj = {};
       if (needsCleanup.ku) updateObj.red_line = null;
       if (needsCleanup.ar) updateObj.red_lineAr = null;
-      await SellerV2.update(updateObj, { where: { id: sellerId } });
+      await Seller.update(updateObj, { where: { id: sellerId } });
     }
 
     let redLine = null;
@@ -562,7 +562,7 @@ router.get("/shop-discounts/:shopName", async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 5, 50);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
-    const seller = await SellerV2.findOne({
+    const seller = await Seller.findOne({
       where: { shop_name: shopName.trim().toLowerCase() },
       attributes: ["id"],
     });

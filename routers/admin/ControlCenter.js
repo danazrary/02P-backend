@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { Op, Sequelize } from "sequelize";
-import Seller from "../../database/seller.js";
+import Seller from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import Product from "../../database/products.js";

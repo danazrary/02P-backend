@@ -1,14 +1,10 @@
 import sequelize from "./sequelize.js";
 
-// --- مۆدێلە کۆنەکان (V1) بۆ پاراستنی کۆدەکانی پێشوو ---
-import Seller from "./seller.js";
+// --- مۆدێلی نوێی فرۆشیار (V2) ---
+import Seller from "./sellerv2.js";
 import Product from "./products.js";
 
-// --- مۆدێلە نوێیەکان (V2) بۆ سیستەم و تایبەتمەندییە نوێیەکان ---
-import SellerV2 from "./sellerv2.js";
-import ProductV2 from "./productv2.js";
-
-// --- سەرجەم مۆدێلەکانی تر ---
+// --- مۆدێلەکانی تر ---
 import Plan from "./plan.js";
 import SellerPlan from "./sellerPlan.js";
 import SellerOffer from "./sellerOffer.js";
@@ -35,22 +31,11 @@ import AiCreditPurchaseRequest from "./aiCreditPurchaseRequest.js";
 import AiFeatureSetting from "./aiFeatureSetting.js";
 
 /* ==============================================
-   ١. پەیوەندییەکانی وەشانی کۆن (V1 Associations)
+   پەیوەندییەکانی Seller
 ============================================== */
-Seller.hasMany(SellerPlan, { foreignKey: "seller_id", as: "plans" });
-SellerPlan.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
-
-Plan.hasMany(SellerPlan, { foreignKey: "plan_id", as: "sellerPlans" });
-SellerPlan.belongsTo(Plan, { foreignKey: "plan_id", as: "plan" });
-
-Seller.hasMany(Product, { foreignKey: "seller_id" });
-Product.belongsTo(Seller, { foreignKey: "seller_id" });
-
-Seller.hasMany(SellerOffer, { foreignKey: "seller_id" });
-SellerOffer.belongsTo(Seller, { foreignKey: "seller_id" });
-
-Seller.hasOne(SellerUsage, { foreignKey: "seller_id", as: "usage" });
-SellerUsage.belongsTo(Seller, { foreignKey: "seller_id" });
+// بەرهەمەکان (Products)
+Seller.hasMany(Product, { foreignKey: "seller_id", as: "products" });
+Product.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
 
 Product.hasMany(ProductImage, {
   foreignKey: "product_id",
@@ -58,18 +43,36 @@ Product.hasMany(ProductImage, {
 });
 ProductImage.belongsTo(Product, { foreignKey: "product_id" });
 
+// پلانەکان (Plans)
+Seller.hasMany(SellerPlan, { foreignKey: "seller_id", as: "plans" });
+SellerPlan.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
+
+Plan.hasMany(SellerPlan, { foreignKey: "plan_id", as: "sellerPlans" });
+SellerPlan.belongsTo(Plan, { foreignKey: "plan_id", as: "plan" });
+
+// ئۆفەرەکان (Offers)
+Seller.hasMany(SellerOffer, { foreignKey: "seller_id", as: "offers" });
+SellerOffer.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
+
+// کاتیگۆرییەکان (Categories)
 Seller.hasMany(SellerCategory, {
   foreignKey: "seller_id",
   as: "sellerCategories",
 });
-SellerCategory.belongsTo(Seller, { foreignKey: "seller_id" });
+SellerCategory.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
 
+// بەکارهێنانی ستۆریج (Storage Usage)
+Seller.hasOne(SellerUsage, { foreignKey: "seller_id", as: "usage" });
+SellerUsage.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
+
+// داواکارییەکان (Orders)
 Seller.hasMany(Order, { foreignKey: "seller_id", as: "orders" });
 Order.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
 
 Order.hasMany(OrderItem, { foreignKey: "order_id", as: "items" });
 OrderItem.belongsTo(Order, { foreignKey: "order_id", as: "order" });
 
+// ئاگادارکردنەوە (Push Subscriptions)
 Seller.hasMany(SellerPushSubscription, {
   foreignKey: "seller_id",
   as: "pushSubscriptions",
@@ -79,6 +82,7 @@ SellerPushSubscription.belongsTo(Seller, {
   as: "seller",
 });
 
+// خزمەتگوزاری و باڵانسی AI
 Seller.hasOne(SellerAiBalance, { foreignKey: "seller_id", as: "aiBalance" });
 SellerAiBalance.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
 
@@ -95,30 +99,7 @@ Seller.hasMany(SellerAiUsage, { foreignKey: "seller_id", as: "aiUsage" });
 SellerAiUsage.belongsTo(Seller, { foreignKey: "seller_id", as: "seller" });
 
 /* ==============================================
-   ٢. پەیوەندییەکانی وەشانی نوێ (V2 Associations)
-============================================== */
-SellerV2.hasMany(ProductV2, { foreignKey: "seller_id", as: "products" });
-ProductV2.belongsTo(SellerV2, { foreignKey: "seller_id", as: "seller" });
-
-SellerV2.hasMany(SellerPlan, { foreignKey: "seller_id", as: "plans_v2" });
-SellerV2.hasOne(SellerUsage, { foreignKey: "seller_id", as: "usage_v2" });
-SellerV2.hasMany(Order, { foreignKey: "seller_id", as: "orders_v2" });
-SellerV2.hasMany(SellerPushSubscription, {
-  foreignKey: "seller_id",
-  as: "pushSubscriptions_v2",
-});
-SellerV2.hasOne(SellerAiBalance, {
-  foreignKey: "seller_id",
-  as: "aiBalance_v2",
-});
-SellerV2.hasMany(AiCreditPurchaseRequest, {
-  foreignKey: "seller_id",
-  as: "aiCreditPurchaseRequests_v2",
-});
-SellerV2.hasMany(SellerAiUsage, { foreignKey: "seller_id", as: "aiUsage_v2" });
-
-/* ==============================================
-   ٣. بەشە گشتییەکان (AI, Help Center, Admin)
+   بەشە گشتییەکان (AI, Help Center, Admin)
 ============================================== */
 AiCreditPlan.hasMany(AiCreditPurchaseRequest, {
   foreignKey: "plan_id",
@@ -158,13 +139,8 @@ HelpAnalytics.belongsTo(HelpItem, { foreignKey: "help_item_id", as: "item" });
 
 export {
   sequelize,
-  // وەشانی پێشوو
   Seller,
   Product,
-  // وەشانی نوێ
-  SellerV2,
-  ProductV2,
-  // مۆدێلە هاوبەشەکان
   Plan,
   SellerPlan,
   SellerOffer,

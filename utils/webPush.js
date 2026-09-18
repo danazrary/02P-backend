@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import webpush from "web-push";
 import SellerPushSubscription from "../database/sellerPushSubscription.js";
-import Seller from "../database/seller.js";
+import Seller from "../database/sellerv2.js";
 let vapidConfigured = false;
 
 function endpointFingerprint(endpoint) {

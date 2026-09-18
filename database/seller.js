@@ -1,7 +1,7 @@
 import { DataTypes } from "sequelize";
 import sequelize from "./sequelize.js";
 
-const Seller = sequelize.define(
+const Seller1 = sequelize.define(
   "seller",
   {
     googleId: {
@@ -165,6 +165,6 @@ product_badges: {
   },
 );
 
-export default Seller;
+export default Seller1;
 /* ALTER TABLE seller 
 ADD COLUMN product_badges JSON DEFAULT NULL; */

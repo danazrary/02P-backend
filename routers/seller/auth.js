@@ -3,7 +3,7 @@ import express from "express";
 import passport from "passport";
 import jwt from "jsonwebtoken";
 import "../../utils/passportConfig.js";
-import SellerV2 from "../../database/sellerv2.js";
+import Seller from "../../database/sellerv2.js";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
 import { Resend } from "resend";
@@ -132,7 +132,7 @@ router.post("/register", async (req, res) => {
         .json({ success: false, message: passwordErrors.join(", ") });
     }
 
-    const existing = await SellerV2.findOne({
+    const existing = await Seller.findOne({
       where: { email: email.trim().toLowerCase() },
     });
     if (existing) {
@@ -145,7 +145,7 @@ router.post("/register", async (req, res) => {
     const code = generate6DigitCode();
     const expires = new Date(Date.now() + 10 * 60 * 1000);
 
-    const seller = await SellerV2.create({
+    const seller = await Seller.create({
       email: email.trim().toLowerCase(),
       password_hash: hashedPassword,
       email_verified: false,
@@ -181,7 +181,7 @@ router.post("/login", async (req, res) => {
         .json({ success: false, message: "Email and password required" });
     }
 
-    const seller = await SellerV2.findOne({
+    const seller = await Seller.findOne({
       where: { email: email.trim().toLowerCase() },
     });
     if (!seller || !seller.password_hash) {
@@ -229,7 +229,7 @@ router.post("/login", async (req, res) => {
 router.post("/verify-code", async (req, res) => {
   try {
     const { email, code, purpose = "register" } = req.body;
-    const seller = await SellerV2.findOne({
+    const seller = await Seller.findOne({
       where: { email: email.trim().toLowerCase() },
     });
 
@@ -287,7 +287,7 @@ router.post("/forgot-password", async (req, res) => {
         .status(400)
         .json({ success: false, message: "Email required" });
 
-    const seller = await SellerV2.findOne({
+    const seller = await Seller.findOne({
       where: { email: email.trim().toLowerCase() },
     });
     if (!seller) {
@@ -335,7 +335,7 @@ router.post("/reset-password", async (req, res) => {
         .json({ success: false, message: passwordErrors.join(", ") });
     }
 
-    const seller = await SellerV2.findOne({
+    const seller = await Seller.findOne({
       where: { email: email.trim().toLowerCase() },
     });
     if (!seller || !seller.verification_code || !seller.code_expires) {
@@ -393,7 +393,7 @@ router.post("/change-password", checkMe, async (req, res) => {
     }
 
     const sellerId = req.user?.data?.id || req.user?.id;
-    const seller = await SellerV2.findByPk(sellerId);
+    const seller = await Seller.findByPk(sellerId);
     if (!seller)
       return res
         .status(404)
@@ -424,7 +424,7 @@ router.post("/change-password", checkMe, async (req, res) => {
 router.get("/check-me", checkMe, async (req, res) => {
   const { user } = req;
   if (user.role === "seller") {
-    const seller = await SellerV2.findByPk(user.data.id, {
+    const seller = await Seller.findByPk(user.data.id, {
       attributes: [
         "id",
         "shop_name",
@@ -465,19 +465,17 @@ router.post("/complete-profile", checkMe, async (req, res) => {
     const { shop_name, business_type, phone, name, city } = req.body;
 
     if (!shop_name || !business_type) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "ناوی فرۆشگا و جۆری کارکردن پێویستە",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "ناوی فرۆشگا و جۆری کارکردن پێویستە",
+      });
     }
 
     const cleanShopName = shop_name
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9-]/g, "");
-    const existing = await SellerV2.findOne({
+    const existing = await Seller.findOne({
       where: { shop_name: cleanShopName },
     });
 
@@ -487,7 +485,7 @@ router.post("/complete-profile", checkMe, async (req, res) => {
         .json({ success: false, message: "ئەم ناوی فرۆشگایە پێشتر گیراوە" });
     }
 
-    const seller = await SellerV2.findByPk(sellerId);
+    const seller = await Seller.findByPk(sellerId);
     await seller.update({
       shop_name: cleanShopName,
       business_type,
@@ -653,11 +651,11 @@ router.get("/tiktok/callback", async (req, res) => {
 
     const tiktokUser = userRes.data.data.user;
 
-    let seller = await SellerV2.findOne({
+    let seller = await Seller.findOne({
       where: { tiktokId: tiktokUser.open_id },
     });
     if (!seller) {
-      seller = await SellerV2.create({
+      seller = await Seller.create({
         tiktokId: tiktokUser.open_id,
         name: tiktokUser.display_name || "TikTok Seller",
         shop_name: `shop-${Date.now().toString().slice(-6)}`,
@@ -691,7 +689,7 @@ router.post("/successLogin", async (req, res) => {
 
     const tempToken = header.split(" ")[1];
     const decoded = jwt.verify(tempToken, process.env.JWT_SECRET);
-    const seller = await SellerV2.findByPk(decoded.id);
+    const seller = await Seller.findByPk(decoded.id);
 
     if (!seller) return res.status(404).json({ error: "Seller not found" });
 
@@ -726,7 +724,7 @@ router.post("/logout", (req, res) => {
 // ==========================================
 // 14) STAFF LOGIN
 // ==========================================
-router.post("/staff/login", async (req, res) => {
+router.post("/staf33f/logi33n", async (req, res) => {
   try {
     const { shop_name, email, password } = req.body;
     if (!shop_name || !email || !password) {
@@ -735,7 +733,7 @@ router.post("/staff/login", async (req, res) => {
         .json({ success: false, message: "All fields required" });
     }
 
-    const seller = await SellerV2.findOne({
+    const seller = await Seller.findOne({
       where: { shop_name: shop_name.trim().toLowerCase() },
     });
 
@@ -789,9 +787,22 @@ router.post("/staff/login", async (req, res) => {
       },
     );
 
+    res.cookie("s_t", token, {
+      ...clearCookieOpts(),
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+
     return res.json({
       success: true,
       token,
+      // Role info — save to localStorage as:
+      //   localStorage.setItem("role", "staff")
+      //   localStorage.setItem("isStaff", JSON.stringify(data.isStaff))
+      isStaff: {
+        role: staffMember.role, // "admin" | "product_manager" | "shop_editor" | "cashier"
+        name: staffMember.name,
+        staff_id: staffMember.staff_id,
+      },
       staff: {
         staff_id: staffMember.staff_id,
         name: staffMember.name,

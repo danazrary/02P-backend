@@ -1,6 +1,6 @@
 ﻿import { Router } from "express";
 import Product from "../../database/products.js";
-import Seller from "../../database/seller.js";
+import Seller from "../../database/sellerv2.js";
 import ProductImage from "../../database/productImages.js";
 import { Op } from "sequelize";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
@@ -8,10 +8,10 @@ import { getCategoryMap } from "../../utils/categoryTranslations.js";
 
 const router = Router();
 
-// 
+//
 // GET /api/customer/search
 // Query: q, shopName, type, hasDiscount, freeDelivery, sort, limit, offset
-// 
+//
 router.get("/search", async (req, res) => {
   try {
     const {
@@ -53,11 +53,12 @@ router.get("/search", async (req, res) => {
     if (type === "categories") {
       const normalizedQuery = trimmedQ.toLocaleLowerCase();
       const rows = Object.entries(getCategoryMap(seller))
-        .filter(([key, value]) =>
-          !normalizedQuery ||
-          [key, value.ku, value.ar].some((text) =>
-            text?.toLocaleLowerCase().includes(normalizedQuery),
-          ),
+        .filter(
+          ([key, value]) =>
+            !normalizedQuery ||
+            [key, value.ku, value.ar].some((text) =>
+              text?.toLocaleLowerCase().includes(normalizedQuery),
+            ),
         )
         .map(([key, value]) => ({ key, ...value }));
 
@@ -161,11 +162,11 @@ router.get("/search", async (req, res) => {
   }
 });
 
-// 
+//
 // GET /api/customer/search/suggestions
 // Fast title-only suggestions for live dropdown
 // Query: q, shopName
-// 
+//
 router.get("/search/suggestions", async (req, res) => {
   try {
     const { q = "", shopName } = req.query;
@@ -211,11 +212,11 @@ router.get("/search/suggestions", async (req, res) => {
   }
 });
 
-// 
+//
 // GET /api/customer/search/trending
 // Most viewed products in a shop
 // Query: shopName
-// 
+//
 router.get("/search/trending", async (req, res) => {
   try {
     const { shopName } = req.query;
@@ -251,4 +252,3 @@ router.get("/search/trending", async (req, res) => {
 });
 
 export default router;
-

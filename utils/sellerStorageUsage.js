@@ -10,7 +10,7 @@ import { getR2ObjectSize } from "./r2.js";
 import SellerUsage from "../database/sellerUsage.js";
 import ProductImage from "../database/productImages.js";
 import Product from "../database/products.js";
-import Seller from "../database/seller.js";
+import Seller from "../database/sellerv2.js";
 import SellerOffer from "../database/sellerOffer.js";
 import { getImageAbsolutePath } from "./uploadHandler.js";
 import { getCategoryMap } from "./categoryTranslations.js";

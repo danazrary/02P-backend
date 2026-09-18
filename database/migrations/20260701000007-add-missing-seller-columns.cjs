@@ -3,7 +3,7 @@
 /**
  * Migration: Add missing columns to the seller table.
  *
- * Columns that exist in the Seller model (database/seller.js) but may be
+ * Columns that exist in the Seller model (database/sellerv2.js) but may be
  * absent on a VPS database that was originally created with sequelize.sync()
  * before these fields were added to the model.
  *
@@ -87,7 +87,8 @@ module.exports = {
 
   async down(queryInterface) {
     const columns = await queryInterface.describeTable("seller");
-    if (columns.tiktokId) await queryInterface.removeColumn("seller", "tiktokId");
+    if (columns.tiktokId)
+      await queryInterface.removeColumn("seller", "tiktokId");
     if (columns.needsManualEmail)
       await queryInterface.removeColumn("seller", "needsManualEmail");
     if (columns.category_images)

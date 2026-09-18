@@ -1,10 +1,14 @@
 import { Router } from "express";
 import { Op } from "sequelize";
-import Seller from "../database/seller.js";
+import Seller from "../database/sellerv2.js";
 import Product from "../database/products.js";
 import ProductImage from "../database/productImages.js";
 import { getCategoryMap } from "../utils/categoryTranslations.js";
-import { getProductImageUrls, stripHtml, truncateMetaDescription } from "../utils/seo.js";
+import {
+  getProductImageUrls,
+  stripHtml,
+  truncateMetaDescription,
+} from "../utils/seo.js";
 
 const router = Router();
 const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
@@ -109,7 +113,12 @@ function buildCategoryUrl(shopName, categorySlug, subcategorySlug = null) {
 }
 
 function buildUrlNode({ loc, lastmod, changefreq, priority, images = [] }) {
-  const imageNodes = images.map((image) => `\n    <image:image>\n      <image:loc>${escapeXml(image.loc)}</image:loc>${image.title ? `\n      <image:title>${escapeXml(image.title)}</image:title>` : ""}${image.caption ? `\n      <image:caption>${escapeXml(image.caption)}</image:caption>` : ""}\n    </image:image>`).join("");
+  const imageNodes = images
+    .map(
+      (image) =>
+        `\n    <image:image>\n      <image:loc>${escapeXml(image.loc)}</image:loc>${image.title ? `\n      <image:title>${escapeXml(image.title)}</image:title>` : ""}${image.caption ? `\n      <image:caption>${escapeXml(image.caption)}</image:caption>` : ""}\n    </image:image>`,
+    )
+    .join("");
   return `  <url>\n    <loc>${escapeXml(loc)}</loc>${lastmod ? `\n    <lastmod>${lastmod}</lastmod>` : ""}${changefreq ? `\n    <changefreq>${changefreq}</changefreq>` : ""}${priority ? `\n    <priority>${priority}</priority>` : ""}${imageNodes}\n  </url>`;
 }
 
@@ -125,12 +134,7 @@ function generateSitemapXml(entries) {
 async function fetchGlobalSitemapRows() {
   const [sellers, products] = await Promise.all([
     Seller.findAll({
-      attributes: [
-        "id",
-        "shop_name",
-        "updatedAt",
-        "category_translations",
-      ],
+      attributes: ["id", "shop_name", "updatedAt", "category_translations"],
       where: {
         shop_name: {
           [Op.ne]: null,
@@ -139,8 +143,24 @@ async function fetchGlobalSitemapRows() {
       raw: true,
     }),
     Product.findAll({
-      attributes: ["id", "seller_id", "updatedAt", "titleKu", "titleAr", "descriptionKu", "descriptionAr", "images"],
-      include: [{ model: ProductImage, as: "productImages", attributes: ["image_key", "is_main"], required: false }],
+      attributes: [
+        "id",
+        "seller_id",
+        "updatedAt",
+        "titleKu",
+        "titleAr",
+        "descriptionKu",
+        "descriptionAr",
+        "images",
+      ],
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "is_main"],
+          required: false,
+        },
+      ],
     }),
   ]);
 
@@ -150,12 +170,7 @@ async function fetchGlobalSitemapRows() {
 async function fetchSubdomainSitemapRows(shopName) {
   const seller = await Seller.findOne({
     where: { shop_name: shopName },
-    attributes: [
-      "id",
-      "shop_name",
-      "updatedAt",
-      "category_translations",
-    ],
+    attributes: ["id", "shop_name", "updatedAt", "category_translations"],
     raw: true,
   });
 
@@ -163,8 +178,23 @@ async function fetchSubdomainSitemapRows(shopName) {
 
   const products = await Product.findAll({
     where: { seller_id: seller.id },
-    attributes: ["id", "updatedAt", "titleKu", "titleAr", "descriptionKu", "descriptionAr", "images"],
-    include: [{ model: ProductImage, as: "productImages", attributes: ["image_key", "is_main"], required: false }],
+    attributes: [
+      "id",
+      "updatedAt",
+      "titleKu",
+      "titleAr",
+      "descriptionKu",
+      "descriptionAr",
+      "images",
+    ],
+    include: [
+      {
+        model: ProductImage,
+        as: "productImages",
+        attributes: ["image_key", "is_main"],
+        required: false,
+      },
+    ],
   });
 
   return { seller, products };
@@ -241,7 +271,13 @@ router.get("/sitemap.xml", async (req, res) => {
             lastmod: toLastmod(p.updatedAt),
             changefreq: "weekly",
             priority: "0.7",
-            images: getProductImageUrls(p).map((loc) => ({ loc, title: stripHtml(p.titleKu || p.titleAr || `Product ${p.id}`), caption: truncateMetaDescription(p.descriptionKu || p.descriptionAr || "") })),
+            images: getProductImageUrls(p).map((loc) => ({
+              loc,
+              title: stripHtml(p.titleKu || p.titleAr || `Product ${p.id}`),
+              caption: truncateMetaDescription(
+                p.descriptionKu || p.descriptionAr || "",
+              ),
+            })),
           })),
       ];
 
@@ -282,27 +318,28 @@ router.get("/sitemap.xml", async (req, res) => {
 
       const subcategoryEntries = Object.entries(getCategoryMap(seller)).flatMap(
         ([categoryKey, category]) => {
-        const categorySlug = slugifyCategorySegment(categoryKey);
-        if (!categorySlug) return [];
+          const categorySlug = slugifyCategorySegment(categoryKey);
+          if (!categorySlug) return [];
 
-        return Object.keys(category.subcategories || {})
-          .map((subcategoryKey) => {
-            const subcategorySlug = slugifyCategorySegment(subcategoryKey);
-            if (!subcategorySlug) return null;
+          return Object.keys(category.subcategories || {})
+            .map((subcategoryKey) => {
+              const subcategorySlug = slugifyCategorySegment(subcategoryKey);
+              if (!subcategorySlug) return null;
 
-            return {
-              loc: buildCategoryUrl(
-                seller.shop_name,
-                categorySlug,
-                subcategorySlug,
-              ),
-              lastmod: toLastmod(seller.updatedAt),
-              changefreq: "weekly",
-              priority: "0.6",
-            };
-          })
-          .filter(Boolean);
-      });
+              return {
+                loc: buildCategoryUrl(
+                  seller.shop_name,
+                  categorySlug,
+                  subcategorySlug,
+                ),
+                lastmod: toLastmod(seller.updatedAt),
+                changefreq: "weekly",
+                priority: "0.6",
+              };
+            })
+            .filter(Boolean);
+        },
+      );
 
       return [...directCategoryEntries, ...subcategoryEntries];
     });
@@ -317,7 +354,13 @@ router.get("/sitemap.xml", async (req, res) => {
           lastmod: toLastmod(p.updatedAt),
           changefreq: "weekly",
           priority: "0.7",
-          images: getProductImageUrls(p).map((loc) => ({ loc, title: stripHtml(p.titleKu || p.titleAr || `Product ${p.id}`), caption: truncateMetaDescription(p.descriptionKu || p.descriptionAr || "") })),
+          images: getProductImageUrls(p).map((loc) => ({
+            loc,
+            title: stripHtml(p.titleKu || p.titleAr || `Product ${p.id}`),
+            caption: truncateMetaDescription(
+              p.descriptionKu || p.descriptionAr || "",
+            ),
+          })),
         };
       })
       .filter(Boolean);

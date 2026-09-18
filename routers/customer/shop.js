@@ -1,7 +1,7 @@
 ﻿import { Router } from "express";
 import { detectSeller } from "../../middlewares/jwtVerify.js";
 import Product from "../../database/products.js";
-import Seller from "../../database/seller.js";
+import Seller from "../../database/sellerv2.js";
 import Report from "../../database/report.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
@@ -442,4 +442,3 @@ router.post("/track-visit", detectSeller, async (req, res) => {
 });
 
 export default router;
-

@@ -2,8 +2,13 @@ import express from "express";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
-import SellerV2 from "../../database/sellerv2.js";
+import Seller from "../../database/sellerv2.js";
+import { clearCookieOpts } from "../../utils/addingToken.js";
 import { checkMe } from "../../middlewares/jwtVerify.js";
+import {
+  attachActor,
+  canManageStaff,
+} from "../../middlewares/staffPermissions.js";
 
 const router = express.Router();
 
@@ -31,6 +36,8 @@ function extractStaffArray(seller) {
 // ١) چوونەژوورەوەی ستاف (POST /api/seller/staff/login)
 // ==========================================
 router.post("/login", async (req, res) => {
+  console.log("in login");
+  
   try {
     const { shop_name, email, password } = req.body;
 
@@ -40,7 +47,7 @@ router.post("/login", async (req, res) => {
         .json({ success: false, message: "تکایە هەموو خانەکان پڕبکەرەوە" });
     }
 
-    const seller = await SellerV2.findOne({
+    const seller = await Seller.findOne({
       where: { shop_name: shop_name.trim().toLowerCase() },
     });
 
@@ -88,9 +95,19 @@ router.post("/login", async (req, res) => {
       { expiresIn: "30d" },
     );
 
+    res.cookie("s_t", token, {
+      ...clearCookieOpts(),
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+
     return res.json({
       success: true,
       token,
+      isStaff: {
+        role: staffMember.role,
+        name: staffMember.name,
+        staff_id: staffMember.staff_id,
+      },
       staff: {
         staff_id: staffMember.staff_id,
         name: staffMember.name,
@@ -112,12 +129,12 @@ router.post("/login", async (req, res) => {
 });
 
 // ==========================================
-// ٢) هێنانی لیستی کارمەندەکان
+// ٢) هێنانی لیستی کارمەندەکان — تەنها خاوەنی فرۆشگا
 // ==========================================
-router.get("/list", checkMe, async (req, res) => {
+router.get("/list", checkMe, attachActor, canManageStaff, async (req, res) => {
   try {
-    const sellerId = req.user?.data?.id || req.user?.id;
-    const seller = await SellerV2.findByPk(sellerId);
+    const sellerId = res.locals.sellerId || req.user?.data?.id || req.user?.id;
+    const seller = await Seller.findByPk(sellerId);
 
     if (!seller) {
       return res
@@ -138,11 +155,11 @@ router.get("/list", checkMe, async (req, res) => {
 });
 
 // ==========================================
-// ٣) زیادکردنی کارمەند
+// ٣) زیادکردنی کارمەند — تەنها خاوەنی فرۆشگا
 // ==========================================
-router.post("/add", checkMe, async (req, res) => {
+router.post("/add", checkMe, attachActor, canManageStaff, async (req, res) => {
   try {
-    const sellerId = req.user?.data?.id || req.user?.id;
+    const sellerId = res.locals.sellerId || req.user?.data?.id || req.user?.id;
     const { name, email, password, role } = req.body;
 
     if (!name || !email || !password || !role) {
@@ -164,7 +181,7 @@ router.post("/add", checkMe, async (req, res) => {
       });
     }
 
-    const seller = await SellerV2.findByPk(sellerId);
+    const seller = await Seller.findByPk(sellerId);
     if (!seller) {
       return res
         .status(404)
@@ -213,93 +230,107 @@ router.post("/add", checkMe, async (req, res) => {
 });
 
 // ==========================================
-// ٤) گۆڕینی ڕۆڵی کارمەند
+// ٤) گۆڕینی ڕۆڵی کارمەند — تەنها خاوەنی فرۆشگا
 // ==========================================
-router.put("/:staffId/role", checkMe, async (req, res) => {
-  try {
-    const sellerId = req.user?.data?.id || req.user?.id;
-    const { staffId } = req.params;
-    const { role } = req.body;
+router.put(
+  "/:staffId/role",
+  checkMe,
+  attachActor,
+  canManageStaff,
+  async (req, res) => {
+    try {
+      const sellerId =
+        res.locals.sellerId || req.user?.data?.id || req.user?.id;
+      const { staffId } = req.params;
+      const { role } = req.body;
 
-    if (!ALLOWED_STAFF_ROLES.includes(role)) {
+      if (!ALLOWED_STAFF_ROLES.includes(role)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "ڕۆڵی داواکراو نادروستە" });
+      }
+
+      const seller = await Seller.findByPk(sellerId);
+      if (!seller) {
+        return res
+          .status(404)
+          .json({ success: false, message: "فرۆشیار نەدۆزرایەوە" });
+      }
+
+      const staffList = extractStaffArray(seller);
+      const staffIndex = staffList.findIndex((s) => s.staff_id === staffId);
+
+      if (staffIndex === -1) {
+        return res
+          .status(404)
+          .json({ success: false, message: "کارمەند نەدۆزرایەوە" });
+      }
+
+      staffList[staffIndex].role = role;
+      staffList[staffIndex].updated_at = new Date().toISOString();
+
+      seller.staff_members = staffList;
+      seller.changed("staff_members", true);
+      await seller.save();
+
+      return res.json({
+        success: true,
+        message: "ڕۆڵی کارمەند بە سەرکەوتوویی نوێکرایەوە",
+      });
+    } catch (err) {
+      console.error("Update Staff Role Error:", err);
       return res
-        .status(400)
-        .json({ success: false, message: "ڕۆڵی داواکراو نادروستە" });
+        .status(500)
+        .json({ success: false, message: "هەڵەی سێرڤەر ڕوویدا" });
     }
-
-    const seller = await SellerV2.findByPk(sellerId);
-    if (!seller) {
-      return res
-        .status(404)
-        .json({ success: false, message: "فرۆشیار نەدۆزرایەوە" });
-    }
-
-    const staffList = extractStaffArray(seller);
-    const staffIndex = staffList.findIndex((s) => s.staff_id === staffId);
-
-    if (staffIndex === -1) {
-      return res
-        .status(404)
-        .json({ success: false, message: "کارمەند نەدۆزرایەوە" });
-    }
-
-    staffList[staffIndex].role = role;
-    staffList[staffIndex].updated_at = new Date().toISOString();
-
-    seller.staff_members = staffList;
-    seller.changed("staff_members", true);
-    await seller.save();
-
-    return res.json({
-      success: true,
-      message: "ڕۆڵی کارمەند بە سەرکەوتوویی نوێکرایەوە",
-    });
-  } catch (err) {
-    console.error("Update Staff Role Error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "هەڵەی سێرڤەر ڕوویدا" });
-  }
-});
+  },
+);
 
 // ==========================================
-// ٥) سڕینەوەی کارمەند
+// ٥) سڕینەوەی کارمەند — تەنها خاوەنی فرۆشگا
 // ==========================================
-router.delete("/:staffId", checkMe, async (req, res) => {
-  try {
-    const sellerId = req.user?.data?.id || req.user?.id;
-    const { staffId } = req.params;
+router.delete(
+  "/:staffId",
+  checkMe,
+  attachActor,
+  canManageStaff,
+  async (req, res) => {
+    try {
+      const sellerId =
+        res.locals.sellerId || req.user?.data?.id || req.user?.id;
+      const { staffId } = req.params;
 
-    const seller = await SellerV2.findByPk(sellerId);
-    if (!seller) {
+      const seller = await Seller.findByPk(sellerId);
+      if (!seller) {
+        return res
+          .status(404)
+          .json({ success: false, message: "فرۆشیار نەدۆزرایەوە" });
+      }
+
+      const staffList = extractStaffArray(seller);
+      const filtered = staffList.filter((s) => s.staff_id !== staffId);
+
+      if (filtered.length === staffList.length) {
+        return res
+          .status(404)
+          .json({ success: false, message: "کارمەند نەدۆزرایەوە" });
+      }
+
+      seller.staff_members = filtered;
+      seller.changed("staff_members", true);
+      await seller.save();
+
+      return res.json({
+        success: true,
+        message: "کارمەند بە سەرکەوتوویی سڕایەوە",
+      });
+    } catch (err) {
+      console.error("Delete Staff Error:", err);
       return res
-        .status(404)
-        .json({ success: false, message: "فرۆشیار نەدۆزرایەوە" });
+        .status(500)
+        .json({ success: false, message: "هەڵەی سێرڤەر ڕوویدا" });
     }
-
-    const staffList = extractStaffArray(seller);
-    const filtered = staffList.filter((s) => s.staff_id !== staffId);
-
-    if (filtered.length === staffList.length) {
-      return res
-        .status(404)
-        .json({ success: false, message: "کارمەند نەدۆزرایەوە" });
-    }
-
-    seller.staff_members = filtered;
-    seller.changed("staff_members", true);
-    await seller.save();
-
-    return res.json({
-      success: true,
-      message: "کارمەند بە سەرکەوتوویی سڕایەوە",
-    });
-  } catch (err) {
-    console.error("Delete Staff Error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "هەڵەی سێرڤەر ڕوویدا" });
-  }
-});
+  },
+);
 
 export default router;

@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { Strategy as FacebookStrategy } from "passport-facebook";
-import SellerV2 from "../database/sellerv2.js";
+import Seller from "../database/sellerv2.js";
 
 const isHttpsMode = process.argv.includes("--env=https");
 dotenv.config({ path: isHttpsMode ? ".env.https" : ".env" });
@@ -35,10 +35,10 @@ passport.use(
           "Google User";
         const googleId = profile.id;
 
-        let seller = await SellerV2.findOne({ where: { googleId } });
+        let seller = await Seller.findOne({ where: { googleId } });
 
         if (!seller && email) {
-          seller = await SellerV2.findOne({ where: { email } });
+          seller = await Seller.findOne({ where: { email } });
         }
 
         if (seller && !seller.googleId) {
@@ -47,7 +47,7 @@ passport.use(
         }
 
         if (!seller) {
-          seller = await SellerV2.create({
+          seller = await Seller.create({
             googleId,
             name,
             email,
@@ -80,10 +80,10 @@ passport.use(
         const facebookId = profile.id;
         const name = profile.displayName || "Facebook User";
 
-        let seller = await SellerV2.findOne({ where: { facebookId } });
+        let seller = await Seller.findOne({ where: { facebookId } });
 
         if (!seller) {
-          seller = await SellerV2.create({
+          seller = await Seller.create({
             facebookId,
             name,
             email: null,

@@ -38,16 +38,24 @@ router.use("/admin/control-center", adminControlCenterRouter);
 router.use("/admin/auth", adminAuthRouter);
 router.use("/admin/help", adminHelpRouter);
 router.use("/admin", adminAiProductImportRouter);
-//seller routers
+
+// ==========================================
+// 1. ڕاوتە گشتییەکان (Public Routes) دەبێت لە سەرەتاوە بن!
+// بەم شێوەیە کڕیار ڕاستەوخۆ دەگات بە داتاکان بێ ئەوەی بلۆک بکرێت
+// ==========================================
+router.use("/seller", sellerCustomerRouter);
+router.use("/seller", sellerProfileRouter);
 router.use("/seller/auth", sellerAuthRouter);
+router.use("/seller/staff", sellerStaffRouter);
+// ==========================================
+// 2. ڕاوتە تایبەتەکانی داشبۆرد و فرۆشیار لە خوارەوە دەبن
+// ==========================================
 router.use("/seller/setting", sellerSettingsRouter);
 router.use("/seller", sellerAddingProductRouter);
 router.use("/seller", sellerDashboardRouter);
 router.use("/seller", sellerDataRouter);
 router.use("/seller", sellerOfferRouter);
 router.use("/seller", sellerRedLineRouter);
-router.use("/seller", sellerCustomerRouter);
-router.use("/seller", sellerProfileRouter);
 router.use("/seller", sellerProductDiscountRouter);
 router.use("/seller", sellerDeleteAccountRouter);
 router.use("/seller", sellerCategoryRouter);
@@ -57,7 +65,8 @@ router.use("/seller", sellerOrdersRouter);
 router.use("/seller", sellerShopSectionsRouter);
 router.use("/seller", sellerPushNotificationsRouter);
 router.use("/seller", sellerAiProductRouter);
-router.use("/seller/staff", sellerStaffRouter);
+
+
 //customer routers
 router.use("/customer", customerProductRouter);
 router.use("/customer", customerQuestionsRouter);
