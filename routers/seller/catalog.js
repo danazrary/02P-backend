@@ -2,7 +2,6 @@
 import { Op } from "sequelize";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
-import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { decrementSellerStorage } from "../../middlewares/checkStorageLimit.js";
 import { deleteMultipleFromR2 } from "../../utils/r2.js";
 import {
@@ -10,22 +9,18 @@ import {
   getStoredAssetBytes,
 } from "../../utils/sellerStorageUsage.js";
 import {
-  attachActor,
   canViewCatalog,
-  canManageCategories,
+  canBulkCategory,
   canDeleteProduct,
 } from "../../middlewares/staffPermissions.js";
 
 const router = Router();
 
-// Attach actor info (sellerId, role, isStaff) to res.locals on every request
-router.use(jwtVerifySellerToken, attachActor);
-
 // GET /catalog/products
-// Allowed: seller, admin, product_manager
+// Requires: viewCatalog
 router.get("/catalog/products", canViewCatalog, async (req, res) => {
   try {
-    const sellerId = res.locals.sellerId;
+    const sellerId = req.actor.sellerId;
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 100);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
     const search = req.query.search?.trim() || "";
@@ -122,10 +117,10 @@ router.get("/catalog/products", canViewCatalog, async (req, res) => {
 });
 
 // PUT /catalog/bulk-category
-// Allowed: seller, admin, product_manager (reassigning their own products' categories)
-router.put("/catalog/bulk-category", canViewCatalog, async (req, res) => {
+// Requires: bulkCategory (reassigns category/subcategory of the shop's own products)
+router.put("/catalog/bulk-category", canBulkCategory, async (req, res) => {
   try {
-    const sellerId = res.locals.sellerId;
+    const sellerId = req.actor.sellerId;
     const { productIds, category, subcategory } = req.body;
 
     if (!Array.isArray(productIds) || productIds.length === 0) {
@@ -168,10 +163,10 @@ router.put("/catalog/bulk-category", canViewCatalog, async (req, res) => {
 });
 
 // DELETE /catalog/bulk-delete
-// Allowed: seller, admin ONLY — product_manager, shop_editor, cashier are denied
+// Requires: deleteProduct
 router.delete("/catalog/bulk-delete", canDeleteProduct, async (req, res) => {
   try {
-    const sellerId = res.locals.sellerId;
+    const sellerId = req.actor.sellerId;
 
     const { productIds } = req.body;
     if (!Array.isArray(productIds) || productIds.length === 0) {

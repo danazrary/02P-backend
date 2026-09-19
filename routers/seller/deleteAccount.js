@@ -1,11 +1,8 @@
 // backend/routes/seller/deleteAccount.js
 import { Router } from "express";
-import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import Seller from "../../database/sellerv2.js";
-import {
-  attachActor,
-  canDeleteAccount,
-} from "../../middlewares/staffPermissions.js";
+// "deleteAccount" is an owner-only permission: no staff role (not even admin) can ever have it
+import { canDeleteAccount } from "../../middlewares/staffPermissions.js";
 import Product from "../../database/products.js";
 import SellerOffer from "../../database/sellerOffer.js";
 import SellerPlan from "../../database/sellerPlan.js";
@@ -29,82 +26,70 @@ async function deleteStoredAsset(pathOrKey) {
 }
 
 // 1) DELETE /delete-account — تەنها خاوەنی فرۆشگا
-router.delete(
-  "/delete-account",
-  jwtVerifySellerToken,
-  attachActor,
-  canDeleteAccount,
-  async (req, res) => {
-    try {
-      const sellerId = res.locals.sellerId;
-      const seller = await Seller.findByPk(sellerId);
+router.delete("/delete-account", canDeleteAccount, async (req, res) => {
+  try {
+    const sellerId = req.actor.sellerId;
+    const seller = await Seller.findByPk(sellerId);
 
-      if (!seller) {
-        return res
-          .status(404)
-          .json({ success: false, error: true, message: "Seller not found" });
-      }
-
-      await seller.update({ deletion_requested_at: new Date() });
-      res.clearCookie("s_t", clearCookieOpts());
-
-      return res.json({
-        success: true,
-        message:
-          "Account deletion scheduled. Your data will be permanently removed after 30 days.",
-        deletionDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      });
-    } catch (error) {
-      console.error("Delete account error:", error);
-      return res.status(500).json({
-        success: false,
-        error: true,
-        message: "Server error. Please try again.",
-      });
+    if (!seller) {
+      return res
+        .status(404)
+        .json({ success: false, error: true, message: "Seller not found" });
     }
-  },
-);
+
+    await seller.update({ deletion_requested_at: new Date() });
+    res.clearCookie("s_t", clearCookieOpts());
+
+    return res.json({
+      success: true,
+      message:
+        "Account deletion scheduled. Your data will be permanently removed after 30 days.",
+      deletionDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
+  } catch (error) {
+    console.error("Delete account error:", error);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error. Please try again.",
+    });
+  }
+});
 
 // 2) POST /cancel-deletion — تەنها خاوەنی فرۆشگا
-router.post(
-  "/cancel-deletion",
-  jwtVerifySellerToken,
-  attachActor,
-  canDeleteAccount,
-  async (req, res) => {
-    try {
-      const sellerId = res.locals.sellerId;
-      const seller = await Seller.findByPk(sellerId);
+router.post("/cancel-deletion", canDeleteAccount, async (req, res) => {
+  try {
+    const sellerId = req.actor.sellerId;
+    const seller = await Seller.findByPk(sellerId);
 
-      if (!seller) {
-        return res
-          .status(404)
-          .json({ success: false, error: true, message: "Seller not found" });
-      }
+    if (!seller) {
+      return res
+        .status(404)
+        .json({ success: false, error: true, message: "Seller not found" });
+    }
 
-      if (!seller.deletion_requested_at) {
-        return res.json({
-          success: true,
-          message: "No pending deletion to cancel",
-        });
-      }
-
-      await seller.update({ deletion_requested_at: null });
-
+    if (!seller.deletion_requested_at) {
       return res.json({
         success: true,
-        message: "Account deletion cancelled successfully",
-      });
-    } catch (error) {
-      console.error("Cancel deletion error:", error);
-      return res.status(500).json({
-        success: false,
-        error: true,
-        message: "Server error. Please try again.",
+        message: "No pending deletion to cancel",
       });
     }
-  },
-);
+
+    await seller.update({ deletion_requested_at: null });
+
+    return res.json({
+      success: true,
+      message: "Account deletion cancelled successfully",
+    });
+  } catch (error) {
+    console.error("Cancel deletion error:", error);
+    return res.status(500).json({
+      success: false,
+      error: true,
+      message: "Server error. Please try again.",
+    });
+  }
+});
 
 // 3) Permanent delete helper
 export async function permanentlyDeleteSellerAccount(sellerId) {

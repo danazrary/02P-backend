@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -41,6 +42,84 @@ export function clearCookieOpts() {
   return opts;
 }
 
+// ════════════════════════════════════════════════════════════════
+//  Cookie names — one per kind of identity, so they can never be mixed up
+// ════════════════════════════════════════════════════════════════
+export const SELLER_COOKIE = "s_t"; // shop owner session
+export const STAFF_COOKIE = "st_t"; // staff session
+
+// ════════════════════════════════════════════════════════════════
+//  STAFF TOKEN
+//  - signed with its own secret (STAFF_JWT_SECRET, or a key derived from
+//    JWT_SECRET) so a staff token can never verify as a seller token
+//    and a seller token can never verify as a staff token
+//  - carries NO role: the role is read from the database on every request,
+//    so changing a role / removing a staff member works immediately
+// ════════════════════════════════════════════════════════════════
+const STAFF_TOKEN_TYPE = "staff";
+const STAFF_TOKEN_ISSUER = "dwkanlink";
+const STAFF_TOKEN_AUDIENCE = "dwkanlink:staff";
+const STAFF_TOKEN_HOURS = 24 * 7;
+
+function getStaffSecret() {
+  if (process.env.STAFF_JWT_SECRET) return process.env.STAFF_JWT_SECRET;
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET (or STAFF_JWT_SECRET) must be configured");
+  }
+  // Derived key: different from JWT_SECRET, no extra env variable required.
+  return crypto
+    .createHmac("sha256", process.env.JWT_SECRET)
+    .update("dwkanlink:staff-token:v1")
+    .digest("hex");
+}
+
+export function staffToken(staffMember, sellerId, res) {
+  const token = jwt.sign(
+    {
+      typ: STAFF_TOKEN_TYPE,
+      staff_id: staffMember.staff_id,
+      seller_id: sellerId,
+    },
+    getStaffSecret(),
+    {
+      expiresIn: `${STAFF_TOKEN_HOURS}h`,
+      issuer: STAFF_TOKEN_ISSUER,
+      audience: STAFF_TOKEN_AUDIENCE,
+    },
+  );
+
+  // One identity per browser: a staff login replaces any seller session.
+  res.clearCookie(SELLER_COOKIE, clearCookieOpts());
+  res.cookie(
+    STAFF_COOKIE,
+    token,
+    cookieOpts(STAFF_TOKEN_HOURS * 60 * 60 * 1000),
+  );
+
+  return token;
+}
+
+/** Throws (JsonWebTokenError / TokenExpiredError) when the token is not a valid staff token. */
+export function verifyStaffToken(token) {
+  const decoded = jwt.verify(token, getStaffSecret(), {
+    issuer: STAFF_TOKEN_ISSUER,
+    audience: STAFF_TOKEN_AUDIENCE,
+  });
+
+  if (
+    decoded.typ !== STAFF_TOKEN_TYPE ||
+    !decoded.staff_id ||
+    !decoded.seller_id
+  ) {
+    throw new jwt.JsonWebTokenError("invalid staff token");
+  }
+  return decoded;
+}
+
+export function clearStaffCookie(res) {
+  res.clearCookie(STAFF_COOKIE, clearCookieOpts());
+}
+
 //.
 //.
 //.
@@ -59,7 +138,9 @@ export function sellerToken(id, email, shop_name, res) {
     expiresIn: `${expiresInHours}h`,
   });
 
-  res.cookie("s_t", token, cookieOpts(expiresInHours * 60 * 60 * 1000));
+  // One identity per browser: a seller login replaces any staff session.
+  clearStaffCookie(res);
+  res.cookie(SELLER_COOKIE, token, cookieOpts(expiresInHours * 60 * 60 * 1000));
 
   return token;
 }

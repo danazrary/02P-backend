@@ -1,7 +1,6 @@
 // backend/routes/seller/category.js
 import { Router } from "express";
 import { v4 as uuidv4 } from "uuid";
-import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { r2Multer, uploadToR2, deleteFromR2 } from "../../utils/r2.js";
 import {
   decrementSellerStorage,
@@ -12,8 +11,8 @@ import Product from "../../database/products.js";
 import { getStoredAssetBytes } from "../../utils/sellerStorageUsage.js";
 import { getCategoryMap } from "../../utils/categoryTranslations.js";
 import {
-  attachActor,
   canManageCategories,
+  requireShopUser,
 } from "../../middlewares/staffPermissions.js";
 
 const router = Router();
@@ -47,147 +46,123 @@ async function findSeller(id) {
 }
 
 // 1) GET /categories (خوێندنەوە بۆ سەرجەم بەکارهێنەران)
-router.get(
-  "/categories",
-  jwtVerifySellerToken,
-  attachActor,
-  async (req, res) => {
-    try {
-      const sellerId =
-        res.locals.sellerId || req.user?.seller_id || req.user?.id;
-      const seller = await findSeller(sellerId);
-      if (!seller) {
-        return res
-          .status(404)
-          .json({ success: false, error: true, message: "Seller not found" });
-      }
-      return res.status(200).json({
-        success: true,
-        error: false,
-        ...categoryPayload(getCategoryMap(seller)),
-      });
-    } catch (error) {
-      console.error("Error fetching categories:", error);
+router.get("/categories", requireShopUser, async (req, res) => {
+  try {
+    const sellerId = req.actor.sellerId;
+    const seller = await findSeller(sellerId);
+    if (!seller) {
       return res
-        .status(500)
-        .json({ success: false, error: true, message: "Server error" });
+        .status(404)
+        .json({ success: false, error: true, message: "Seller not found" });
     }
-  },
-);
+    return res.status(200).json({
+      success: true,
+      error: false,
+      ...categoryPayload(getCategoryMap(seller)),
+    });
+  } catch (error) {
+    console.error("Error fetching categories:", error);
+    return res
+      .status(500)
+      .json({ success: false, error: true, message: "Server error" });
+  }
+});
 
 // 2) GET /categories-full (کراوەیە بۆ زیادکردنی کاڵا و کەتەلۆگ)
-router.get(
-  "/categories-full",
-  jwtVerifySellerToken,
-  attachActor,
-  async (req, res) => {
-    try {
-      const sellerId =
-        res.locals.sellerId || req.user?.seller_id || req.user?.id;
-      const seller = await findSeller(sellerId);
-      if (!seller) {
-        return res
-          .status(404)
-          .json({ success: false, error: true, message: "Seller not found" });
-      }
-      return res.status(200).json({
-        success: true,
-        error: false,
-        ...categoryPayload(getCategoryMap(seller)),
-      });
-    } catch (error) {
-      console.error("Error fetching categories-full:", error);
+router.get("/categories-full", requireShopUser, async (req, res) => {
+  try {
+    const sellerId = req.actor.sellerId;
+    const seller = await findSeller(sellerId);
+    if (!seller) {
       return res
-        .status(500)
-        .json({ success: false, error: true, message: "Server error" });
+        .status(404)
+        .json({ success: false, error: true, message: "Seller not found" });
     }
-  },
-);
+    return res.status(200).json({
+      success: true,
+      error: false,
+      ...categoryPayload(getCategoryMap(seller)),
+    });
+  } catch (error) {
+    console.error("Error fetching categories-full:", error);
+    return res
+      .status(500)
+      .json({ success: false, error: true, message: "Server error" });
+  }
+});
 
-// 3) POST /categories (تەنها seller, admin, shop_editor)
-router.post(
-  "/categories",
-  jwtVerifySellerToken,
-  attachActor,
-  canManageCategories,
-  async (req, res) => {
-    try {
-      const sellerId =
-        res.locals.sellerId || req.user?.seller_id || req.user?.id;
-      const source =
-        req.body?.category && typeof req.body.category === "object"
-          ? req.body.category
-          : req.body || {};
-      const ku = cleanText(
-        source.ku ||
-          (typeof req.body?.category === "string" ? req.body.category : ""),
-      );
-      const ar = cleanText(source.ar);
-      const requestedKey = cleanText(source.key || source.categoryKey);
+// 3) POST /categories (تەنها بە دەسەڵاتی manageCategories)
+router.post("/categories", canManageCategories, async (req, res) => {
+  try {
+    const sellerId = req.actor.sellerId;
+    const source =
+      req.body?.category && typeof req.body.category === "object"
+        ? req.body.category
+        : req.body || {};
+    const ku = cleanText(
+      source.ku ||
+        (typeof req.body?.category === "string" ? req.body.category : ""),
+    );
+    const ar = cleanText(source.ar);
+    const requestedKey = cleanText(source.key || source.categoryKey);
 
-      if (!ku && !ar) {
-        return res.status(400).json({
-          success: false,
-          error: true,
-          message: "A Kurdish or Arabic category name is required",
-        });
-      }
-
-      const seller = await findSeller(sellerId);
-      if (!seller) {
-        return res
-          .status(404)
-          .json({ success: false, error: true, message: "Seller not found" });
-      }
-
-      const map = getCategoryMap(seller);
-      const key = makeKey(requestedKey || ku || ar);
-      if (!key) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            error: true,
-            message: "Invalid category key",
-          });
-      }
-      if (findKey(map, key)) {
-        return res.status(400).json({
-          success: false,
-          error: true,
-          message: "Category already exists",
-        });
-      }
-
-      map[key] = { ku, ar, image: "", subcategories: {} };
-      await seller.update({ category_translations: map });
-
-      return res.status(201).json({
-        success: true,
-        error: false,
-        key,
-        ...categoryPayload(map),
-        message: "Category added successfully",
+    if (!ku && !ar) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "A Kurdish or Arabic category name is required",
       });
-    } catch (error) {
-      console.error("Error adding category:", error);
-      return res
-        .status(500)
-        .json({ success: false, error: true, message: "Server error" });
     }
-  },
-);
+
+    const seller = await findSeller(sellerId);
+    if (!seller) {
+      return res
+        .status(404)
+        .json({ success: false, error: true, message: "Seller not found" });
+    }
+
+    const map = getCategoryMap(seller);
+    const key = makeKey(requestedKey || ku || ar);
+    if (!key) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Invalid category key",
+      });
+    }
+    if (findKey(map, key)) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Category already exists",
+      });
+    }
+
+    map[key] = { ku, ar, image: "", subcategories: {} };
+    await seller.update({ category_translations: map });
+
+    return res.status(201).json({
+      success: true,
+      error: false,
+      key,
+      ...categoryPayload(map),
+      message: "Category added successfully",
+    });
+  } catch (error) {
+    console.error("Error adding category:", error);
+    return res
+      .status(500)
+      .json({ success: false, error: true, message: "Server error" });
+  }
+});
 
 // 4) PUT /categories/:categoryKey
 router.put(
   "/categories/:categoryKey",
-  jwtVerifySellerToken,
-  attachActor,
   canManageCategories,
   async (req, res) => {
     try {
-      const sellerId =
-        res.locals.sellerId || req.user?.seller_id || req.user?.id;
+      const sellerId = req.actor.sellerId;
       const seller = await findSeller(sellerId);
       if (!seller) {
         return res
@@ -235,13 +210,10 @@ router.put(
 // 5) DELETE /categories/:categoryKey
 router.delete(
   "/categories/:categoryKey",
-  jwtVerifySellerToken,
-  attachActor,
   canManageCategories,
   async (req, res) => {
     try {
-      const sellerId =
-        res.locals.sellerId || req.user?.seller_id || req.user?.id;
+      const sellerId = req.actor.sellerId;
       const seller = await findSeller(sellerId);
       if (!seller) {
         return res
@@ -295,96 +267,82 @@ router.delete(
 );
 
 // 6) POST /subcategories
-router.post(
-  "/subcategories",
-  jwtVerifySellerToken,
-  attachActor,
-  canManageCategories,
-  async (req, res) => {
-    try {
-      const sellerId =
-        res.locals.sellerId || req.user?.seller_id || req.user?.id;
-      const categoryKey = cleanText(
-        req.body?.categoryKey || req.body?.category,
-      );
-      const source =
-        req.body?.subcategory && typeof req.body.subcategory === "object"
-          ? req.body.subcategory
-          : req.body || {};
-      const ku = cleanText(
-        source.ku ||
-          (typeof req.body?.subcategory === "string"
-            ? req.body.subcategory
-            : ""),
-      );
-      const ar = cleanText(source.ar);
-      const requestedSubKey = cleanText(source.key || source.subcategoryKey);
+router.post("/subcategories", canManageCategories, async (req, res) => {
+  try {
+    const sellerId = req.actor.sellerId;
+    const categoryKey = cleanText(req.body?.categoryKey || req.body?.category);
+    const source =
+      req.body?.subcategory && typeof req.body.subcategory === "object"
+        ? req.body.subcategory
+        : req.body || {};
+    const ku = cleanText(
+      source.ku ||
+        (typeof req.body?.subcategory === "string" ? req.body.subcategory : ""),
+    );
+    const ar = cleanText(source.ar);
+    const requestedSubKey = cleanText(source.key || source.subcategoryKey);
 
-      if (!categoryKey || (!ku && !ar)) {
-        return res.status(400).json({
-          success: false,
-          error: true,
-          message:
-            "Category key and a Kurdish or Arabic subcategory name are required",
-        });
-      }
-
-      const seller = await findSeller(sellerId);
-      if (!seller) {
-        return res
-          .status(404)
-          .json({ success: false, error: true, message: "Seller not found" });
-      }
-
-      const map = getCategoryMap(seller);
-      const key = findKey(map, categoryKey);
-      if (!key) {
-        return res.status(404).json({
-          success: false,
-          error: true,
-          message: "Parent category not found",
-        });
-      }
-
-      const subKey = makeKey(requestedSubKey || ku || ar);
-      const subcategories = map[key].subcategories;
-      if (!subKey || findKey(subcategories, subKey)) {
-        return res.status(400).json({
-          success: false,
-          error: true,
-          message: "Subcategory already exists or has an invalid key",
-        });
-      }
-
-      subcategories[subKey] = { ku, ar };
-      await seller.update({ category_translations: map });
-
-      return res.status(201).json({
-        success: true,
-        error: false,
-        key: subKey,
-        ...categoryPayload(map),
-        message: "Subcategory added successfully",
+    if (!categoryKey || (!ku && !ar)) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message:
+          "Category key and a Kurdish or Arabic subcategory name are required",
       });
-    } catch (error) {
-      console.error("Error adding subcategory:", error);
-      return res
-        .status(500)
-        .json({ success: false, error: true, message: "Server error" });
     }
-  },
-);
+
+    const seller = await findSeller(sellerId);
+    if (!seller) {
+      return res
+        .status(404)
+        .json({ success: false, error: true, message: "Seller not found" });
+    }
+
+    const map = getCategoryMap(seller);
+    const key = findKey(map, categoryKey);
+    if (!key) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "Parent category not found",
+      });
+    }
+
+    const subKey = makeKey(requestedSubKey || ku || ar);
+    const subcategories = map[key].subcategories;
+    if (!subKey || findKey(subcategories, subKey)) {
+      return res.status(400).json({
+        success: false,
+        error: true,
+        message: "Subcategory already exists or has an invalid key",
+      });
+    }
+
+    subcategories[subKey] = { ku, ar };
+    await seller.update({ category_translations: map });
+
+    return res.status(201).json({
+      success: true,
+      error: false,
+      key: subKey,
+      ...categoryPayload(map),
+      message: "Subcategory added successfully",
+    });
+  } catch (error) {
+    console.error("Error adding subcategory:", error);
+    return res
+      .status(500)
+      .json({ success: false, error: true, message: "Server error" });
+  }
+});
 
 // 7) PUT /subcategories/:categoryKey/:subcategoryKey
 router.put(
   "/subcategories/:categoryKey/:subcategoryKey",
-  jwtVerifySellerToken,
-  attachActor,
   canManageCategories,
   async (req, res) => {
     try {
-      const sellerId =
-        res.locals.sellerId || req.user?.seller_id || req.user?.id;
+      const sellerId = req.actor.sellerId;
       const seller = await findSeller(sellerId);
       if (!seller) {
         return res
@@ -436,66 +394,57 @@ router.put(
 );
 
 // 8) DELETE /subcategories
-router.delete(
-  "/subcategories",
-  jwtVerifySellerToken,
-  attachActor,
-  canManageCategories,
-  async (req, res) => {
-    try {
-      const sellerId =
-        res.locals.sellerId || req.user?.seller_id || req.user?.id;
-      const requestedCategory = cleanText(
-        req.body?.categoryKey || req.body?.category,
-      );
-      const requestedSubcategory = cleanText(
-        req.body?.subcategoryKey || req.body?.subcategory,
-      );
+router.delete("/subcategories", canManageCategories, async (req, res) => {
+  try {
+    const sellerId = req.actor.sellerId;
+    const requestedCategory = cleanText(
+      req.body?.categoryKey || req.body?.category,
+    );
+    const requestedSubcategory = cleanText(
+      req.body?.subcategoryKey || req.body?.subcategory,
+    );
 
-      const seller = await findSeller(sellerId);
-      if (!seller) {
-        return res
-          .status(404)
-          .json({ success: false, error: true, message: "Seller not found" });
-      }
-
-      const map = getCategoryMap(seller);
-      const categoryKey = findKey(map, requestedCategory);
-      const subcategoryKey = categoryKey
-        ? findKey(map[categoryKey].subcategories, requestedSubcategory)
-        : null;
-
-      if (!categoryKey || !subcategoryKey) {
-        return res.status(404).json({
-          success: false,
-          error: true,
-          message: "Subcategory not found",
-        });
-      }
-
-      delete map[categoryKey].subcategories[subcategoryKey];
-      await seller.update({ category_translations: map });
-
-      return res.status(200).json({
-        success: true,
-        error: false,
-        ...categoryPayload(map),
-        message: "Subcategory deleted successfully",
-      });
-    } catch (error) {
-      console.error("Error deleting subcategory:", error);
+    const seller = await findSeller(sellerId);
+    if (!seller) {
       return res
-        .status(500)
-        .json({ success: false, error: true, message: "Server error" });
+        .status(404)
+        .json({ success: false, error: true, message: "Seller not found" });
     }
-  },
-);
+
+    const map = getCategoryMap(seller);
+    const categoryKey = findKey(map, requestedCategory);
+    const subcategoryKey = categoryKey
+      ? findKey(map[categoryKey].subcategories, requestedSubcategory)
+      : null;
+
+    if (!categoryKey || !subcategoryKey) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "Subcategory not found",
+      });
+    }
+
+    delete map[categoryKey].subcategories[subcategoryKey];
+    await seller.update({ category_translations: map });
+
+    return res.status(200).json({
+      success: true,
+      error: false,
+      ...categoryPayload(map),
+      message: "Subcategory deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting subcategory:", error);
+    return res
+      .status(500)
+      .json({ success: false, error: true, message: "Server error" });
+  }
+});
 
 // 9) PUT /categories/:categoryKey/image
 router.put(
   "/categories/:categoryKey/image",
-  jwtVerifySellerToken,
-  attachActor,
   canManageCategories,
   (req, res, next) => {
     catImageUpload(req, res, (error) => {
@@ -508,8 +457,7 @@ router.put(
   },
   async (req, res) => {
     try {
-      const sellerId =
-        res.locals.sellerId || req.user?.seller_id || req.user?.id;
+      const sellerId = req.actor.sellerId;
       if (!req.file) {
         return res.status(400).json({
           success: false,
@@ -566,13 +514,10 @@ router.put(
 // 10) DELETE /categories/:categoryKey/image
 router.delete(
   "/categories/:categoryKey/image",
-  jwtVerifySellerToken,
-  attachActor,
   canManageCategories,
   async (req, res) => {
     try {
-      const sellerId =
-        res.locals.sellerId || req.user?.seller_id || req.user?.id;
+      const sellerId = req.actor.sellerId;
       const seller = await findSeller(sellerId);
       if (!seller) {
         return res

@@ -1,43 +1,31 @@
+// backend/routes/seller/staff.js
 import express from "express";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
-import jwt from "jsonwebtoken";
 import Seller from "../../database/sellerv2.js";
-import { clearCookieOpts } from "../../utils/addingToken.js";
-import { checkMe } from "../../middlewares/jwtVerify.js";
+import { staffToken, clearStaffCookie } from "../../utils/addingToken.js";
+import { canManageStaff } from "../../middlewares/staffPermissions.js";
+import { extractStaffArray, toPublicStaff } from "../../utils/staffHelpers.js";
 import {
-  attachActor,
-  canManageStaff,
-} from "../../middlewares/staffPermissions.js";
+  getPermissionsForRole,
+  getRoleMeta,
+  isStaffRole,
+  listStaffRoles,
+} from "../../utils/staffRoles.js";
 
 const router = express.Router();
 
-const ALLOWED_STAFF_ROLES = [
-  "admin",
-  "product_manager",
-  "shop_editor",
-  "cashier",
-];
+// Compared against when the e-mail is unknown, so response time does not reveal
+// which staff e-mails exist.
+const DUMMY_HASH = bcrypt.hashSync("dwkanlink-dummy-password", 10);
 
-function extractStaffArray(seller) {
-  if (!seller || !seller.staff_members) return [];
-  if (Array.isArray(seller.staff_members)) return [...seller.staff_members];
-  if (typeof seller.staff_members === "string") {
-    try {
-      return JSON.parse(seller.staff_members);
-    } catch {
-      return [];
-    }
-  }
-  return [];
-}
+const SERVER_ERROR = { success: false, message: "هەڵەی سێرڤەر ڕوویدا" };
 
 // ==========================================
-// ١) چوونەژوورەوەی ستاف (POST /api/seller/staff/login)
+// 1) STAFF LOGIN  (POST /api/seller/staff/login)
+//    Issues a STAFF token (own cookie + own secret, no role inside).
 // ==========================================
 router.post("/login", async (req, res) => {
-  console.log("in login");
-  
   try {
     const { shop_name, email, password } = req.body;
 
@@ -57,52 +45,36 @@ router.post("/login", async (req, res) => {
         .json({ success: false, message: "فرۆشگا نەدۆزرایەوە یان ناچالاکە" });
     }
 
-    const staffList = extractStaffArray(seller);
-
-    const staffMember = staffList.find(
+    const emailClean = email.trim().toLowerCase();
+    const staffMember = extractStaffArray(seller).find(
       (stf) =>
-        stf.email?.trim().toLowerCase() === email.trim().toLowerCase() &&
+        stf.email?.trim().toLowerCase() === emailClean &&
         stf.is_active !== false,
     );
 
-    if (!staffMember || !staffMember.password_hash) {
-      return res
-        .status(401)
-        .json({ success: false, message: "ئیمەیڵ یان وشەی نهێنی هەڵەیە" });
-    }
-
-    const match = await bcrypt.compare(password, staffMember.password_hash);
-    if (!match) {
-      return res
-        .status(401)
-        .json({ success: false, message: "ئیمەیڵ یان وشەی نهێنی هەڵەیە" });
-    }
-
-    const payload = {
-      role: "staff",
-      staff_role: staffMember.role || "cashier",
-      staff_id: staffMember.staff_id,
-      staff_name: staffMember.name,
-      email: staffMember.email,
-      seller_id: seller.id,
-      parent_seller_id: seller.id,
-      shop_name: seller.shop_name,
-    };
-
-    const token = jwt.sign(
-      payload,
-      process.env.JWT_SECRET || "dwkanlink_secret_key",
-      { expiresIn: "30d" },
+    const match = await bcrypt.compare(
+      password,
+      staffMember?.password_hash || DUMMY_HASH,
     );
 
-    res.cookie("s_t", token, {
-      ...clearCookieOpts(),
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-    });
+    if (!staffMember || !staffMember.password_hash || !match) {
+      return res
+        .status(401)
+        .json({ success: false, message: "ئیمەیڵ یان وشەی نهێنی هەڵەیە" });
+    }
+
+    if (!isStaffRole(staffMember.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "ڕۆڵی ئەم هەژمارە دروست نییە، پەیوەندی بە خاوەنی فرۆشگا بکە",
+      });
+    }
+
+    staffToken(staffMember, seller.id, res);
 
     return res.json({
       success: true,
-      token,
+      // kept for older frontend code
       isStaff: {
         role: staffMember.role,
         name: staffMember.name,
@@ -119,47 +91,57 @@ router.post("/login", async (req, res) => {
         shop_name: seller.shop_name,
         business_type: seller.business_type,
       },
+      role_meta: getRoleMeta(staffMember.role),
+      permissions: getPermissionsForRole(staffMember.role),
     });
   } catch (err) {
     console.error("/api/seller/staff/login error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "هەڵەی سێرڤەر ڕوویدا" });
+    return res.status(500).json(SERVER_ERROR);
   }
 });
 
 // ==========================================
-// ٢) هێنانی لیستی کارمەندەکان — تەنها خاوەنی فرۆشگا
+// 2) STAFF LOGOUT  (POST /api/seller/staff/logout)
 // ==========================================
-router.get("/list", checkMe, attachActor, canManageStaff, async (req, res) => {
-  try {
-    const sellerId = res.locals.sellerId || req.user?.data?.id || req.user?.id;
-    const seller = await Seller.findByPk(sellerId);
+router.post("/logout", (req, res) => {
+  clearStaffCookie(res);
+  return res.json({ success: true, message: "Logged out successfully" });
+});
 
+// ==========================================
+// 3) AVAILABLE ROLES — feeds the role dropdown (owner only)
+// ==========================================
+router.get("/roles", canManageStaff, (req, res) => {
+  return res.json({ success: true, roles: listStaffRoles() });
+});
+
+// ==========================================
+// 4) LIST STAFF — owner only
+// ==========================================
+router.get("/list", canManageStaff, async (req, res) => {
+  try {
+    const seller = await Seller.findByPk(req.actor.sellerId);
     if (!seller) {
       return res
         .status(404)
         .json({ success: false, message: "فرۆشیار نەدۆزرایەوە" });
     }
 
-    const staffList = extractStaffArray(seller);
-    const safeStaffList = staffList.map(({ password_hash, ...rest }) => rest);
-
-    return res.json({ success: true, staff_members: safeStaffList });
+    return res.json({
+      success: true,
+      staff_members: extractStaffArray(seller).map(toPublicStaff),
+    });
   } catch (err) {
     console.error("Fetch Staff Error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "هەڵەی سێرڤەر ڕوویدا" });
+    return res.status(500).json(SERVER_ERROR);
   }
 });
 
 // ==========================================
-// ٣) زیادکردنی کارمەند — تەنها خاوەنی فرۆشگا
+// 5) ADD STAFF — owner only
 // ==========================================
-router.post("/add", checkMe, attachActor, canManageStaff, async (req, res) => {
+router.post("/add", canManageStaff, async (req, res) => {
   try {
-    const sellerId = res.locals.sellerId || req.user?.data?.id || req.user?.id;
     const { name, email, password, role } = req.body;
 
     if (!name || !email || !password || !role) {
@@ -168,7 +150,7 @@ router.post("/add", checkMe, attachActor, canManageStaff, async (req, res) => {
         .json({ success: false, message: "تکایە هەموو خانەکان پڕبکەرەوە" });
     }
 
-    if (!ALLOWED_STAFF_ROLES.includes(role)) {
+    if (!isStaffRole(role)) {
       return res
         .status(400)
         .json({ success: false, message: "ڕۆڵی دیاریکراو نادروستە" });
@@ -181,7 +163,7 @@ router.post("/add", checkMe, attachActor, canManageStaff, async (req, res) => {
       });
     }
 
-    const seller = await Seller.findByPk(sellerId);
+    const seller = await Seller.findByPk(req.actor.sellerId);
     if (!seller) {
       return res
         .status(404)
@@ -197,140 +179,117 @@ router.post("/add", checkMe, attachActor, canManageStaff, async (req, res) => {
         .json({ success: false, message: "ئەم ئیمەیڵە پێشتر تۆمارکراوە" });
     }
 
-    const password_hash = await bcrypt.hash(password, 10);
-
     const newStaff = {
       staff_id: `stf_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`,
       name: name.trim(),
       email: emailClean,
-      password_hash,
+      password_hash: await bcrypt.hash(password, 10),
       role,
       is_active: true,
       created_at: new Date().toISOString(),
     };
 
     staffList.push(newStaff);
+    seller.staff_members = staffList;
+    seller.changed("staff_members", true);
+    await seller.save();
+
+    return res.status(201).json({
+      success: true,
+      message: "کارمەند بە سەرکەوتوویی زیادکرا",
+      staff: toPublicStaff(newStaff),
+    });
+  } catch (err) {
+    console.error("Add Staff Error:", err);
+    return res.status(500).json(SERVER_ERROR);
+  }
+});
+
+// ==========================================
+// 6) CHANGE STAFF ROLE — owner only
+//    Takes effect on the staff member's very next request
+//    (the role is read from the database, not from his token).
+// ==========================================
+router.put("/:staffId/role", canManageStaff, async (req, res) => {
+  try {
+    const { staffId } = req.params;
+    const { role } = req.body;
+
+    if (!isStaffRole(role)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "ڕۆڵی داواکراو نادروستە" });
+    }
+
+    const seller = await Seller.findByPk(req.actor.sellerId);
+    if (!seller) {
+      return res
+        .status(404)
+        .json({ success: false, message: "فرۆشیار نەدۆزرایەوە" });
+    }
+
+    const staffList = extractStaffArray(seller);
+    const staffIndex = staffList.findIndex((s) => s.staff_id === staffId);
+
+    if (staffIndex === -1) {
+      return res
+        .status(404)
+        .json({ success: false, message: "کارمەند نەدۆزرایەوە" });
+    }
+
+    staffList[staffIndex].role = role;
+    staffList[staffIndex].updated_at = new Date().toISOString();
 
     seller.staff_members = staffList;
     seller.changed("staff_members", true);
     await seller.save();
 
-    const { password_hash: _, ...safeData } = newStaff;
-    return res.status(201).json({
+    return res.json({
       success: true,
-      message: "کارمەند بە سەرکەوتوویی زیادکرا",
-      staff: safeData,
+      message: "ڕۆڵی کارمەند بە سەرکەوتوویی نوێکرایەوە",
     });
   } catch (err) {
-    console.error("Add Staff Error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "هەڵەی سێرڤەر ڕوویدا" });
+    console.error("Update Staff Role Error:", err);
+    return res.status(500).json(SERVER_ERROR);
   }
 });
 
 // ==========================================
-// ٤) گۆڕینی ڕۆڵی کارمەند — تەنها خاوەنی فرۆشگا
+// 7) DELETE STAFF — owner only
+//    The deleted member is locked out on his next request.
 // ==========================================
-router.put(
-  "/:staffId/role",
-  checkMe,
-  attachActor,
-  canManageStaff,
-  async (req, res) => {
-    try {
-      const sellerId =
-        res.locals.sellerId || req.user?.data?.id || req.user?.id;
-      const { staffId } = req.params;
-      const { role } = req.body;
+router.delete("/:staffId", canManageStaff, async (req, res) => {
+  try {
+    const { staffId } = req.params;
 
-      if (!ALLOWED_STAFF_ROLES.includes(role)) {
-        return res
-          .status(400)
-          .json({ success: false, message: "ڕۆڵی داواکراو نادروستە" });
-      }
-
-      const seller = await Seller.findByPk(sellerId);
-      if (!seller) {
-        return res
-          .status(404)
-          .json({ success: false, message: "فرۆشیار نەدۆزرایەوە" });
-      }
-
-      const staffList = extractStaffArray(seller);
-      const staffIndex = staffList.findIndex((s) => s.staff_id === staffId);
-
-      if (staffIndex === -1) {
-        return res
-          .status(404)
-          .json({ success: false, message: "کارمەند نەدۆزرایەوە" });
-      }
-
-      staffList[staffIndex].role = role;
-      staffList[staffIndex].updated_at = new Date().toISOString();
-
-      seller.staff_members = staffList;
-      seller.changed("staff_members", true);
-      await seller.save();
-
-      return res.json({
-        success: true,
-        message: "ڕۆڵی کارمەند بە سەرکەوتوویی نوێکرایەوە",
-      });
-    } catch (err) {
-      console.error("Update Staff Role Error:", err);
+    const seller = await Seller.findByPk(req.actor.sellerId);
+    if (!seller) {
       return res
-        .status(500)
-        .json({ success: false, message: "هەڵەی سێرڤەر ڕوویدا" });
+        .status(404)
+        .json({ success: false, message: "فرۆشیار نەدۆزرایەوە" });
     }
-  },
-);
 
-// ==========================================
-// ٥) سڕینەوەی کارمەند — تەنها خاوەنی فرۆشگا
-// ==========================================
-router.delete(
-  "/:staffId",
-  checkMe,
-  attachActor,
-  canManageStaff,
-  async (req, res) => {
-    try {
-      const sellerId =
-        res.locals.sellerId || req.user?.data?.id || req.user?.id;
-      const { staffId } = req.params;
+    const staffList = extractStaffArray(seller);
+    const filtered = staffList.filter((s) => s.staff_id !== staffId);
 
-      const seller = await Seller.findByPk(sellerId);
-      if (!seller) {
-        return res
-          .status(404)
-          .json({ success: false, message: "فرۆشیار نەدۆزرایەوە" });
-      }
-
-      const staffList = extractStaffArray(seller);
-      const filtered = staffList.filter((s) => s.staff_id !== staffId);
-
-      if (filtered.length === staffList.length) {
-        return res
-          .status(404)
-          .json({ success: false, message: "کارمەند نەدۆزرایەوە" });
-      }
-
-      seller.staff_members = filtered;
-      seller.changed("staff_members", true);
-      await seller.save();
-
-      return res.json({
-        success: true,
-        message: "کارمەند بە سەرکەوتوویی سڕایەوە",
-      });
-    } catch (err) {
-      console.error("Delete Staff Error:", err);
+    if (filtered.length === staffList.length) {
       return res
-        .status(500)
-        .json({ success: false, message: "هەڵەی سێرڤەر ڕوویدا" });
+        .status(404)
+        .json({ success: false, message: "کارمەند نەدۆزرایەوە" });
     }
-  },
-);
+
+    seller.staff_members = filtered;
+    seller.changed("staff_members", true);
+    await seller.save();
+
+    return res.json({
+      success: true,
+      message: "کارمەند بە سەرکەوتوویی سڕایەوە",
+    });
+  } catch (err) {
+    console.error("Delete Staff Error:", err);
+    return res.status(500).json(SERVER_ERROR);
+  }
+});
 
 export default router;

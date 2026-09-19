@@ -11,8 +11,10 @@ import {
   sellerToken,
   shortSellerToken,
   clearCookieOpts,
+  clearStaffCookie,
 } from "../../utils/addingToken.js";
 import { checkMe } from "../../middlewares/jwtVerify.js";
+import { requireOwner } from "../../middlewares/staffPermissions.js";
 import axios from "axios";
 
 const router = express.Router();
@@ -370,7 +372,7 @@ router.post("/reset-password", async (req, res) => {
 // ==========================================
 // 6) CHANGE PASSWORD (SETTINGS)
 // ==========================================
-router.post("/change-password", checkMe, async (req, res) => {
+router.post("/change-password", checkMe, requireOwner, async (req, res) => {
   try {
     const { oldPassword, newPassword, confirmPassword } = req.body;
     if (!oldPassword || !newPassword || !confirmPassword) {
@@ -422,44 +424,79 @@ router.post("/change-password", checkMe, async (req, res) => {
 // 7) CHECK-ME
 // ==========================================
 router.get("/check-me", checkMe, async (req, res) => {
-  const { user } = req;
-  if (user.role === "seller") {
-    const seller = await Seller.findByPk(user.data.id, {
-      attributes: [
-        "id",
-        "shop_name",
-        "business_type",
-        "name",
-        "email",
-        "phone",
-      ],
-    });
+  try {
+    const { actor } = req;
 
-    if (!seller) {
-      return res.status(401).json({ error: true, logout: true });
+    // ── Shop owner ──
+    if (actor.isSeller) {
+      const seller = await Seller.findByPk(actor.sellerId, {
+        attributes: [
+          "id",
+          "shop_name",
+          "business_type",
+          "name",
+          "email",
+          "phone",
+        ],
+      });
+
+      if (!seller) {
+        return res.status(401).json({ error: true, logout: true });
+      }
+
+      const needsProfile = isProfileIncomplete(seller);
+
+      return res.json({
+        role: "seller",
+        needsProfile,
+        permissions: actor.permissions,
+        role_meta: actor.roleMeta,
+        seller: {
+          id: seller.id,
+          shop_name: needsProfile ? null : seller.shop_name,
+          business_type: seller.business_type,
+          name: seller.name,
+          email: seller.email,
+        },
+      });
     }
 
-    const needsProfile = isProfileIncomplete(seller);
+    // ── Staff member (already verified against the database by checkMe) ──
+    if (actor.isStaff) {
+      return res.json({
+        role: "staff",
+        staff_role: actor.role,
+        needsProfile: false,
+        permissions: actor.permissions,
+        role_meta: actor.roleMeta,
+        staff: {
+          staff_id: actor.staffId,
+          name: actor.name,
+          email: actor.email,
+          role: actor.role,
+        },
+        seller: {
+          id: actor.seller.id,
+          shop_name: actor.seller.shop_name,
+          business_type: actor.seller.business_type,
+        },
+      });
+    }
 
-    return res.json({
-      role: "seller",
-      needsProfile,
-      seller: {
-        id: seller.id,
-        shop_name: needsProfile ? null : seller.shop_name,
-        business_type: seller.business_type,
-        name: seller.name,
-        email: seller.email,
-      },
-    });
+    if (actor.isPlatformAdmin) return res.json({ role: "admin" });
+
+    // authError tells the client WHY it is a guest: "missing" | "expired" | "invalid" | "revoked"
+    return res.json({ role: "customer", authError: req.authError || null });
+  } catch (err) {
+    console.error("/check-me error", err);
+    return res.status(500).json({ error: true, message: "Server error" });
   }
-  return res.json({ role: user.role });
 });
 
 // ==========================================
 // 8) COMPLETE PROFILE
 // ==========================================
-router.post("/complete-profile", checkMe, async (req, res) => {
+router.post("/complete-profile", checkMe, requireOwner, async (req, res) => {
   try {
     const sellerId = req.user.data.id;
     const { shop_name, business_type, phone, name, city } = req.body;
@@ -716,109 +753,15 @@ router.post("/successLogin", async (req, res) => {
 // ==========================================
 router.post("/logout", (req, res) => {
   res.clearCookie("s_t", clearCookieOpts());
+  clearStaffCookie(res);
   return res
     .status(200)
     .json({ success: true, message: "Logged out successfully" });
 });
 
 // ==========================================
-// 14) STAFF LOGIN
+// Staff login lives in routes/seller/staff.js (POST /api/seller/staff/login).
+// The old copy that was here signed staff tokens with the seller secret; it was removed on purpose.
 // ==========================================
-router.post("/staf33f/logi33n", async (req, res) => {
-  try {
-    const { shop_name, email, password } = req.body;
-    if (!shop_name || !email || !password) {
-      return res
-        .status(400)
-        .json({ success: false, message: "All fields required" });
-    }
-
-    const seller = await Seller.findOne({
-      where: { shop_name: shop_name.trim().toLowerCase() },
-    });
-
-    if (!seller || seller.is_active === false) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Shop not found or inactive" });
-    }
-
-    const staffList = Array.isArray(seller.staff_members)
-      ? seller.staff_members
-      : typeof seller.staff_members === "string"
-        ? JSON.parse(seller.staff_members || "[]")
-        : [];
-
-    const staffMember = staffList.find(
-      (stf) =>
-        stf.email?.trim().toLowerCase() === email.trim().toLowerCase() &&
-        stf.is_active !== false,
-    );
-
-    if (!staffMember || !staffMember.password_hash) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid credentials" });
-    }
-
-    const match = await bcrypt.compare(password, staffMember.password_hash);
-    if (!match) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid credentials" });
-    }
-
-    const payload = {
-      role: "staff",
-      staff_role: staffMember.role || "cashier",
-      staff_id: staffMember.staff_id,
-      staff_name: staffMember.name,
-      email: staffMember.email,
-      seller_id: seller.id,
-      parent_seller_id: seller.id,
-      shop_name: seller.shop_name,
-    };
-
-    const token = jwt.sign(
-      payload,
-      process.env.JWT_SECRET || "dwkanlink_secret_key",
-      {
-        expiresIn: "30d",
-      },
-    );
-
-    res.cookie("s_t", token, {
-      ...clearCookieOpts(),
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-    });
-
-    return res.json({
-      success: true,
-      token,
-      // Role info — save to localStorage as:
-      //   localStorage.setItem("role", "staff")
-      //   localStorage.setItem("isStaff", JSON.stringify(data.isStaff))
-      isStaff: {
-        role: staffMember.role, // "admin" | "product_manager" | "shop_editor" | "cashier"
-        name: staffMember.name,
-        staff_id: staffMember.staff_id,
-      },
-      staff: {
-        staff_id: staffMember.staff_id,
-        name: staffMember.name,
-        email: staffMember.email,
-        role: staffMember.role,
-      },
-      shop: {
-        id: seller.id,
-        shop_name: seller.shop_name,
-        business_type: seller.business_type,
-      },
-    });
-  } catch (err) {
-    console.error("/staff/login error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-});
 
 export default router;

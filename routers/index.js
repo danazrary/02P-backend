@@ -24,6 +24,8 @@ import sellerShopSectionsRouter from "./seller/shopSections.js";
 import sellerPushNotificationsRouter from "./seller/pushNotifications.js";
 import sellerAiProductRouter from "../routes/sellerAiProductRoutes.js";
 import sellerStaffRouter from "./seller/staff.js";
+import sellerLoadSellerDataRouter from "./seller/loadSellerData.js";
+import sellerRedLineRouter2 from "./seller/redLineRoutes.js";
 //customer routers
 import customerShopRouter from "./customer/shop.js";
 import customerProductRouter from "./customer/product.js";
@@ -43,8 +45,10 @@ router.use("/admin", adminAiProductImportRouter);
 // 1. ڕاوتە گشتییەکان (Public Routes) دەبێت لە سەرەتاوە بن!
 // بەم شێوەیە کڕیار ڕاستەوخۆ دەگات بە داتاکان بێ ئەوەی بلۆک بکرێت
 // ==========================================
+router.use("/seller", sellerLoadSellerDataRouter);
 router.use("/seller", sellerCustomerRouter);
 router.use("/seller", sellerProfileRouter);
+
 router.use("/seller/auth", sellerAuthRouter);
 router.use("/seller/staff", sellerStaffRouter);
 // ==========================================
@@ -56,6 +60,7 @@ router.use("/seller", sellerDashboardRouter);
 router.use("/seller", sellerDataRouter);
 router.use("/seller", sellerOfferRouter);
 router.use("/seller", sellerRedLineRouter);
+router.use("/seller", sellerRedLineRouter2);
 router.use("/seller", sellerProductDiscountRouter);
 router.use("/seller", sellerDeleteAccountRouter);
 router.use("/seller", sellerCategoryRouter);
@@ -65,7 +70,6 @@ router.use("/seller", sellerOrdersRouter);
 router.use("/seller", sellerShopSectionsRouter);
 router.use("/seller", sellerPushNotificationsRouter);
 router.use("/seller", sellerAiProductRouter);
-
 
 //customer routers
 router.use("/customer", customerProductRouter);

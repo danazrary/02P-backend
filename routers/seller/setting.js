@@ -3,7 +3,6 @@ import { Router } from "express";
 import { v4 as uuidv4 } from "uuid";
 import Seller from "../../database/sellerv2.js";
 import { sellerToken } from "../../utils/addingToken.js";
-import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { deleteFile } from "../../utils/deleteFile.js";
 import { isReservedShopName } from "../../utils/reservedShopNames.js";
 import { toUTC } from "../../utils/timezoneHandler.js";
@@ -17,7 +16,6 @@ import { normalizeUiSettings } from "../../utils/uiSettings.js";
 import { getCategoryMap } from "../../utils/categoryTranslations.js";
 import { notifyGoogle } from "../../utils/googleIndexing.js";
 import {
-  attachActor,
   canManageSettings,
   canChangeShopIdentity,
 } from "../../middlewares/staffPermissions.js";
@@ -91,12 +89,10 @@ function parseUiSettingsPayload(payload, fallbackSettings) {
 // 1) COMPLETE PROFILE CHECK — seller only (initial onboarding)
 router.post(
   "/complete-profile-check",
-  jwtVerifySellerToken,
-  attachActor,
   canChangeShopIdentity,
   async (req, res) => {
     try {
-      const id = res.locals.sellerId;
+      const id = req.actor.sellerId;
 
       if (!id) {
         return res.status(401).json({
@@ -161,13 +157,11 @@ router.post(
 // 2) COMPLETE PROFILE — seller only (sets shop_name, phone, brand_color)
 router.post(
   "/complete-profile",
-  jwtVerifySellerToken,
-  attachActor,
   canChangeShopIdentity,
   sellerImageUpload.single("shopImage"),
   async (req, res) => {
     try {
-      const id = res.locals.sellerId;
+      const id = req.actor.sellerId;
       const {
         shopName,
         shop_name,
@@ -355,55 +349,47 @@ router.post(
 );
 
 // 3) GET SELLER INFO — seller + admin can read settings
-router.get(
-  "/seller-info",
-  jwtVerifySellerToken,
-  attachActor,
-  canManageSettings,
-  async (req, res) => {
-    try {
-      const id = res.locals.sellerId;
-      const seller = await Seller.findByPk(id);
-      if (!seller) {
-        return res
-          .status(404)
-          .json({ error: true, success: false, message: "Seller not found" });
-      }
-
-      return res.status(200).json({
-        success: true,
-        error: false,
-        email: seller.email || "",
-        sellerName: seller.name,
-        sellerNumber: seller.phone || "",
-        shopName: seller.shop_name,
-        shopImage: seller.shop_image,
-        phone: seller.phone,
-        business_type: seller.business_type,
-        brandColor: seller.brand_color || null,
-        socialLinks: seller.social_links || {},
-        bio: seller.bio || "",
-        shopLocation: seller.shop_location || "",
-        category_translations: getCategoryMap(seller),
-        defaultShopLang: seller.default_shop_lang || "ku",
-        orderType: seller.order_type || "both",
-        uiSettings: normalizeUiSettings(seller.ui_settings),
-      });
-    } catch (err) {
+router.get("/seller-info", canManageSettings, async (req, res) => {
+  try {
+    const id = req.actor.sellerId;
+    const seller = await Seller.findByPk(id);
+    if (!seller) {
       return res
-        .status(500)
-        .json({ message: "Server error", error: true, success: false });
+        .status(404)
+        .json({ error: true, success: false, message: "Seller not found" });
     }
-  },
-);
+
+    return res.status(200).json({
+      success: true,
+      error: false,
+      email: seller.email || "",
+      sellerName: seller.name,
+      sellerNumber: seller.phone || "",
+      shopName: seller.shop_name,
+      shopImage: seller.shop_image,
+      phone: seller.phone,
+      business_type: seller.business_type,
+      brandColor: seller.brand_color || null,
+      socialLinks: seller.social_links || {},
+      bio: seller.bio || "",
+      shopLocation: seller.shop_location || "",
+      category_translations: getCategoryMap(seller),
+      defaultShopLang: seller.default_shop_lang || "ku",
+      orderType: seller.order_type || "both",
+      uiSettings: normalizeUiSettings(seller.ui_settings),
+    });
+  } catch (err) {
+    return res
+      .status(500)
+      .json({ message: "Server error", error: true, success: false });
+  }
+});
 
 // 4) UPDATE SELLER INFO
 // General fields (bio, social, location, lang, orderType, uiSettings) → seller + admin
 // Identity fields (shopName, whatsappNumber, brandColor, shop_image) → seller ONLY
 router.post(
   "/seller-info-update",
-  jwtVerifySellerToken,
-  attachActor,
   canManageSettings,
   sellerSettingsUpload.fields([
     { name: "shop_image", maxCount: 1 },
@@ -411,10 +397,10 @@ router.post(
   ]),
   async (req, res) => {
     try {
-      const id = res.locals.sellerId;
-      const isStaff = res.locals.isStaff;
-      const role = res.locals.role;
-      const isOwner = !isStaff || role === "seller";
+      const id = req.actor.sellerId;
+      // identity fields (shop name, phone, brand colour, shop image) belong to the shop owner only;
+      // everything else here needs "manageSettings" (owner + admin staff)
+      const isOwner = req.actor.isSeller;
 
       const {
         sellerName,
@@ -532,38 +518,32 @@ router.post(
 );
 
 // 5) GET UI SETTINGS — seller + admin
-router.get(
-  "/ui-settings",
-  jwtVerifySellerToken,
-  attachActor,
-  canManageSettings,
-  async (req, res) => {
-    try {
-      const id = res.locals.sellerId;
-      const seller = await Seller.findByPk(id, {
-        attributes: ["id", "ui_settings"],
-      });
+router.get("/ui-settings", canManageSettings, async (req, res) => {
+  try {
+    const id = req.actor.sellerId;
+    const seller = await Seller.findByPk(id, {
+      attributes: ["id", "ui_settings"],
+    });
 
-      if (!seller) {
-        return res.status(404).json({
-          success: false,
-          error: true,
-          message: "Seller not found",
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        error: false,
-        uiSettings: normalizeUiSettings(seller.ui_settings),
+    if (!seller) {
+      return res.status(404).json({
+        success: false,
+        error: true,
+        message: "Seller not found",
       });
-    } catch (err) {
-      return res
-        .status(500)
-        .json({ success: false, error: true, message: "Server error" });
     }
-  },
-);
+
+    return res.status(200).json({
+      success: true,
+      error: false,
+      uiSettings: normalizeUiSettings(seller.ui_settings),
+    });
+  } catch (err) {
+    return res
+      .status(500)
+      .json({ success: false, error: true, message: "Server error" });
+  }
+});
 
 router.use((err, req, res, next) => {
   if (err?.code === "LIMIT_FILE_SIZE") {

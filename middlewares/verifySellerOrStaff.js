@@ -1,99 +1,64 @@
 // backend/middlewares/verifySellerOrStaff.js
-import jwt from "jsonwebtoken";
+//
+// Legacy role-based guard, kept so existing routes keep working.
+// The old version treated a staff token as the OWNER (it checked `decoded.seller_id`
+// before the staff branch). This version relies on the unified identity layer:
+//   - owner              -> always allowed
+//   - staff "admin"      -> always allowed (was "manager")
+//   - any other staff    -> allowed only when his role is in `allowedRoles`
+//
+// For new routes prefer permissions:  requirePermission("usePOS")
+
 import Seller from "../database/sellerv2.js";
+import { requireAuth } from "./jwtVerify.js";
+import { attachActor } from "./staffPermissions.js";
 
-/**
- * ڕێگەدان تەنها بە خاوەنی فرۆشگا (Owner) یان ستافی خاوەن دەسەڵات
- * ڕۆڵەکان: "manager", "warehouse", "cashier", "accountant"
- */
-export function requireSellerOrStaff(
-  allowedRoles = ["manager", "warehouse", "cashier"],
-) {
-  return async (req, res, next) => {
+export function requireSellerOrStaff(allowedRoles = ["cashier"]) {
+  const guard = async (req, res, next) => {
     try {
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        return res
-          .status(401)
-          .json({ success: false, error: true, message: "No token provided" });
+      const actor = req.actor;
+
+      if (
+        actor.isStaff &&
+        actor.role !== "admin" &&
+        !allowedRoles.includes(actor.role)
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          message: `Your role (${actor.role}) is not authorized to perform this action.`,
+        });
       }
 
-      const token = authHeader.split(" ")[1];
-      const decoded = jwt.verify(
-        token,
-        process.env.JWT_SECRET || "dwkanlink_secret_key",
-      );
-
-      // ئەگەر فرۆشیاری سەرەکی بوو (Owner)
-      if (decoded.role === "seller" || decoded.seller_id || decoded.id) {
-        const sellerId = decoded.seller_id || decoded.id;
-        const seller = await Seller.findByPk(sellerId);
-        if (!seller || !seller.is_active) {
-          return res.status(403).json({
-            success: false,
-            error: true,
-            message: "Seller inactive or not found",
-          });
-        }
-        req.seller = seller;
-        req.sellerId = seller.id;
-        req.userRole = "owner";
-        return next();
+      const seller = await Seller.findByPk(actor.sellerId);
+      if (!seller || !seller.is_active) {
+        return res.status(403).json({
+          success: false,
+          error: true,
+          message: "Seller inactive or not found",
+        });
       }
 
-      // ئەگەر کارمەند بوو (Staff)
-      if (decoded.staff_id && decoded.parent_seller_id) {
-        const seller = await Seller.findByPk(decoded.parent_seller_id);
-        if (!seller) {
-          return res
-            .status(403)
-            .json({ success: false, error: true, message: "Shop not found" });
-        }
-
-        const staffList = Array.isArray(seller.staff_members)
-          ? seller.staff_members
-          : [];
-        const staffMember = staffList.find(
-          (stf) => stf.staff_id === decoded.staff_id && stf.is_active,
-        );
-
-        if (!staffMember) {
-          return res.status(403).json({
-            success: false,
-            error: true,
-            message: "Staff member not active or removed",
-          });
-        }
-
-        // پشکنینی ڕۆڵ
-        if (
-          !allowedRoles.includes(staffMember.role) &&
-          staffMember.role !== "manager"
-        ) {
-          return res.status(403).json({
-            success: false,
-            error: true,
-            message: `Your role (${staffMember.role}) is not authorized to perform this action.`,
-          });
-        }
-
-        req.seller = seller;
-        req.sellerId = seller.id;
-        req.staff = staffMember;
-        req.userRole = staffMember.role;
-        return next();
+      req.seller = seller;
+      req.sellerId = seller.id;
+      req.userRole = actor.isSeller ? "owner" : actor.role;
+      if (actor.isStaff) {
+        req.staff = {
+          staff_id: actor.staffId,
+          name: actor.name,
+          email: actor.email,
+          role: actor.role,
+        };
       }
-
-      return res.status(403).json({
-        success: false,
-        error: true,
-        message: "Invalid authorization",
-      });
+      return next();
     } catch (err) {
       console.error("Auth Middleware Error:", err);
       return res
-        .status(401)
-        .json({ success: false, error: true, message: "Unauthorized token" });
+        .status(500)
+        .json({ success: false, error: true, message: "Server error" });
     }
   };
+
+  // Express flattens arrays, so this can be used as a normal middleware.
+  return [requireAuth, attachActor, guard];
 }

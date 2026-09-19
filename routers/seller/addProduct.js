@@ -5,7 +5,6 @@ import ProductImage from "../../database/productImages.js";
 import Seller from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
-import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { uploadRateLimiter } from "../../middlewares/rateLimitReq.js";
 import {
   checkStorageLimit,
@@ -29,7 +28,6 @@ import { getProductImageRecordBytes } from "../../utils/sellerStorageUsage.js";
 import { notifyGoogle } from "../../utils/googleIndexing.js";
 import { parseOptionalCashbackDate } from "../../utils/cashbackDates.js";
 import {
-  attachActor,
   canAddProduct,
   canEditProduct,
   canDeleteProduct,
@@ -37,15 +35,19 @@ import {
 
 const BASE_DOMAIN = process.env.BASE_DOMAIN || "dwkanlink.com";
 
-/**
- * Build the canonical product URL for Google Indexing API notifications.
- * shopName may come from req.user JWT (fast) or a fresh DB lookup (reliable).
- */
 function productUrl(shopName, productId) {
   return `https://${shopName}.${BASE_DOMAIN}/p/${productId}`;
 }
 
 const router = express.Router();
+
+// Older middlewares (storage limit, rate limiter) may read req.user.id as the shop id.
+// Staff tokens do not carry it, so after the permission guard passed we expose the
+// verified shop id there. Remove once those middlewares use req.actor.sellerId.
+function exposeShopIdToLegacyMiddleware(req, res, next) {
+  req.user = { ...req.user, id: req.actor.sellerId };
+  next();
+}
 const MAX_COLOR_IMAGE_FIELDS = 15;
 const MAX_OPTION_IMAGE_FIELDS = 15;
 const MAX_PRODUCT_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -59,7 +61,6 @@ const ADVANCED_PLAN_ALIASES = new Set([
 ]);
 const R2_PUBLIC_URL = (process.env.R2_PUBLIC_URL || "").replace(/\/$/, "");
 
-/** Accept product images + up to 15 per-color images. */
 const productUploadMiddleware = createR2Multer({
   fileSize: MAX_PRODUCT_IMAGE_BYTES,
   files: 20,
@@ -220,7 +221,6 @@ function normalizeOptionsPayload(rawOptions) {
           if (Object.keys(text).length === 0) return null;
 
           const normalized = { text };
-          // Only the first option group (index 0) may have images
           if (
             groupIndex === 0 &&
             typeof value?.image === "string" &&
@@ -425,18 +425,6 @@ function parseOptionalDecimal(value, fieldName) {
   return parsed;
 }
 
-function parseOptionalDate(value, fieldName) {
-  if (value === undefined || value === null || value === "") return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    const err = new Error(`Invalid ${fieldName}`);
-    err.statusCode = 400;
-    err.clientMessage = `${fieldName} must be a valid date.`;
-    throw err;
-  }
-  return parsed;
-}
-
 function normalizeCashbackPayload(body = {}) {
   const hasCashback = parseBooleanInput(body.hasCashback);
 
@@ -524,6 +512,7 @@ function normalizeCashbackPayload(body = {}) {
     cashbackMinOrderAmount,
   };
 }
+
 function normalizePlanValue(planName) {
   return String(planName || "")
     .trim()
@@ -544,7 +533,6 @@ function isFreeSellerPlan(plan) {
 }
 
 function getProductFieldLimit(plan) {
-  // Free plan (ID 30) - max 2 options
   if (isFreeSellerPlan(plan)) {
     return 2;
   }
@@ -559,11 +547,6 @@ function getProductFieldLimit(plan) {
   return isAdvancedPlan ? 15 : 5;
 }
 
-/**
- * Returns max allowed price combinations for the plan:
- *   Basic/Pro  -> 25   (5�5)
- *   Plus/Business Pro -> 225 (15�15)
- */
 function getMaxVariantPriceCombinations(plan) {
   return getProductFieldLimit(plan) === 15 ? 225 : 125;
 }
@@ -579,13 +562,12 @@ function validateVariantPriceCombinations(plan, variantPrices) {
 }
 
 function getProductImageLimits(plan) {
-  // Free plan (ID 30) - max 3 main images, no color/option images
   if (isFreeSellerPlan(plan)) {
     return {
       mainImages: 3,
       colorImages: 0,
       totalImages: 3,
-      maxOptionsValues: 5, // Max 5 values per option
+      maxOptionsValues: 5,
     };
   }
 
@@ -595,7 +577,7 @@ function getProductImageLimits(plan) {
     mainImages: 5,
     colorImages,
     totalImages: colorImages + 5,
-    maxOptionsValues: 0, // No limit for paid plans
+    maxOptionsValues: 0,
   };
 }
 
@@ -760,7 +742,6 @@ async function uploadFirstOptionGroupImagesToR2({
     const optionSegment = normalizeColorSegment(valueText);
     const key = `shops/${sellerId}/products/${productId}/colors/${optionSegment}-${uuidv4()}.webp`;
 
-    // Upload first-group option image using the same color-image compression flow.
     const { sizeBytes } = await uploadColorImageToR2(optionFile.buffer, key);
     uploadedBytes += sizeBytes;
     firstGroupValues[valueIndex].image = toPublicR2Url(key);
@@ -827,24 +808,19 @@ function validateProductOptionsLimits(plan, options = []) {
   }
 }
 
-// Route to create product
+// POST /add-product
 router.post(
   "/add-product",
-  jwtVerifySellerToken,
-  attachActor,
   canAddProduct,
+  exposeShopIdToLegacyMiddleware,
   uploadRateLimiter,
   productUpload,
   checkStorageLimit,
   async (req, res) => {
     try {
       const tRequest = Date.now();
-      const id = res.locals.sellerId;
-      console.log(
-        `?? Add-product  seller ${id} env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
-      );
+      const id = req.actor.sellerId;
 
-      // Check seller plan and product limit
       const sellerPlan = await SellerPlan.findOne({
         where: { seller_id: id },
       });
@@ -859,7 +835,6 @@ router.post(
 
       const plan = await Plan.findByPk(sellerPlan.plan_id);
 
-      // Check if free plan - don't allow adding products
       if (
         sellerPlan.plan_id === 1 ||
         plan?.name === "free_seller" ||
@@ -912,13 +887,6 @@ router.post(
         isAvailable: isAvailableBody,
       } = req.body;
 
-      console.log(
-        "[add-product] req.body:",
-        req.body,
-        "--------------------------",
-      );
-
-      // Validate stock
       let parsedStock = null;
       if (stockBody !== undefined && stockBody !== "" && stockBody !== null) {
         const rawStock = Number(stockBody);
@@ -932,11 +900,13 @@ router.post(
         parsedStock = rawStock;
       }
 
-      // Validate isAvailable
       const isAvailablePost =
         isAvailableBody === "false" || isAvailableBody === false ? false : true;
 
-      const cashbackPayload = normalizeCashbackPayload(req.body);
+      // cashback needs "manageDiscount"; for everyone else it is ignored (product is saved without cashback)
+      const cashbackPayload = normalizeCashbackPayload(
+        req.actor.can("manageDiscount") ? req.body : {},
+      );
 
       const parsedYoutubeLinks = youtubeLinks ? JSON.parse(youtubeLinks) : [];
       const normalizedYoutubeLinks =
@@ -944,7 +914,6 @@ router.post(
 
       const isRealPricePost = hasRealPrice === "true" || hasRealPrice === true;
 
-      // Parse colors [{nameKu, nameAr}] and sizes [{nameKu, nameAr}]
       const rawColors = colorsBody ? JSON.parse(colorsBody) : [];
       const parsedSizes = sizesBody
         ? JSON.parse(sizesBody).filter((s) => {
@@ -971,7 +940,6 @@ router.post(
         colorCount: rawColors.length,
       });
 
-      // Parse variant price combinations
       const parsedVariantPricesInput = parseVariantPricesInput(
         variantPrices,
         "variantPrices",
@@ -999,7 +967,6 @@ router.post(
         validateVariantPriceCombinations(plan, parsedVariantPricesAr);
       }
 
-      // Enforce: base price is not allowed when colors or sizes are present
       const hasColorsOrSizes =
         rawColors.some((c) => (c.nameKu || c.nameAr || "").trim()) ||
         parsedSizes.length > 0;
@@ -1025,10 +992,6 @@ router.post(
               )
             : null;
 
-      console.log("variantPrices BEFORE SAVE", parsedVariantPrices);
-      console.log("variantPricesAr BEFORE SAVE", parsedVariantPricesAr);
-
-      // Create product first so we have its ID for R2 key paths
       const createPayload = {
         seller_id: id,
         language,
@@ -1048,15 +1011,12 @@ router.post(
         sizes: parsedSizes.length > 0 ? parsedSizes : null,
         customInputs: parsedCustomInputs,
         customInputsAr: parsedCustomInputsAr,
-        // stock only tracked when product has no variants
         stock: hasColorsOrSizes ? null : parsedStock,
         isAvailable: isAvailablePost,
         category: category || null,
         subcategory: subcategory || null,
         ...cashbackPayload,
       };
-
-      console.log("FINAL DB PAYLOAD", createPayload);
 
       const product = await Product.create(createPayload);
 
@@ -1073,7 +1033,6 @@ router.post(
         );
       }
 
-      // Upload product images to R2 (main 1400px + thumbnail 300px)  parallel
       const tUploadStart = Date.now();
       let totalUploadedBytes = uploadedOptionImages.uploadedBytes;
       const imageFiles = req.files?.images || [];
@@ -1103,11 +1062,7 @@ router.post(
         },
       );
       if (imageRecords.length > 0) await ProductImage.bulkCreate(imageRecords);
-      console.log(
-        `[Upload] ${imageFiles.length} main images uploaded in ${Date.now() - tUploadStart}ms`,
-      );
 
-      // Upload per-color images in parallel and attach imageKey to each color
       const finalColors = rawColors.map((c) => ({ ...c }));
       const tColorStart = Date.now();
 
@@ -1133,13 +1088,7 @@ router.post(
         }),
       );
 
-      const colorCount = finalColors.filter((c) => c.imageKey).length;
-      console.log(
-        `[Upload] ${colorCount} color images uploaded in ${Date.now() - tColorStart}ms`,
-      );
       if (finalColors.length > 0) {
-        // Use static update  instance .update() on a JSON column may skip the
-        // SQL write if Sequelize thinks the value hasn't changed after create().
         await Product.update(
           { colors: finalColors },
           { where: { id: product.id } },
@@ -1151,10 +1100,6 @@ router.post(
 
       await product.reload();
 
-      console.log(
-        `[Upload] Total add-product request: ${Date.now() - tRequest}ms`,
-      );
-
       res.status(201).json({
         success: true,
         error: false,
@@ -1162,8 +1107,6 @@ router.post(
         product,
       });
 
-      // Fire-and-forget: notify Google to index the new product page.
-      // Fetches fresh shop_name from DB in case JWT is stale.
       const _createdProductId = product.id;
       const _createdSellerId = id;
       Seller.findByPk(_createdSellerId, {
@@ -1190,21 +1133,18 @@ router.post(
   },
 );
 
+// PUT /edit-product/:productId
 router.put(
   "/edit-product/:productId",
-  jwtVerifySellerToken,
-  attachActor,
   canEditProduct,
+  exposeShopIdToLegacyMiddleware,
   uploadRateLimiter,
   productUpload,
   checkStorageLimit,
   async (req, res) => {
     try {
-      const sellerId = res.locals.sellerId;
+      const sellerId = req.actor.sellerId;
       const { productId } = req.params;
-      console.log(
-        `[Edit-product] ${productId} seller ${sellerId}  env: ${isLocalEnv ? "LOCAL (developeLH)" : "VPS (product)"}`,
-      );
 
       const product = await Product.findOne({
         where: { id: productId, seller_id: sellerId },
@@ -1254,7 +1194,6 @@ router.put(
         isAvailable: isAvailableBody,
       } = req.body;
 
-      // Validate stock
       let parsedStockEdit = null;
       if (stockBody !== undefined && stockBody !== "" && stockBody !== null) {
         const rawStock = Number(stockBody);
@@ -1268,16 +1207,15 @@ router.put(
         parsedStockEdit = rawStock;
       }
 
-      // Validate isAvailable
       const isAvailableEdit =
         isAvailableBody === "false" || isAvailableBody === false ? false : true;
 
-      const cashbackPayload = Object.prototype.hasOwnProperty.call(
-        req.body,
-        "hasCashback",
-      )
-        ? normalizeCashbackPayload(req.body)
-        : {};
+      // cashback needs "manageDiscount"; for everyone else the existing cashback stays untouched
+      const cashbackPayload =
+        req.actor.can("manageDiscount") &&
+        Object.prototype.hasOwnProperty.call(req.body, "hasCashback")
+          ? normalizeCashbackPayload(req.body)
+          : {};
 
       const parsedYoutubeLinks = youtubeLinks ? JSON.parse(youtubeLinks) : [];
       const normalizedYoutubeLinks =
@@ -1360,7 +1298,6 @@ router.put(
         validateVariantPriceCombinations(plan, parsedVariantPricesAr);
       }
 
-      // Enforce: base price is not allowed when colors or sizes are present
       const isRealPrice = hasRealPrice === "true" || hasRealPrice === true;
       const hasColorsOrSizesEdit =
         rawColors.some((c) => (c.nameKu || c.nameAr || "").trim()) ||
@@ -1375,7 +1312,6 @@ router.put(
         throw basePriceConflictError;
       }
 
-      // Delete removed product images (main + thumb) and update storage
       if (removedImageKeys) {
         const keys = removedMainImageKeys;
         if (keys.length > 0) {
@@ -1387,7 +1323,6 @@ router.put(
               records.map((record) => getProductImageRecordBytes(record)),
             )
           ).reduce((sum, bytes) => sum + bytes, 0);
-          // Delete both the main key and its thumbnail from R2
           const allR2Keys = records.flatMap((r) =>
             [r.image_key, r.thumb_key].filter(Boolean),
           );
@@ -1399,7 +1334,6 @@ router.put(
         }
       }
 
-      // Delete removed color images from R2 and decrement storage
       if (removedColorImageKeys) {
         const keys = removedColorKeys;
         if (keys.length > 0) {
@@ -1413,7 +1347,6 @@ router.put(
         }
       }
 
-      // Upload new product images to R2 (main 1280px + thumbnail 300px)
       let totalUploadedBytes = 0;
       const imageFiles = req.files?.images || [];
       if (imageFiles.length > 0) {
@@ -1442,8 +1375,6 @@ router.put(
       for (let i = 0; i < finalColors.length; i++) {
         const colorFile = req.files?.[`colorImage_${i}`]?.[0];
         if (colorFile) {
-          // Always read the old key from the DB record by index never trust
-          // what the frontend sends, as it may have already cleared imageKey.
           const oldImageKey = dbColors[i]?.imageKey || null;
           const filename = `${uuidv4()}.webp`;
           const colorSegment = normalizeColorSegment(
@@ -1451,7 +1382,6 @@ router.put(
           );
           const key = `shops/${sellerId}/products/${productId}/colors/${colorSegment}/${filename}`;
 
-          // Upload new image FIRST only delete old after confirmed success
           const { sizeBytes } = await uploadColorImageToR2(
             colorFile.buffer,
             key,
@@ -1460,7 +1390,6 @@ router.put(
           finalColors[i].imageKey = key;
           finalColors[i].imageSizeBytes = sizeBytes;
 
-          // Now safely delete the old image and decrement its storage
           if (oldImageKey) {
             const oldDbColor = dbColors.find((c) => c.imageKey === oldImageKey);
             if (oldDbColor?.imageSizeBytes)
@@ -1468,7 +1397,6 @@ router.put(
             await deleteFromR2(oldImageKey);
           }
         } else {
-          // No new file  keep existing imageKey and imageSizeBytes from DB
           if (dbColors[i]?.imageKey) {
             finalColors[i].imageKey = dbColors[i].imageKey;
             finalColors[i].imageSizeBytes = dbColors[i].imageSizeBytes || 0;
@@ -1513,11 +1441,6 @@ router.put(
       if (totalUploadedBytes > 0)
         await incrementSellerStorage(sellerId, totalUploadedBytes);
 
-      console.log("variantPrices BEFORE SAVE", finalVariantPricesPayload);
-      console.log("variantPricesAr BEFORE SAVE", finalVariantPricesArPayload);
-
-      // Use static update  instance .update() on JSON columns can silently
-      // skip writing if Sequelize's change-detection gives a false negative.
       const updatePayload = {
         language,
         hasRealPrice: isRealPrice,
@@ -1545,13 +1468,10 @@ router.put(
         customInputs: parsedCustomInputs,
         customInputsAr: parsedCustomInputsAr,
         category: category || null,
-        // stock only tracked when product has no variants
         stock: hasColorsOrSizesEdit ? null : parsedStockEdit,
         isAvailable: isAvailableEdit,
         ...cashbackPayload,
       };
-
-      console.log("FINAL DB PAYLOAD", updatePayload);
 
       await Product.update(updatePayload, {
         where: { id: productId, seller_id: sellerId },
@@ -1565,7 +1485,6 @@ router.put(
         product,
       });
 
-      // Fire-and-forget: notify Google that the product page was updated.
       const _editedProductId = productId;
       const _editedSellerId = sellerId;
       Seller.findByPk(_editedSellerId, { attributes: ["shop_name"], raw: true })
@@ -1589,14 +1508,13 @@ router.put(
   },
 );
 
+// DELETE /delete-product/:productId
 router.delete(
   "/delete-product/:productId",
-  jwtVerifySellerToken,
-  attachActor,
   canDeleteProduct,
   async (req, res) => {
     try {
-      const sellerId = res.locals.sellerId;
+      const sellerId = req.actor.sellerId;
       const { productId } = req.params;
 
       const product = await Product.findOne({
@@ -1609,7 +1527,6 @@ router.delete(
           .json({ success: false, error: true, message: "Product not found" });
       }
 
-      // Delete all R2 images for this product and update storage
       const imageRecords = await ProductImage.findAll({
         where: { product_id: productId },
       });
@@ -1627,8 +1544,6 @@ router.delete(
         await decrementSellerStorage(sellerId, totalBytes);
       }
 
-      // Delete color images from R2 and decrement their storage
-      // Safely parse colors  Sequelize may return a raw string for JSON columns
       const _rawProductColors = product.colors;
       const _parsedProductColors = Array.isArray(_rawProductColors)
         ? _rawProductColors
@@ -1660,7 +1575,6 @@ router.delete(
         message: "Product deleted successfully",
       });
 
-      // Fire-and-forget: notify Google to remove this product URL from the index.
       const _deletedProductId = productId;
       const _deletedSellerId = sellerId;
       Seller.findByPk(_deletedSellerId, {
@@ -1687,14 +1601,12 @@ router.delete(
   },
 );
 
-// Route to get products by seller shop name (paginated, lightweight fields)
 router.get("/products/shop/:shopName", async (req, res) => {
   try {
     const { shopName } = req.params;
     const limit = Math.min(parseInt(req.query.limit) || 50, 100);
     const offset = parseInt(req.query.offset) || 0;
 
-    // Find seller by shop name
     const seller = await Seller.findOne({
       where: { shop_name: shopName },
       attributes: ["id", "shop_name"],
@@ -1708,7 +1620,6 @@ router.get("/products/shop/:shopName", async (req, res) => {
       });
     }
 
-    // Get products with only the fields needed by frontend
     const { count, rows: products } = await Product.findAndCountAll({
       where: { seller_id: seller.id },
       attributes: [
@@ -1745,7 +1656,6 @@ router.get("/products/shop/:shopName", async (req, res) => {
       offset,
     });
 
-    // Filter out products that have variantPrices or variantPricesAr but no realPrice
     const filteredProducts = products.filter((p) => {
       const hasVariants =
         (p.variantPrices && p.variantPrices.length > 0) ||
