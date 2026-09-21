@@ -63,7 +63,7 @@ function corsOriginCheck(origin, callback) {
 export const corsOptions = {
   origin: corsOriginCheck,
   credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 

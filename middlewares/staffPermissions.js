@@ -44,7 +44,6 @@ export function resolveActor(req) {
 }
 
 export function attachActor(req, res, next) {
-
   const actor = req.actor || ANONYMOUS_ACTOR;
 
   res.locals.actor = actor;

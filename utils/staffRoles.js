@@ -31,6 +31,7 @@ export const PERMISSION_KEYS = Object.freeze([
   "deleteProduct",
   "viewCatalog",
   "bulkCategory",
+  "stock-manager",
   // promotions
   "manageDiscount",
   // storefront content
@@ -84,6 +85,7 @@ export const STAFF_ROLES = Object.freeze({
       "editProduct",
       "viewCatalog",
       "bulkCategory",
+
     ],
   },
   shop_editor: {

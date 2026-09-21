@@ -545,6 +545,92 @@ router.get("/ui-settings", canManageSettings, async (req, res) => {
   }
 });
 
+// 6) UPDATE UI SETTINGS (delivery fees, display options, hero image) — needs manageSettings
+router.post(
+  "/ui-settings",
+  canManageSettings,
+  sellerSettingsUpload.fields([{ name: "hero_image", maxCount: 1 }]),
+  async (req, res) => {
+    try {
+      const id = req.actor.sellerId;
+
+      const seller = await Seller.findByPk(id);
+      if (!seller) {
+        return res.status(404).json({
+          success: false,
+          error: true,
+          message: "Seller not found",
+        });
+      }
+
+      const currentSettings = normalizeUiSettings(seller.ui_settings);
+      const nextSettings = parseUiSettingsPayload(
+        req.body.uiSettings,
+        currentSettings,
+      );
+      if (!nextSettings) {
+        return res.status(400).json({
+          success: false,
+          error: true,
+          message: "Invalid uiSettings",
+        });
+      }
+
+      // The hero image key is controlled by the server only — never trust the
+      // one sent by the browser.
+      const oldHeroKey = currentSettings.heroSection?.imageKey || "";
+      nextSettings.heroSection = {
+        ...nextSettings.heroSection,
+        imageKey: oldHeroKey,
+      };
+
+      let newHeroKey = "";
+      const heroFile = req.files?.hero_image?.[0] || null;
+      if (heroFile) {
+        const { key, sizeBytes } = await uploadSellerHeroImageToR2(
+          heroFile,
+          id,
+        );
+        newHeroKey = key;
+        nextSettings.heroSection.imageKey = key;
+        if (sizeBytes > 0) {
+          await incrementSellerStorage(id, sizeBytes);
+        }
+      }
+
+      await seller.update({ ui_settings: nextSettings });
+
+      // Remove the replaced hero image only after the new settings are saved.
+      if (newHeroKey && oldHeroKey && oldHeroKey !== newHeroKey) {
+        try {
+          const oldBytes = await getStoredAssetBytes(oldHeroKey);
+          await deleteStoredSellerImage(oldHeroKey);
+          if (oldBytes > 0) {
+            await decrementSellerStorage(id, oldBytes);
+          }
+        } catch (cleanupErr) {
+          console.error(
+            "ui-settings: old hero image cleanup failed:",
+            cleanupErr,
+          );
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        error: false,
+        message: "UI settings updated successfully",
+        uiSettings: normalizeUiSettings(nextSettings),
+      });
+    } catch (err) {
+      console.error("ui-settings update error:", err);
+      return res
+        .status(500)
+        .json({ success: false, error: true, message: "Server error" });
+    }
+  },
+);
+
 router.use((err, req, res, next) => {
   if (err?.code === "LIMIT_FILE_SIZE") {
     return res.status(413).json({

@@ -11,7 +11,7 @@ import {
 import {
   canViewCatalog,
   canBulkCategory,
-  canDeleteProduct,
+  requireOwner,
 } from "../../middlewares/staffPermissions.js";
 
 const router = Router();
@@ -163,8 +163,8 @@ router.put("/catalog/bulk-category", canBulkCategory, async (req, res) => {
 });
 
 // DELETE /catalog/bulk-delete
-// Requires: deleteProduct
-router.delete("/catalog/bulk-delete", canDeleteProduct, async (req, res) => {
+// Requires: shop owner only (staff — even admin — cannot delete products)
+router.delete("/catalog/bulk-delete", requireOwner, async (req, res) => {
   try {
     const sellerId = req.actor.sellerId;
 

@@ -26,6 +26,7 @@ import sellerAiProductRouter from "../routes/sellerAiProductRoutes.js";
 import sellerStaffRouter from "./seller/staff.js";
 import sellerLoadSellerDataRouter from "./seller/loadSellerData.js";
 import sellerRedLineRouter2 from "./seller/redLineRoutes.js";
+import sellerStockRouter from "./seller/stock.js";
 //customer routers
 import customerShopRouter from "./customer/shop.js";
 import customerProductRouter from "./customer/product.js";
@@ -54,6 +55,7 @@ router.use("/seller/staff", sellerStaffRouter);
 // ==========================================
 // 2. ڕاوتە تایبەتەکانی داشبۆرد و فرۆشیار لە خوارەوە دەبن
 // ==========================================
+router.use("/seller/stock", sellerStockRouter);
 router.use("/seller/setting", sellerSettingsRouter);
 router.use("/seller", sellerAddingProductRouter);
 router.use("/seller", sellerDashboardRouter);

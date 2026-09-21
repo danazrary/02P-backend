@@ -2,19 +2,13 @@
 import { Router } from "express";
 import Product from "../../database/products.js";
 import ProductImage from "../../database/productImages.js";
-import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { Op } from "sequelize";
 import { checkAndCleanProductExpiration } from "../../utils/checkProductExpiration.js";
 import { toUTC } from "../../utils/timezoneHandler.js";
 import { parseOptionalCashbackDate } from "../../utils/cashbackDates.js";
-import {
-  attachActor,
-  canManageDiscount,
-} from "../../middlewares/staffPermissions.js";
+import { canManageDiscount } from "../../middlewares/staffPermissions.js";
 
 const router = Router();
-
-router.use(jwtVerifySellerToken, attachActor);
 
 function parseBooleanInput(value) {
   return value === true || value === "true" || value === 1 || value === "1";
@@ -129,10 +123,10 @@ function normalizeCashbackBulkPayload(body = {}) {
 }
 
 // 1) GET /products-discount — view discount products
-// Allowed: seller, admin
+// Requires: manageDiscount
 router.get("/products-discount", canManageDiscount, async (req, res) => {
   try {
-    const sellerId = res.locals.sellerId;
+    const sellerId = req.actor.sellerId;
     const { filterType } = req.query;
     const limit = Math.min(parseInt(req.query.limit) || 15, 100);
     const offset = parseInt(req.query.offset) || 0;
@@ -218,10 +212,10 @@ router.get("/products-discount", canManageDiscount, async (req, res) => {
 });
 
 // 2) PUT /products-discount/add
-// Allowed: seller, admin
+// Requires: manageDiscount
 router.put("/products-discount/add", canManageDiscount, async (req, res) => {
   try {
-    const sellerId = res.locals.sellerId;
+    const sellerId = req.actor.sellerId;
     const {
       productIds,
       actionType,
@@ -278,10 +272,10 @@ router.put("/products-discount/add", canManageDiscount, async (req, res) => {
 });
 
 // 3) PUT /products-discount/remove
-// Allowed: seller, admin
+// Requires: manageDiscount
 router.put("/products-discount/remove", canManageDiscount, async (req, res) => {
   try {
-    const sellerId = res.locals.sellerId;
+    const sellerId = req.actor.sellerId;
     const { productIds, actionType, applyToAll } = req.body;
 
     let whereClause = { seller_id: sellerId };
@@ -327,14 +321,14 @@ router.put("/products-discount/remove", canManageDiscount, async (req, res) => {
 });
 
 // 4) PUT /products-discount/cashback
-// Allowed: seller, admin
+// Requires: manageDiscount
 router.put(
   "/products-discount/cashback",
   canManageDiscount,
   async (req, res) => {
     const transaction = await Product.sequelize.transaction();
     try {
-      const sellerId = res.locals.sellerId;
+      const sellerId = req.actor.sellerId;
       const productIds = normalizeProductIds(req.body.productIds);
 
       if (productIds.length === 0) {
@@ -403,10 +397,10 @@ router.put(
 );
 
 // 5) GET /products-discount/counts
-// Allowed: seller, admin
+// Requires: manageDiscount
 router.get("/products-discount/counts", canManageDiscount, async (req, res) => {
   try {
-    const sellerId = res.locals.sellerId;
+    const sellerId = req.actor.sellerId;
 
     const totalProducts = await Product.count({
       where: { seller_id: sellerId },
