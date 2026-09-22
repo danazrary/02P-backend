@@ -10,7 +10,7 @@ import { requireShopUser } from "../../middlewares/staffPermissions.js";
 
 const router = Router();
 
-const FREE_PLAN_ID = 1;
+const FREE_PLAN_ID = 30;
 const TRIAL_PLAN_ID = 9;
 const GRACE_PERIOD_HOURS = 24;
 const DELETION_PERIOD_DAYS = 16;

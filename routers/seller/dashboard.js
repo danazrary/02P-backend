@@ -437,6 +437,46 @@ router.get("/dashboard", canAccessDashboard, async (req, res) => {
 // "manageShopSections" (shop_editor + admin + owner), NOT "manageSettings".
 const canManageBadges = requirePermission("manageShopSections");
 
+// Typeahead search used by the "add badge" picker, so a seller can find a product
+// by name instead of typing its numeric id. Empty query returns the most recent
+// products (same ordering as the dashboard list) so the picker isn't empty on open.
+router.get("/products-search", canManageBadges, async (req, res) => {
+  try {
+    const sellerId = req.actor.sellerId;
+    const query = (req.query.query || "").trim();
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
+    console.log("query", query);
+
+    const whereClause = { seller_id: sellerId };
+    if (query) {
+      whereClause[Op.or] = [
+        { titleKu: { [Op.like]: `%${query}%` } },
+        { titleAr: { [Op.like]: `%${query}%` } },
+      ];
+    }
+
+    const products = await Product.findAll({
+      where: whereClause,
+      attributes: ["id", "titleKu", "titleAr"],
+      include: [
+        {
+          model: ProductImage,
+          as: "productImages",
+          attributes: ["image_key", "thumb_key", "is_main"],
+          required: false,
+        },
+      ],
+      limit,
+      order: [["id", "DESC"]],
+    });
+
+    return res.status(200).json({ success: true, products });
+  } catch (error) {
+    console.error("Error searching products for badges:", error);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
 router.post("/product-badges", canManageBadges, async (req, res) => {
   try {
     const sellerId = req.actor.sellerId;
