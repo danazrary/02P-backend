@@ -7,6 +7,7 @@ import Order from "../../database/order.js";
 import OrderItem from "../../database/orderItem.js";
 import ProductImage from "../../database/productImages.js";
 import { requirePermission } from "../../middlewares/staffPermissions.js";
+import { applyItemStockIncrement } from "../../utils/productStock.js";
 
 const router = Router();
 
@@ -665,17 +666,116 @@ router.post("/:productId/accept-all", stockAccessGuard, async (req, res) => {
   }
 });
 
+function parseObjectInput(value) {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function resolveItemSelectedOptions(item) {
+  return (
+    parseObjectInput(item.selected_options) ||
+    parseObjectInput(item.variant_options_snapshot) ||
+    null
+  );
+}
+
+async function fetchOrderItemsForStockAdjustment(orderId, transaction) {
+  const buildQuery = (
+    withVariantSnapshot = true,
+    withSelectedOptions = true,
+  ) => ({
+    where: { order_id: orderId },
+    attributes: [
+      "id",
+      "product_id",
+      "quantity",
+      ...(withVariantSnapshot ? ["variant_options_snapshot"] : []),
+      ...(withSelectedOptions ? ["selected_options"] : []),
+    ],
+    transaction,
+  });
+
+  try {
+    return await OrderItem.findAll(buildQuery(true, true));
+  } catch (error) {
+    if (!isMissingOrderItemOptionalColumnError(error)) throw error;
+    const missing = getMissingOptionalColumns(error);
+    return await OrderItem.findAll(
+      buildQuery(!missing.variant_options_snapshot, !missing.selected_options),
+    );
+  }
+}
+
+// Gives back the stock that was reserved for a canceled order's items.
+async function restoreStockForOrderItems(orderId, sellerId, transaction) {
+  const items = await fetchOrderItemsForStockAdjustment(orderId, transaction);
+
+  const productIds = [
+    ...new Set(
+      items
+        .map((item) => Number(item.product_id))
+        .filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  ];
+  if (!productIds.length) return;
+
+  const lockedProducts = await Product.findAll({
+    where: { id: productIds, seller_id: sellerId },
+    attributes: [
+      "id",
+      "stock",
+      "isAvailable",
+      "variantPrices",
+      "variantPricesAr",
+    ],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+  const lockedProductById = new Map(
+    lockedProducts.map((p) => [Number(p.id), p]),
+  );
+
+  for (const item of items) {
+    const product = lockedProductById.get(Number(item.product_id));
+    if (!product) continue;
+
+    const stockUpdate = applyItemStockIncrement(product, {
+      quantity: item.quantity,
+      selected_options: resolveItemSelectedOptions(item),
+    });
+
+    if (stockUpdate) {
+      await product.update(stockUpdate, { transaction });
+    }
+  }
+}
+
 // 5) PATCH /orders/:orderId/cancel — Cancel single order
 router.patch("/orders/:orderId/cancel", stockAccessGuard, async (req, res) => {
-  try {
-    const sellerId = req.actor.sellerId;
-    const { orderId } = req.params;
+  const sellerId = req.actor.sellerId;
+  const { orderId } = req.params;
+  const transaction = await sequelize.transaction();
 
+  try {
     const order = await Order.findOne({
       where: { id: orderId, seller_id: sellerId },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
     });
 
     if (!order) {
+      await transaction.rollback();
       return res
         .status(404)
         .json({ success: false, message: "Order not found" });
@@ -684,16 +784,21 @@ router.patch("/orders/:orderId/cancel", stockAccessGuard, async (req, res) => {
     // Only pending orders can be canceled from the stock page. Without this
     // check an accepted / shipped / completed order could be flipped back.
     if (order.status !== "pending") {
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
         message: "Only pending orders can be canceled",
       });
     }
 
-    await order.update({ status: "canceled" });
+    await restoreStockForOrderItems(order.id, sellerId, transaction);
+    await order.update({ status: "canceled" }, { transaction });
+
+    await transaction.commit();
 
     return res.json({ success: true, message: "Order canceled successfully" });
   } catch (error) {
+    await transaction.rollback();
     console.error("Cancel order error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
   }

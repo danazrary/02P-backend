@@ -131,3 +131,92 @@ export function applyItemStockDecrement(product, item) {
   update.stock = nextStock;
   return update;
 }
+
+/**
+ * Compute the next stock value after restoring `quantity` units (e.g. an
+ * order that reserved them gets canceled). Mirrors the skip rule in
+ * computeNextStock: if the combination currently reads as untracked /
+ * unlimited (stock 0 & isAvailable true), there is nothing to restore.
+ */
+export function computeRestoredStock(currentStock, quantity, isAvailable) {
+  const stock = Number(currentStock) || 0;
+  const qty = Math.max(0, Math.floor(Number(quantity)) || 0);
+
+  // Untracked / unlimited stock: nothing was ever decremented, so there's
+  // nothing to give back.
+  if (stock === 0 && isAvailable === true) {
+    return null;
+  }
+
+  return Math.max(0, stock + qty);
+}
+
+/**
+ * Inverse of applyItemStockDecrement. Used whenever an order that had
+ * reserved stock stops holding that reservation (typically: it gets
+ * canceled). Same shape/contract: returns the fields to persist via
+ * `product.update(...)`, or null if nothing should change.
+ *
+ * `product` should have: stock, isAvailable, variantPrices, variantPricesAr
+ * `item` should have: quantity, selected_options (may be null/undefined)
+ */
+export function applyItemStockIncrement(product, item) {
+  if (!product) return null;
+
+  const variantPrices = Array.isArray(product.variantPrices)
+    ? [...product.variantPrices]
+    : null;
+  const variantPricesAr = Array.isArray(product.variantPricesAr)
+    ? [...product.variantPricesAr]
+    : null;
+
+  const variantIndex = variantPrices
+    ? findMatchingVariantIndex(variantPrices, item.selected_options)
+    : -1;
+
+  const matchedVariant =
+    variantIndex !== -1 ? variantPrices[variantIndex] : null;
+  const variantHasOwnStock =
+    matchedVariant &&
+    Object.prototype.hasOwnProperty.call(matchedVariant, "stock");
+
+  const update = {};
+
+  if (variantHasOwnStock) {
+    // Per-variant stock tracking.
+    const nextStock = computeRestoredStock(
+      matchedVariant.stock,
+      item.quantity,
+      product.isAvailable,
+    );
+
+    if (nextStock === null) return null;
+
+    variantPrices[variantIndex] = { ...matchedVariant, stock: nextStock };
+    update.variantPrices = variantPrices;
+
+    // Keep the Arabic mirror array in sync at the same index, if it exists.
+    if (variantPricesAr && variantPricesAr[variantIndex]) {
+      variantPricesAr[variantIndex] = {
+        ...variantPricesAr[variantIndex],
+        stock: nextStock,
+      };
+      update.variantPricesAr = variantPricesAr;
+    }
+
+    return update;
+  }
+
+  // Fall back to top-level product stock (no variant selected, or the
+  // selected variant doesn't carry its own stock value).
+  const nextStock = computeRestoredStock(
+    product.stock,
+    item.quantity,
+    product.isAvailable,
+  );
+
+  if (nextStock === null) return null;
+
+  update.stock = nextStock;
+  return update;
+}

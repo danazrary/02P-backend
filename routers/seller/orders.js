@@ -10,7 +10,10 @@ import Report from "../../database/report.js";
 import { jwtVerifySellerToken } from "../../middlewares/jwtVerify.js";
 import { notifySellerNewOrder } from "../../utils/webPush.js";
 import { normalizeUiSettings } from "../../utils/uiSettings.js";
-import { applyItemStockDecrement } from "../../utils/productStock.js";
+import {
+  applyItemStockDecrement,
+  applyItemStockIncrement,
+} from "../../utils/productStock.js";
 import {
   attachActor,
   canViewOrders,
@@ -966,6 +969,97 @@ router.get(
   },
 );
 
+function resolveItemSelectedOptions(item) {
+  return (
+    parseObjectInput(item.selected_options) ||
+    parseObjectInput(item.variant_options_snapshot) ||
+    null
+  );
+}
+
+async function fetchOrderItemsForStockAdjustment(orderId, transaction) {
+  const buildQuery = (
+    withVariantSnapshot = true,
+    withSelectedOptions = true,
+  ) => ({
+    where: { order_id: orderId },
+    attributes: [
+      "id",
+      "product_id",
+      "quantity",
+      ...(withVariantSnapshot ? ["variant_options_snapshot"] : []),
+      ...(withSelectedOptions ? ["selected_options"] : []),
+    ],
+    transaction,
+  });
+
+  try {
+    return await OrderItem.findAll(buildQuery(true, true));
+  } catch (error) {
+    if (!isMissingOrderItemOptionalColumnError(error)) throw error;
+    const missing = getMissingOptionalColumns(error);
+    return await OrderItem.findAll(
+      buildQuery(!missing.variant_options_snapshot, !missing.selected_options),
+    );
+  }
+}
+
+// direction "restore": order is being canceled -> give reserved stock back.
+// direction "reserve": a canceled order is being revived -> take stock again,
+// mirroring what happens when the order was first created.
+async function adjustStockForOrderItems(
+  orderId,
+  sellerId,
+  direction,
+  transaction,
+) {
+  const items = await fetchOrderItemsForStockAdjustment(orderId, transaction);
+
+  const productIds = [
+    ...new Set(
+      items
+        .map((item) => Number(item.product_id))
+        .filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  ];
+  if (!productIds.length) return;
+
+  const lockedProducts = await Product.findAll({
+    where: { id: productIds, seller_id: sellerId },
+    attributes: [
+      "id",
+      "stock",
+      "isAvailable",
+      "variantPrices",
+      "variantPricesAr",
+    ],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+  const lockedProductById = new Map(
+    lockedProducts.map((p) => [Number(p.id), p]),
+  );
+
+  for (const item of items) {
+    const product = lockedProductById.get(Number(item.product_id));
+    if (!product) continue;
+
+    const itemForStock = {
+      quantity: item.quantity,
+      selected_options: resolveItemSelectedOptions(item),
+    };
+
+    const stockUpdate =
+      direction === "restore"
+        ? applyItemStockIncrement(product, itemForStock)
+        : applyItemStockDecrement(product, itemForStock);
+
+    if (stockUpdate) {
+      await product.update(stockUpdate, { transaction });
+    }
+  }
+}
+
 // 5) PUT /orders/:orderId/status
 const ALLOWED_STATUSES = [
   "pending",
@@ -982,37 +1076,66 @@ router.put(
   attachActor,
   canUpdateOrderStatus,
   async (req, res) => {
+    const { orderId } = req.params;
+    const { status } = req.body;
+
+    if (!ALLOWED_STATUSES.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Must be one of: ${ALLOWED_STATUSES.join(", ")}`,
+      });
+    }
+
+    const sellerId = res.locals.sellerId;
+    const transaction = await sequelize.transaction();
     try {
-      const sellerId = res.locals.sellerId;
-      const { orderId } = req.params;
-      const { status } = req.body;
-
-      if (!ALLOWED_STATUSES.includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid status. Must be one of: ${ALLOWED_STATUSES.join(", ")}`,
-        });
-      }
-
       const order = await Order.findOne({
         where: { id: orderId, seller_id: sellerId },
         attributes: ["id", "order_id", "seller_id", "status"],
+        transaction,
+        lock: transaction.LOCK.UPDATE,
       });
 
       if (!order) {
+        await transaction.rollback();
         return res
           .status(404)
           .json({ success: false, message: "Order not found" });
       }
 
       if (order.status === "completed" && status !== "canceled") {
+        await transaction.rollback();
         return res.status(400).json({
           success: false,
           message: "Completed orders can only be canceled",
         });
       }
 
-      await order.update({ status });
+      const previousStatus = order.status;
+
+      if (previousStatus !== status) {
+        if (status === "canceled") {
+          // Order is being canceled — release its reserved stock back.
+          await adjustStockForOrderItems(
+            order.id,
+            sellerId,
+            "restore",
+            transaction,
+          );
+        } else if (previousStatus === "canceled") {
+          // A previously canceled order is being revived — reserve the
+          // stock again, same as when the order was first created.
+          await adjustStockForOrderItems(
+            order.id,
+            sellerId,
+            "reserve",
+            transaction,
+          );
+        }
+      }
+
+      await order.update({ status }, { transaction });
+      await transaction.commit();
 
       return res.json({
         success: true,
@@ -1020,6 +1143,7 @@ router.put(
         order: { id: order.id, order_id: order.order_id, status: order.status },
       });
     } catch (err) {
+      await transaction.rollback();
       console.error("Update status error:", err);
       return res.status(500).json({ success: false, message: "Server error" });
     }

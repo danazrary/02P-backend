@@ -8,6 +8,7 @@ import Seller from "../../database/sellerv2.js";
 import SellerPlan from "../../database/sellerPlan.js";
 import Plan from "../../database/plan.js";
 import SellerOffer from "../../database/sellerOffer.js";
+import Report from "../../database/report.js";
 import { clearCookieOpts } from "../../utils/addingToken.js";
 import {
   checkAndCleanProductExpiration,
@@ -35,6 +36,16 @@ const GRACE_PERIOD_HOURS = 24;
 const DELETION_PERIOD_DAYS = 16;
 const MAX_PRODUCT_LIMIT = 100;
 const DEFAULT_PRODUCT_LIMIT = 30;
+// "Today" for the reports table (report_date is a DATEONLY). Must match the
+// timezone used by whatever code writes the report rows.
+const REPORT_TIMEZONE = "Asia/Baghdad";
+
+function getReportToday(date) {
+  // en-CA formats as YYYY-MM-DD, which is what DATEONLY expects.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: REPORT_TIMEZONE,
+  }).format(date);
+}
 
 function safeJsonParse(value) {
   if (value === null || value === undefined) return null;
@@ -288,12 +299,17 @@ router.get("/dashboard", canAccessDashboard, async (req, res) => {
       if (expiredResponse) return res.status(200).json(expiredResponse);
     }
 
+    const reportToday = getReportToday(now);
+
     const [
       currentProductCount,
       currentOfferCount,
       offers,
       { count: totalProductsCount, rows: rawProducts },
       storageUsedMb,
+      totalVisitors,
+      totalOrders,
+      todayOrders,
     ] = await Promise.all([
       Product.count({ where: { seller_id: id } }),
       SellerOffer.count({ where: { seller_id: id, is_active: true } }),
@@ -334,6 +350,11 @@ router.get("/dashboard", canAccessDashboard, async (req, res) => {
         distinct: true,
       }),
       ensureSellerStorageUsage(id, planRow, { force: false }),
+      Report.sum("shopVisitors", { where: { seller_id: id } }),
+      Report.sum("orders", { where: { seller_id: id } }),
+      Report.sum("orders", {
+        where: { seller_id: id, report_date: reportToday },
+      }),
     ]);
 
     SellerOffer.destroy({
@@ -418,6 +439,9 @@ router.get("/dashboard", canAccessDashboard, async (req, res) => {
       current_offer_count: currentOfferCount,
       storage_limit_mb: planRow?.storage_limit_mb ?? 0,
       storage_used_mb: parseFloat(storageUsedMb ?? 0),
+      views: Number(totalVisitors) || 0,
+      orders_count: Number(totalOrders) || 0,
+      today_sales: Number(todayOrders) || 0,
       default_shop_lang: seller.default_shop_lang || "ku",
       order_type: seller.order_type || "both",
       ui_settings: normalizeUiSettings(seller.ui_settings),
