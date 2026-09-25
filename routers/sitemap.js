@@ -134,7 +134,7 @@ function generateSitemapXml(entries) {
 async function fetchGlobalSitemapRows() {
   const [sellers, products] = await Promise.all([
     Seller.findAll({
-      attributes: ["id", "shop_name", "updatedAt", "category_translations"],
+      attributes: ["id", "shop_name", "updated_at", "category_translations"],
       where: {
         shop_name: {
           [Op.ne]: null,
@@ -170,7 +170,7 @@ async function fetchGlobalSitemapRows() {
 async function fetchSubdomainSitemapRows(shopName) {
   const seller = await Seller.findOne({
     where: { shop_name: shopName },
-    attributes: ["id", "shop_name", "updatedAt", "category_translations"],
+    attributes: ["id", "shop_name", "updated_at", "category_translations"],
     raw: true,
   });
 
@@ -223,7 +223,7 @@ router.get("/sitemap.xml", async (req, res) => {
       const entries = [
         {
           loc: buildShopUrl(seller.shop_name),
-          lastmod: toLastmod(seller.updatedAt),
+          lastmod: toLastmod(seller.updated_at),
           changefreq: "weekly",
           priority: "0.9",
         },
@@ -234,7 +234,7 @@ router.get("/sitemap.xml", async (req, res) => {
 
             return {
               loc: buildCategoryUrl(seller.shop_name, categorySlug),
-              lastmod: toLastmod(seller.updatedAt),
+              lastmod: toLastmod(seller.updated_at),
               changefreq: "weekly",
               priority: "0.7",
             };
@@ -256,7 +256,7 @@ router.get("/sitemap.xml", async (req, res) => {
                     categorySlug,
                     subcategorySlug,
                   ),
-                  lastmod: toLastmod(seller.updatedAt),
+                  lastmod: toLastmod(seller.updated_at),
                   changefreq: "weekly",
                   priority: "0.6",
                 };
@@ -294,7 +294,7 @@ router.get("/sitemap.xml", async (req, res) => {
       .filter((s) => s.shop_name)
       .map((s) => ({
         loc: buildShopUrl(s.shop_name),
-        lastmod: toLastmod(s.updatedAt),
+        lastmod: toLastmod(s.updated_at),
         changefreq: "weekly",
         priority: "0.8",
       }));
@@ -309,7 +309,7 @@ router.get("/sitemap.xml", async (req, res) => {
 
           return {
             loc: buildCategoryUrl(seller.shop_name, categorySlug),
-            lastmod: toLastmod(seller.updatedAt),
+            lastmod: toLastmod(seller.updated_at),
             changefreq: "weekly",
             priority: "0.7",
           };
@@ -332,7 +332,7 @@ router.get("/sitemap.xml", async (req, res) => {
                   categorySlug,
                   subcategorySlug,
                 ),
-                lastmod: toLastmod(seller.updatedAt),
+                lastmod: toLastmod(seller.updated_at),
                 changefreq: "weekly",
                 priority: "0.6",
               };
