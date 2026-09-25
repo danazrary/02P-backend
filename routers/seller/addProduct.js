@@ -821,12 +821,26 @@ router.post(
       const tRequest = Date.now();
       const id = req.actor.sellerId;
 
+      const allPlanRowsForSeller = await SellerPlan.findAll({
+        where: { seller_id: id },
+        attributes: ["id", "plan_id", "status", "start_date", "end_date"],
+        raw: true,
+      });
+      console.log(
+        `[add-product][seller:${id}] seller_plans rows found:`,
+        allPlanRowsForSeller.length,
+        JSON.stringify(allPlanRowsForSeller),
+      );
+
       const sellerPlan = await SellerPlan.findOne({
         where: { seller_id: id },
         order: [["id", "DESC"]],
       });
 
       if (!sellerPlan) {
+        console.log(
+          `[add-product][seller:${id}] BLOCKED: no seller_plan row at all`,
+        );
         return res.status(403).json({
           success: false,
           error: true,
@@ -835,12 +849,25 @@ router.post(
       }
 
       const plan = await Plan.findByPk(sellerPlan.plan_id);
+      console.log(
+        `[add-product][seller:${id}] using seller_plan.id=${sellerPlan.id} plan_id=${sellerPlan.plan_id} status=${sellerPlan.status} end_date=${sellerPlan.end_date} -> plan=`,
+        plan
+          ? JSON.stringify({
+              id: plan.id,
+              name: plan.name,
+              max_products: plan.max_products,
+            })
+          : plan,
+      );
 
       if (
         sellerPlan.plan_id === 1 ||
         plan?.name === "free_seller" ||
         plan?.name === "Free"
       ) {
+        console.log(
+          `[add-product][seller:${id}] BLOCKED: free plan check matched (plan_id=${sellerPlan.plan_id}, plan.name=${plan?.name})`,
+        );
         return res.status(403).json({
           success: false,
           error: true,
@@ -854,8 +881,14 @@ router.post(
       const currentProductCount = await Product.count({
         where: { seller_id: id },
       });
+      console.log(
+        `[add-product][seller:${id}] currentProductCount=${currentProductCount} maxProducts=${maxProducts} (plan found: ${!!plan})`,
+      );
 
       if (currentProductCount >= maxProducts) {
+        console.log(
+          `[add-product][seller:${id}] BLOCKED: product limit reached (${currentProductCount} >= ${maxProducts})`,
+        );
         return res.status(403).json({
           success: false,
           error: true,
@@ -864,6 +897,10 @@ router.post(
             "Product limit reached. Please upgrade your plan or remove existing products.",
         });
       }
+
+      console.log(
+        `[add-product][seller:${id}] plan checks passed, proceeding to create product`,
+      );
 
       const {
         language,
@@ -1124,7 +1161,10 @@ router.post(
         })
         .catch(() => {});
     } catch (error) {
-      console.error(error);
+      console.error(
+        `[add-product][seller:${req?.actor?.sellerId}] threw:`,
+        error,
+      );
       res.status(error.statusCode || 500).json({
         success: false,
         error: true,
