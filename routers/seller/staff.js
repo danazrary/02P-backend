@@ -3,6 +3,8 @@ import express from "express";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 import Seller from "../../database/sellerv2.js";
+import SellerPlan from "../../database/sellerPlan.js";
+import Plan from "../../database/plan.js";
 import { staffToken, clearStaffCookie } from "../../utils/addingToken.js";
 import { canManageStaff } from "../../middlewares/staffPermissions.js";
 import { extractStaffArray, toPublicStaff } from "../../utils/staffHelpers.js";
@@ -20,6 +22,40 @@ const router = express.Router();
 const DUMMY_HASH = bcrypt.hashSync("dwkanlink-dummy-password", 10);
 
 const SERVER_ERROR = { success: false, message: "هەڵەی سێرڤەر ڕوویدا" };
+
+// ==========================================
+// STAFF LIMITS BY PLAN
+//    plan_id groups -> max staff members allowed.
+//    Free plans: 2, Basic/Pro plans: 5, everything else (Plus/Business/
+//    Business Pro and any unrecognized paid plan): 10.
+//    A seller with no active seller_plan row is treated as free.
+// ==========================================
+const FREE_PLAN_IDS = new Set([1, 30]);
+const BASIC_PRO_PLAN_IDS = new Set([20, 21, 22, 23, 28, 29]);
+
+const STAFF_LIMIT_FREE = 2;
+const STAFF_LIMIT_BASIC_PRO = 5;
+const STAFF_LIMIT_DEFAULT = 10;
+
+async function getStaffLimitForSeller(sellerId) {
+  const activePlan = await SellerPlan.findOne({
+    where: { seller_id: sellerId, status: true },
+    order: [["end_date", "DESC"]],
+    include: [{ model: Plan, as: "plan" }],
+  });
+
+  const planId = activePlan?.plan_id ?? activePlan?.plan?.id;
+
+  if (!activePlan || FREE_PLAN_IDS.has(planId)) {
+    return STAFF_LIMIT_FREE;
+  }
+
+  if (BASIC_PRO_PLAN_IDS.has(planId)) {
+    return STAFF_LIMIT_BASIC_PRO;
+  }
+
+  return STAFF_LIMIT_DEFAULT;
+}
 
 // ==========================================
 // 1) STAFF LOGIN  (POST /api/seller/staff/login)
@@ -127,9 +163,12 @@ router.get("/list", canManageStaff, async (req, res) => {
         .json({ success: false, message: "فرۆشیار نەدۆزرایەوە" });
     }
 
+    const staffLimit = await getStaffLimitForSeller(seller.id);
+
     return res.json({
       success: true,
       staff_members: extractStaffArray(seller).map(toPublicStaff),
+      staff_limit: staffLimit,
     });
   } catch (err) {
     console.error("Fetch Staff Error:", err);
@@ -171,6 +210,17 @@ router.post("/add", canManageStaff, async (req, res) => {
     }
 
     const staffList = extractStaffArray(seller);
+
+    const staffLimit = await getStaffLimitForSeller(seller.id);
+    if (staffList.length >= staffLimit) {
+      return res.status(403).json({
+        success: false,
+        message: `پلانی تۆ ڕێگە بە زیاتر لە ${staffLimit} کارمەند نادات، تکایە پلانەکەت بەرزبکەرەوە`,
+        code: "STAFF_LIMIT_REACHED",
+        staff_limit: staffLimit,
+      });
+    }
+
     const emailClean = email.trim().toLowerCase();
 
     if (staffList.some((s) => s.email?.toLowerCase() === emailClean)) {
