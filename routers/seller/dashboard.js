@@ -31,6 +31,10 @@ const router = Router();
 
 const FREE_PLAN_ID = 1;
 const TRIAL_PLAN_ID = 9;
+// New sellers with no plan yet are assigned this plan instead of the legacy
+// free_seller (id 1, which allows 0 products). Plan 30 ("free plan") allows
+// 15 products / 2 offers, so new sellers can actually list items right away.
+const DEFAULT_PLAN_ID = 30;
 const FREE_PLAN_END_DATE = new Date("2099-12-31");
 const GRACE_PERIOD_HOURS = 24;
 const DELETION_PERIOD_DAYS = 16;
@@ -247,11 +251,13 @@ router.get("/dashboard", canAccessDashboard, async (req, res) => {
           status: true,
         };
       } else {
+        const defaultPlan = await Plan.findByPk(DEFAULT_PLAN_ID);
+        const defaultDays = defaultPlan?.duration_days ?? 999;
         newPlanData = {
           seller_id: id,
-          plan_id: FREE_PLAN_ID,
+          plan_id: DEFAULT_PLAN_ID,
           start_date: toUTC(now),
-          end_date: toUTC(FREE_PLAN_END_DATE),
+          end_date: toUTC(new Date(now.getTime() + defaultDays * 86_400_000)),
           is_trial: false,
           trial_ended: false,
           status: true,
@@ -274,7 +280,9 @@ router.get("/dashboard", canAccessDashboard, async (req, res) => {
     const planName = planRow?.name ?? "Free";
 
     const isTrial = sellerPlanRecord.plan_id === TRIAL_PLAN_ID;
-    const isFree = sellerPlanRecord.plan_id === FREE_PLAN_ID;
+    const isFree =
+      sellerPlanRecord.plan_id === FREE_PLAN_ID ||
+      sellerPlanRecord.plan_id === DEFAULT_PLAN_ID;
     const isPaid = !isTrial && !isFree;
 
     if (isTrial) {
@@ -421,7 +429,9 @@ router.get("/dashboard", canAccessDashboard, async (req, res) => {
       is_trial: sellerPlanRecord.is_trial,
       trial_ended: sellerPlanRecord.trial_ended,
       plan_start_date: sellerPlanRecord.start_date,
-      show_plan_selection: sellerPlanRecord.plan_id === FREE_PLAN_ID,
+      show_plan_selection:
+        sellerPlanRecord.plan_id === FREE_PLAN_ID ||
+        sellerPlanRecord.plan_id === DEFAULT_PLAN_ID,
       selected_plan_info: selectedPlan,
       brand_color: seller.brand_color ?? null,
       category_translations: getCategoryMap(seller),

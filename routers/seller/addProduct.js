@@ -823,6 +823,7 @@ router.post(
 
       const sellerPlan = await SellerPlan.findOne({
         where: { seller_id: id },
+        order: [["id", "DESC"]],
       });
 
       if (!sellerPlan) {
@@ -1158,6 +1159,7 @@ router.put(
 
       const sellerPlan = await SellerPlan.findOne({
         where: { seller_id: sellerId },
+        order: [["id", "DESC"]],
       });
 
       if (!sellerPlan) {
