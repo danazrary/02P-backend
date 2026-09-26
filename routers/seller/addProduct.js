@@ -61,6 +61,25 @@ const ADVANCED_PLAN_ALIASES = new Set([
 ]);
 const R2_PUBLIC_URL = (process.env.R2_PUBLIC_URL || "").replace(/\/$/, "");
 
+/**
+ * Races a promise against a timeout so a stuck network call (e.g. R2 upload
+ * that never resolves or rejects) fails loudly instead of hanging the request
+ * forever with no error and no response ever sent.
+ */
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`[timeout] ${label} took longer than ${ms}ms`);
+      err.statusCode = 504;
+      err.clientMessage =
+        "Uploading your product images is taking too long. Please try again.";
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 const productUploadMiddleware = createR2Multer({
   fileSize: MAX_PRODUCT_IMAGE_BYTES,
   files: 20,
@@ -1056,14 +1075,28 @@ router.post(
         ...cashbackPayload,
       };
 
+      console.log(`[add-product][seller:${id}] creating product row...`);
       const product = await Product.create(createPayload);
+      console.log(
+        `[add-product][seller:${id}] product row created: id=${product.id}`,
+      );
 
-      const uploadedOptionImages = await uploadFirstOptionGroupImagesToR2({
-        sellerId: id,
-        productId: product.id,
-        options: parsedOptions,
-        files: req.files,
-      });
+      console.log(
+        `[add-product][seller:${id}] uploading option-group images...`,
+      );
+      const uploadedOptionImages = await withTimeout(
+        uploadFirstOptionGroupImagesToR2({
+          sellerId: id,
+          productId: product.id,
+          options: parsedOptions,
+          files: req.files,
+        }),
+        20_000,
+        `option-group image upload (product ${product.id})`,
+      );
+      console.log(
+        `[add-product][seller:${id}] option-group images done, changed=${uploadedOptionImages.changed}`,
+      );
       if (uploadedOptionImages.changed) {
         await Product.update(
           { options: uploadedOptionImages.options },
@@ -1076,15 +1109,27 @@ router.post(
       const imageFiles = req.files?.images || [];
       const basePath = `shops/${id}/products/${product.id}`;
 
-      const imageUploadResults = await Promise.all(
-        imageFiles.map((file, i) =>
-          uploadToR2WithThumb(file.buffer, basePath, titleKu || titleAr).then(
-            (result) => ({
-              ...result,
-              isMain: i === 0,
-            }),
+      console.log(
+        `[add-product][seller:${id}] uploading ${imageFiles.length} main image(s) to R2...`,
+      );
+      const imageUploadResults = await withTimeout(
+        Promise.all(
+          imageFiles.map((file, i) =>
+            uploadToR2WithThumb(file.buffer, basePath, titleKu || titleAr).then(
+              (result) => {
+                console.log(
+                  `[add-product][seller:${id}] main image ${i + 1}/${imageFiles.length} uploaded (${((file.size || 0) / 1024).toFixed(0)}KB, ${Date.now() - tUploadStart}ms elapsed)`,
+                );
+                return { ...result, isMain: i === 0 };
+              },
+            ),
           ),
         ),
+        30_000,
+        `main image upload (product ${product.id}, ${imageFiles.length} files)`,
+      );
+      console.log(
+        `[add-product][seller:${id}] all main images uploaded in ${Date.now() - tUploadStart}ms`,
       );
 
       const imageRecords = imageUploadResults.map(
@@ -1104,26 +1149,39 @@ router.post(
       const finalColors = rawColors.map((c) => ({ ...c }));
       const tColorStart = Date.now();
 
-      await Promise.all(
-        finalColors.map(async (color, i) => {
-          const colorFile = req.files?.[`colorImage_${i}`]?.[0];
-          if (!colorFile) {
-            finalColors[i].imageKey = null;
-            return;
-          }
-          const filename = `${uuidv4()}.webp`;
-          const colorSegment = normalizeColorSegment(
-            color.nameKu || color.nameAr,
-          );
-          const key = `shops/${id}/products/${product.id}/colors/${colorSegment}/${filename}`;
-          const { sizeBytes } = await uploadColorImageToR2(
-            colorFile.buffer,
-            key,
-          );
-          totalUploadedBytes += sizeBytes;
-          finalColors[i].imageKey = key;
-          finalColors[i].imageSizeBytes = sizeBytes;
-        }),
+      console.log(
+        `[add-product][seller:${id}] uploading ${finalColors.length} color image(s) (if any) to R2...`,
+      );
+      await withTimeout(
+        Promise.all(
+          finalColors.map(async (color, i) => {
+            const colorFile = req.files?.[`colorImage_${i}`]?.[0];
+            if (!colorFile) {
+              finalColors[i].imageKey = null;
+              return;
+            }
+            const filename = `${uuidv4()}.webp`;
+            const colorSegment = normalizeColorSegment(
+              color.nameKu || color.nameAr,
+            );
+            const key = `shops/${id}/products/${product.id}/colors/${colorSegment}/${filename}`;
+            const { sizeBytes } = await uploadColorImageToR2(
+              colorFile.buffer,
+              key,
+            );
+            console.log(
+              `[add-product][seller:${id}] color image ${i + 1}/${finalColors.length} uploaded (${Date.now() - tColorStart}ms elapsed)`,
+            );
+            totalUploadedBytes += sizeBytes;
+            finalColors[i].imageKey = key;
+            finalColors[i].imageSizeBytes = sizeBytes;
+          }),
+        ),
+        30_000,
+        `color image upload (product ${product.id}, ${finalColors.length} colors)`,
+      );
+      console.log(
+        `[add-product][seller:${id}] all color images done in ${Date.now() - tColorStart}ms`,
       );
 
       if (finalColors.length > 0) {

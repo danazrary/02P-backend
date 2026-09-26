@@ -20,6 +20,7 @@ import {
   DeleteObjectsCommand,
   HeadObjectCommand,
 } from "@aws-sdk/client-s3";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 import sharp from "sharp";
 import { v4 as uuidv4 } from "uuid";
 import dotenv from "dotenv";
@@ -70,6 +71,12 @@ const r2Client = new S3Client({
     accessKeyId: process.env.R2_ACCESS_KEY_ID,
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
   },
+  // The AWS SDK v3 default has NO timeout — a stalled TCP connection to R2
+  // would otherwise hang the calling request forever with no error at all.
+  requestHandler: new NodeHttpHandler({
+    connectionTimeout: 5_000, // time to establish the TCP connection
+    requestTimeout: 20_000, // time to receive the full response
+  }),
 });
 
 const BUCKET = process.env.R2_BUCKET_NAME;
@@ -319,15 +326,29 @@ async function _compressColorImage(buffer) {
  * @param {string} key
  */
 async function _putToR2(buffer, key) {
-  await r2Client.send(
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      Body: buffer,
-      ContentType: "image/webp",
-      CacheControl: "public, max-age=31536000, immutable",
-    }),
+  const t0 = Date.now();
+  console.log(
+    `[r2] PUT start key=${key} size=${(buffer.length / 1024).toFixed(1)}KB`,
   );
+  try {
+    await r2Client.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: key,
+        Body: buffer,
+        ContentType: "image/webp",
+        CacheControl: "public, max-age=31536000, immutable",
+      }),
+    );
+    console.log(`[r2] PUT done key=${key} in ${Date.now() - t0}ms`);
+  } catch (err) {
+    console.error(
+      `[r2] PUT FAILED key=${key} after ${Date.now() - t0}ms:`,
+      err?.name,
+      err?.message,
+    );
+    throw err;
+  }
 }
 
 /**
@@ -434,7 +455,11 @@ export async function uploadColorImageToR2(buffer, key) {
  * @param {string} basePath - Key prefix, e.g. "shops/14/products/123"
  * @returns {Promise<{mainKey: string, thumbKey: string, sizeBytes: number, thumbSizeBytes: number, totalSizeBytes: number}>}
  */
-export async function uploadToR2WithThumb(buffer, basePath, filenamePrefix = "product") {
+export async function uploadToR2WithThumb(
+  buffer,
+  basePath,
+  filenamePrefix = "product",
+) {
   // ── Defensive buffer validation ──────────────────────────────────────────
   if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
     throw new Error("uploadToR2WithThumb: invalid or empty buffer");
@@ -446,13 +471,14 @@ export async function uploadToR2WithThumb(buffer, basePath, filenamePrefix = "pr
   }
 
   const fileId = uuidv4();
-  const safePrefix = String(filenamePrefix || "product")
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9\u0600-\u06ff-]/g, "")
-    .replace(/-+/g, "-")
-    .slice(0, 80) || "product";
+  const safePrefix =
+    String(filenamePrefix || "product")
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9\u0600-\u06ff-]/g, "")
+      .replace(/-+/g, "-")
+      .slice(0, 80) || "product";
   const filename = `${safePrefix}-${fileId}.webp`;
   const mainKey = `${basePath}/main/${filename}`;
   const thumbKey = `${basePath}/thumb/${filename}`;
@@ -509,6 +535,7 @@ export async function uploadToR2WithThumb(buffer, basePath, filenamePrefix = "pr
 export async function getR2ObjectSize(key) {
   if (!key) return 0;
 
+  const t0 = Date.now();
   try {
     const response = await r2Client.send(
       new HeadObjectCommand({
@@ -516,10 +543,16 @@ export async function getR2ObjectSize(key) {
         Key: key,
       }),
     );
-
+    const ms = Date.now() - t0;
+    if (ms > 500) {
+      console.log(`[r2] HEAD ${key} took ${ms}ms (slow)`);
+    }
     return Number(response.ContentLength || 0);
   } catch (err) {
-    console.error("R2 head-object error:", err?.message || err);
+    console.error(
+      `[r2] HEAD FAILED key=${key} after ${Date.now() - t0}ms:`,
+      err?.message || err,
+    );
     return 0;
   }
 }

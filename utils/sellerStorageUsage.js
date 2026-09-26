@@ -96,6 +96,10 @@ export async function ensureSellerStorageUsage(sellerId, plan, options = {}) {
   }
 
   // ── Full scan ─────────────────────────────────────────────────────────────
+  const tScanStart = Date.now();
+  console.log(
+    `[storage-usage][seller:${sellerId}] starting FULL scan (force=${force})...`,
+  );
 
   let totalBytes = 0;
 
@@ -114,9 +118,20 @@ export async function ensureSellerStorageUsage(sellerId, plan, options = {}) {
         })
       : [];
 
+  const uncachedCount = imageRecords.filter(
+    (r) => r.size_bytes == null || r.size_bytes <= 0,
+  ).length;
+  console.log(
+    `[storage-usage][seller:${sellerId}] ${productIds.length} product(s), ${imageRecords.length} image record(s), ${uncachedCount} without cached size_bytes (these need an R2 HEAD request each)`,
+  );
+
+  const tImagesStart = Date.now();
   for (const rec of imageRecords) {
     totalBytes += await getProductImageRecordBytes(rec);
   }
+  console.log(
+    `[storage-usage][seller:${sellerId}] product image bytes computed in ${Date.now() - tImagesStart}ms`,
+  );
 
   // 2. Color variant images stored inside products.colors JSON
   const allProducts = await Product.findAll({
@@ -164,6 +179,10 @@ export async function ensureSellerStorageUsage(sellerId, plan, options = {}) {
   }
 
   const totalMb = totalBytes / BYTES_PER_MB;
+
+  console.log(
+    `[storage-usage][seller:${sellerId}] FULL scan done in ${Date.now() - tScanStart}ms, total=${totalMb.toFixed(2)}MB`,
+  );
 
   // Upsert the seller_usage row
   await SellerUsage.upsert({
